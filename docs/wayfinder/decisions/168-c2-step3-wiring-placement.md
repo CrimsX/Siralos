@@ -94,13 +94,14 @@ Every other arm (`Exit`, `Provider`, `ProviderRemove`, `Model`, `Models`,
 `Evolve`, `Reload`, `Mouse`, `Prompt`) touches none of the six, and four of them
 already have commands (`Prompt`, `SetModel`, `ModelsFetch`, `Reload`).
 
-The open question the switch must settle before it edits, stated rather than
-guessed: do the three domain renderers persist (install/enable writing
-`siralos.toml`) or only display? If they persist, they stay frontend-side like
-the picker and need the installed registry as DISPLAY data on the snapshot
-(ids and manifest names, no secrets -- R3); if they only display, they are
-reports like `Context` and `Tools`. Either way the six parameters leave the
-signature, which is the completion check.
+Answered by reading them (`47cab9b`): all three take `&mut hosts` and
+`&mut manifests`, and `render_enable`/`render_activate` call `ensure_host`
+and then `host.enable()`. They MUTATE the session's domain registry and
+activate hosts, so they are not display: the three arms move behind the
+boundary as `WorkerCommand::{DomainsAdd,DomainsEnable,DomainsActivate}`,
+calling the SAME helpers so the reports and side effects do not fork. They
+landed as `4b07008`\u2019s successor commit, leaving the switch itself as the
+only work left.
 
 ## 4. Consequences
 

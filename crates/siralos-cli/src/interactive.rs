@@ -1761,6 +1761,37 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
         )
     }
 
+    fn domains_add(&mut self, folder: &str) -> Result<String, String> {
+        // The registry and the hosts live here, so the mutation does too
+        // (decision 168 R4). The render helpers are the SAME functions the
+        // dispatcher called, so the reports and side effects do not fork.
+        Ok(render_add_plugin(
+            &self.workspace_root,
+            folder,
+            &mut self.hosts,
+            &mut self.manifests,
+        ))
+    }
+
+    fn domains_enable(&mut self, id: &str) -> Result<String, String> {
+        Ok(render_enable(
+            &self.workspace_root,
+            &mut self.hosts,
+            &mut self.manifests,
+            id,
+        ))
+    }
+
+    fn domains_activate(&mut self, id: &str) -> Result<String, String> {
+        Ok(render_activate(
+            &self.workspace_root,
+            &mut self.hosts,
+            &mut self.manifests,
+            id,
+            self.profile_plugins.as_deref(),
+        ))
+    }
+
     fn status(&self) -> crate::session_worker::SessionStatus {
         // The same recipe the TUI entry used before the session moved here: the
         // display name wins when the profile declares one, and the context

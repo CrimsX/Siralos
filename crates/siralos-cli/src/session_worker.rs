@@ -36,6 +36,14 @@ pub enum WorkerCommand {
     /// credential, so it happens where they live (decision 168 R2): a secret
     /// never crosses to the frontend just so the frontend can fetch.
     ModelsFetch,
+    /// Install a plugin folder into the session's domain registry. These three
+    /// mutate the registry and activate hosts, so they belong with the session
+    /// (decision 168 R4): the frontend cannot hold a registry it does not own.
+    DomainsAdd(String),
+    /// Enable an installed plugin.
+    DomainsEnable(String),
+    /// Activate an installed plugin through the profile's narrowing gate.
+    DomainsActivate(String),
     /// Stop: flush the recordings exactly once and exit the loop.
     Shutdown,
 }
@@ -156,6 +164,12 @@ pub trait WorkerSession {
     /// The provider's model ids (decision 168 R2). Fallible exactly where a
     /// fetch is: unconfigured, unreachable, or a non-success status.
     fn fetch_models(&mut self) -> Result<Vec<String>, String>;
+    /// Install a plugin folder, returning the report the frontend shows.
+    fn domains_add(&mut self, folder: &str) -> Result<String, String>;
+    /// Enable an installed plugin.
+    fn domains_enable(&mut self, id: &str) -> Result<String, String>;
+    /// Activate an installed plugin through the profile's narrowing gate.
+    fn domains_activate(&mut self, id: &str) -> Result<String, String>;
     /// The header the frontend shows (C2 step 3). The status segment is derived
     /// from the composition and its context metrics, so the frontend cannot
     /// build it once the session lives here.
@@ -253,6 +267,36 @@ pub fn run_worker_loop<S: WorkerSession>(
                     let _ = events.send(WorkerEvent::Failed(message));
                 }
             },
+            WorkerCommand::DomainsAdd(value) => {
+                match session.domains_add(&value) {
+                    Ok(report) => {
+                        let _ = events.send(WorkerEvent::Report(report));
+                    }
+                    Err(message) => {
+                        let _ = events.send(WorkerEvent::Failed(message));
+                    }
+                }
+            }
+            WorkerCommand::DomainsEnable(value) => {
+                match session.domains_enable(&value) {
+                    Ok(report) => {
+                        let _ = events.send(WorkerEvent::Report(report));
+                    }
+                    Err(message) => {
+                        let _ = events.send(WorkerEvent::Failed(message));
+                    }
+                }
+            }
+            WorkerCommand::DomainsActivate(value) => {
+                match session.domains_activate(&value) {
+                    Ok(report) => {
+                        let _ = events.send(WorkerEvent::Report(report));
+                    }
+                    Err(message) => {
+                        let _ = events.send(WorkerEvent::Failed(message));
+                    }
+                }
+            }
             WorkerCommand::Reload => match session.reload() {
                 Ok(report) => {
                     let _ = events.send(WorkerEvent::Report(report));
@@ -884,6 +928,15 @@ mod loop_tests {
         }
         fn fetch_models(&mut self) -> Result<Vec<String>, String> {
             Ok(vec!["fake-model".to_owned()])
+        }
+        fn domains_add(&mut self, folder: &str) -> Result<String, String> {
+            Ok(format!("added {folder}"))
+        }
+        fn domains_enable(&mut self, id: &str) -> Result<String, String> {
+            Ok(format!("enabled {id}"))
+        }
+        fn domains_activate(&mut self, id: &str) -> Result<String, String> {
+            Ok(format!("activated {id}"))
         }
         fn status(&self) -> SessionStatus {
             SessionStatus {
