@@ -138,6 +138,12 @@ secret.
 That is every additive piece decision 168 named. What is left is the atomic
 switch in one commit and step 4.
 
+R4 is now measured rather than a principle (decision 168 section 3a): of the
+dispatcher's fifteen arms only four touch capability state, and two of those
+(`Context`, `Tools`) already have report commands. The three domain arms render
+through `render_*(workspace_root, ..)` helpers, so whether they persist or only
+display is the one question the switch must answer before it edits.
+
 The rewiring itself now has a placement decision written BEFORE the edit
 ([168](../decisions/168-c2-step3-wiring-placement.md)): measuring it first showed
 the job is not the short call-site list above but roughly ninety
