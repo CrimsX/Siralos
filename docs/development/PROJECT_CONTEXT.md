@@ -553,8 +553,9 @@ generic CacheManager, distributed cache, or reactive cache framework now.
 Siralos is provider-neutral. Provider/model code cannot decide host tool
 authority, approval, security policy, or authoritative task completion. Model
 and provider identity plus relevant generation configuration are recorded where
-reproducibility requires them. Real provider integrations are not implemented
-in the current milestone.
+reproducibility requires them. Real provider integrations are **Verified**
+(decisions 66-71, roll-up 76) -- this line said the opposite until 2026-09-12,
+when a read-only doc sweep found it contradicting the header above.
 
 ### Profile / lock / Context identity
 

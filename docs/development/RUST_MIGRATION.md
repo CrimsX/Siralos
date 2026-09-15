@@ -466,9 +466,10 @@ version 13). No performance claim or benchmark is made.
 
 Status at the R7.2 acceptance point: R1-R6 Verified; R7 Active; R7A
 Complete; R7.1 Complete; R7.2 Complete (evidence-backed); later R7.3+
-slices were not yet implemented at that historical point. The current status
-is recorded in the closure sections below; R7 remains Active and is not
-marked Verified.
+slices were not yet implemented at that historical point, and R7 was still
+Active rather than Verified. The closure sections below and the map carry the
+current status (R1-R13 Verified); this sentence said "remains" until 2026-09-12,
+when a read-only doc sweep found it stale.
 
 ### R7.3 pre-port projection oracle correction closure
 

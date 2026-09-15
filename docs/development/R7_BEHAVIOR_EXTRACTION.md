@@ -2034,8 +2034,10 @@ required Windows scenarios matching, four explicit platform skips, one
 accepted informational deviation). R7.5 `/context` and `/tools` CLI
 rendering is a completed Rust candidate pending independent review, with 16
 focused Rust CLI tests and TypeScript oracle coverage; its CLI-owned strings
-add no differential subject. R8-R12 remain not due; R7 remains Active and is
-not marked Verified.
+add no differential subject. At that point R8-R12 were not due and R7 was still
+Active (both long since resolved: R1-R13 are Verified -- see the map). This
+sentence said "remain"/"remains" until 2026-09-12, when a read-only doc sweep
+found it stale.
 
 ## Acceptance gates for R7 (evidence design)
 
