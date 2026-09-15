@@ -53,7 +53,15 @@ after the model has moved on. And once the backlog passes `REASONING_BYTES`
 that a normal stream is still read left to right, small enough that the
 collapsed thinking row and its line count stay live.
 
-## 3. Evidence
+## 3. Superseded (same day)
+
+The owner's next report -- "i would like it to display/render one character at a
+time" -- replaced this rule with a per-CHARACTER one:
+[170](170-one-character-at-a-time.md). The pacing and the lag bound are gone; the
+reveal releases one character per painted frame. The measurement above still
+stands as the record of why a rate budget alone could not work.
+
+## 4. Evidence
 
 - `a_stream_faster_than_the_pace_stays_within_the_lag_bound`: 120 chunks of 40
   chars at 60/s (2400 chars/s), asserting the lag stays under the bound plus one

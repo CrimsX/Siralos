@@ -225,6 +225,28 @@ The regression tests measure both halves: a 2400 chars/s stream must stay inside
 the bound (the test fails when the bound is made unreachable) and a
 reading-speed stream must still be released at the pace.
 
+## Owner follow-up 2: one character at a time (2026-09-12)
+
+Owner, after decision 169's bounded lag: "i would like it to display/render one
+character at a time". That is a rule about the STEP, so the reveal was rebuilt
+around it (decision [170](../decisions/170-one-character-at-a-time.md)): one
+character per painted frame, no rate budget, no debt, no catch-up, and the frame
+cadence (`REVEAL_CHAR_INTERVAL`, 6 ms ≈ 166 characters a second) is the
+character rate.
+
+That only works if a frame is cheap, and a frame was not: it cloned and wrapped
+the WHOLE transcript every time, so the cost grew with the session --
+**5.3 ms at 24 lines and 20.6 ms at 1200 in the unoptimized build `cargo run`
+produces (~85 ms extrapolated at 5000)** -- which is also why the text could feel
+rough in a long session. The render now builds only the rows the viewport shows:
+**648 µs at 5000 lines, and the frame is 2.20 ms at 24 lines versus 2.25 ms at
+5000**.
+
+Honest trade recorded with the decision: the character rate is capped by the
+frame rate, so a stream faster than ~166 chars/s is shown slower than it arrives.
+Nothing is dropped to hide that -- `push_reasoning` applies its bound to already
+revealed text only, so a backlog the reader is still owed is never trimmed away.
+
 **The completion check held**: `dispatch_tui_command` takes
 `(command, workspace_root, state, sink, worker, pane, progress, reasoning)` --
 no `application`, and none of the six capability parameters. A source check in

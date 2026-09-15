@@ -71,26 +71,18 @@ pub const REASONING_ROWS: usize = 8;
 /// How much of the newest thinking line the COLLAPSED row previews.
 pub const THINKING_TAIL_CHARS: usize = 60;
 
-/// How fast revealed text is released to the reader (S3c), so the answer
-/// reads left to right whatever chunk size the provider sends.
-pub const REVEAL_CHARS_PER_SEC: f64 = 240.0;
-
-/// The most one tick may release, so a long stall cannot dump a wall of
-/// text the instant a frame is painted. It is ALSO the most a channel may
-/// release per frame while catching up (see `REVEAL_MAX_LAG_CHARS`).
-pub const REVEAL_TICK_CHARS: usize = 480;
-
-/// How far the revealed text may fall behind what has already arrived.
+/// The cadence at which a frame may release ONE character.
 ///
-/// `REVEAL_CHARS_PER_SEC` alone cannot work: a reasoning stream that arrives at
-/// 2000 chars/s leaves a 240 chars/s reveal seconds behind, and the trace is
-/// still crawling past the reader long after the model has moved on (and, once
-/// the backlog passes `REASONING_BYTES`, text is trimmed away before it was ever
-/// shown). Past this bound a channel stops being paced and closes the gap, at
-/// most one `REVEAL_TICK_CHARS` per frame, so the display tracks the model
-/// within a couple of lines and still grows left to right for everything that
-/// arrives at a human speed.
-pub const REVEAL_MAX_LAG_CHARS: usize = 160;
+/// The reveal renders a character at a time (owner ruling), so the frame
+/// cadence IS the character rate: every painted frame releases exactly one
+/// character, and how often frames are painted is what makes the text flow
+/// faster or slower. One frame is a full layout -- measured at 2.2 ms in the
+/// unoptimized build the dev flow runs (`cargo run`), independent of the
+/// session length since the render builds only the visible window -- so this
+/// interval is also a CPU budget: 6 ms spends about a third of a core while it
+/// sustains the full 166 characters a second, and less whenever the model
+/// streams slower than that. It is the one knob for the reveal's feel.
+pub const REVEAL_CHAR_INTERVAL: Duration = Duration::from_millis(6);
 
 /// Toggle result line when mouse capture turns on: states the result and
 /// the copy trade (capture steals click-drag selection) with the way back.
@@ -411,30 +403,82 @@ pub fn wrap_line_to_width(text: &str, width: usize) -> Vec<String> {
     rows
 }
 
-/// Expand transcript entries into wrapped display rows (render layer).
+/// The transcript rows the viewport shows, wrapped from the TAIL.
 ///
-/// Returns owned `(row, style)` pairs; the caller borrows them into `Line`s
-/// that live until the frame is drawn. One stored line becomes one or more
-/// rows via [`wrap_line_to_width`]; timestamps wrap the same way (short in
-/// practice, one row) and keep the dim stamp style per row.
-fn wrapped_transcript_rows(
-    entries: &[TranscriptEntry],
+/// Returns owned `(row, style)` pairs for exactly the rows a frame paints, in
+/// order. One stored line expands to one or more rows via [`wrap_line_to_width`];
+/// timestamps wrap the same way (short in practice, one row) and keep the dim
+/// stamp style per row; `extras` are the rows that are not stored transcript
+/// (the thinking block, the answer's growing line, the indicator gap).
+///
+/// This exists because the previous shape cloned and wrapped the WHOLE
+/// transcript every frame, so a frame cost grew with the session -- measured at
+/// 5 ms with 24 lines and 21 ms with 1200 in an unoptimized build -- which no
+/// per-character reveal can afford. The work here is bounded by the viewport
+/// plus whatever the reader scrolled past it, and the rows are the same ones the
+/// whole-transcript version produced (the tests pin that equivalence).
+fn visible_transcript_rows(
+    transcript: &[TranscriptEntry],
+    fallback_lines: &[String],
+    extras: &[(&str, Option<&str>)],
     inner_width: usize,
+    height: usize,
+    scroll_offset: u16,
 ) -> Vec<(String, Style)> {
-    let mut wrapped = Vec::new();
-    for entry in entries {
-        let style = style_for_transcript_line(&entry.text);
-        for row in wrap_line_to_width(&entry.text, inner_width) {
-            wrapped.push((row, style));
+    if height == 0 {
+        return Vec::new();
+    }
+    // Everything the window needs: the viewport plus the rows scrolled past it.
+    let want = height.saturating_add(scroll_offset as usize);
+    // Collected BACKWARDS (tail first), so nothing before the window is wrapped.
+    let mut tail: Vec<(String, Style)> = Vec::with_capacity(want);
+    let push_entry = |text: &str,
+                      timestamp: Option<&str>,
+                      tail: &mut Vec<(String, Style)>| {
+        if tail.len() >= want {
+            return;
         }
-        if let Some(ts) = &entry.timestamp {
+        let text_style = style_for_transcript_line(text);
+        let mut rows: Vec<(String, Style)> =
+            wrap_line_to_width(text, inner_width)
+                .into_iter()
+                .map(|row| (row, text_style))
+                .collect();
+        if let Some(ts) = timestamp {
             let dim = Style::default().fg(Color::DarkGray);
-            for row in wrap_line_to_width(ts, inner_width) {
-                wrapped.push((row, dim));
-            }
+            rows.extend(
+                wrap_line_to_width(ts, inner_width)
+                    .into_iter()
+                    .map(|row| (row, dim)),
+            );
+        }
+        for row in rows.into_iter().rev() {
+            tail.push(row);
+        }
+    };
+    for (text, timestamp) in extras.iter().rev() {
+        push_entry(text, *timestamp, &mut tail);
+    }
+    if transcript.is_empty() {
+        // The harness and the older tests assign `transcript_lines` directly.
+        for line in fallback_lines.iter().rev() {
+            push_entry(line, None, &mut tail);
+        }
+    } else {
+        for entry in transcript.iter().rev() {
+            push_entry(&entry.text, entry.timestamp.as_deref(), &mut tail);
         }
     }
-    wrapped
+    // The same slice the whole-transcript version produced: skip what the
+    // reader scrolled past (clamped exactly as that version clamped it), take
+    // one viewport, and hand it back in reading order.
+    let len = tail.len();
+    let scroll = (scroll_offset as usize).min(len.saturating_sub(height));
+    // The window ends `scroll` rows before the LAST row, so in this
+    // tail-first collection it starts at `scroll` and runs one viewport.
+    let start = scroll;
+    let end = (scroll + height).min(len);
+    tail[start..end].iter().rev().cloned().collect()
 }
 
 /// Truncate a line to `max_chars` characters on a char boundary (bounded
@@ -956,10 +1000,6 @@ pub struct TuiState {
     pub stream_tail: String,
     /// How much of `reasoning` has been revealed.
     pub reasoning_shown: usize,
-    /// Last reveal tick, and the character debt carried between ticks.
-    pub reveal_last: Option<std::time::Instant>,
-    /// Characters still owed to the reader.
-    pub reveal_debt: f64,
 }
 
 impl Default for TuiState {
@@ -1001,8 +1041,6 @@ impl Default for TuiState {
             stream_buffer: String::new(),
             stream_tail: String::new(),
             reasoning_shown: 0,
-            reveal_last: None,
-            reveal_debt: 0.0,
         }
     }
 }
@@ -1064,81 +1102,70 @@ impl TuiState {
         }
     }
 
-    /// Release the text owed to the reader (S3c).
+    /// Release the next character owed to the reader, if any (S3c).
     ///
-    /// Called before every paint: the answer and the thinking are revealed at
-    /// `REVEAL_CHARS_PER_SEC` from the same budget, and the INCOMPLETE line is
-    /// kept in `stream_tail` so a long line grows left to right instead of
-    /// appearing whole. Pure in `now`, so the pacing is testable.
-    pub fn reveal_now(&mut self, now: std::time::Instant) {
-        let budget = match self.reveal_last {
-            None => REVEAL_TICK_CHARS as f64,
-            Some(previous) => {
-                let elapsed =
-                    now.duration_since(previous).as_secs_f64().min(1.0);
-                self.reveal_debt + elapsed * REVEAL_CHARS_PER_SEC
-            }
-        };
-        self.reveal_last = Some(now);
-        let paced = budget.min(REVEAL_TICK_CHARS as f64).floor() as usize;
-        // Each channel is paced, and each channel ALSO closes its own gap once
-        // it has fallen further behind than `REVEAL_MAX_LAG_CHARS`: a stream
-        // faster than the pace must not leave the reader watching text the
-        // model finished producing seconds ago. Per channel, so a long answer
-        // cannot starve the thinking (they used to share one budget, and the
-        // answer always spent it first).
-        let answer_pending = self.stream_buffer.chars().count();
-        let thinking_pending =
-            self.reasoning.len().saturating_sub(self.reasoning_shown);
-        let catch_up = |pending: usize| {
-            pending.saturating_sub(REVEAL_MAX_LAG_CHARS).min(REVEAL_TICK_CHARS)
-        };
-        let answer_allowance = paced.max(catch_up(answer_pending));
-        let thinking_allowance = paced.max(catch_up(thinking_pending));
-        if answer_allowance == 0 && thinking_allowance == 0 {
-            self.reveal_debt = budget;
-            return;
-        }
-        // Answer channel: complete lines become transcript rows, the rest
-        // stays visible as the growing tail.
-        let mut take = answer_allowance;
-        while take > 0 {
-            let Some(ch) = self.stream_buffer.chars().next() else {
-                break;
-            };
+    /// ONE character per call, by construction: the text is rendered a
+    /// character at a time, so the character rate IS the frame rate. The paint
+    /// path is the only caller -- one call, one painted frame, one character --
+    /// which is why there is no timer, no rate budget and no catch-up here. The
+    /// painters own the cadence ([`REVEAL_CHAR_INTERVAL`]); this owns the ORDER:
+    /// the answer first, the thinking after it.
+    pub fn reveal_char(&mut self) {
+        if let Some(ch) = self.stream_buffer.chars().next() {
             self.stream_buffer.remove(0);
-            take -= 1;
             if ch == '\n' {
                 let line = std::mem::take(&mut self.stream_tail);
                 self.push_line(line);
             } else {
                 self.stream_tail.push(ch);
             }
+            return;
         }
-        let answer_spent = answer_allowance - take;
-        // Thinking channel: its OWN allowance. The two channels used to share
-        // one budget, which meant a streaming answer starved the thinking
-        // completely; per channel, each keeps its pace instead.
-        let mut thinking_take = thinking_allowance;
-        let mut thinking_spent = 0usize;
-        if thinking_take > 0 && self.reasoning_shown < self.reasoning.len() {
-            let mut shown = self.reasoning_shown;
-            for ch in self.reasoning[shown..].chars() {
-                if thinking_take == 0 {
-                    break;
-                }
-                shown += ch.len_utf8();
-                thinking_take -= 1;
-                thinking_spent += 1;
-            }
-            self.reasoning_shown = shown;
+        if self.reasoning_shown < self.reasoning.len() {
+            let ch = self.reasoning[self.reasoning_shown..]
+                .chars()
+                .next()
+                .expect("an index below the length starts a character");
+            self.reasoning_shown += ch.len_utf8();
         }
-        // Only the budget actually LEFT OVER carries: what was spent is gone.
-        // BOTH channels spend from it -- charging only the answer let the
-        // thinking stream at the tick cap instead of the configured rate. A
-        // catch-up frame overspends it, which simply leaves no debt behind.
-        let spent = (answer_spent + thinking_spent) as f64;
-        self.reveal_debt = (budget - spent).max(0.0);
+    }
+
+    /// Whether the reader is still owed text.
+    ///
+    /// The character cadence applies only while something is pending; an idle
+    /// UI keeps the ordinary frame cadence.
+    #[must_use]
+    pub fn reveal_pending(&self) -> bool {
+        !self.stream_buffer.is_empty()
+            || self.reasoning_shown < self.reasoning.len()
+    }
+
+    /// Append streamed thinking, bounded to [`REASONING_BYTES`] of ALREADY
+    /// REVEALED text.
+    ///
+    /// The bound keeps a long trace from growing the state without end. What the
+    /// reader is still owed is NEVER dropped: with a per-character reveal a fast
+    /// trace can be thousands of characters ahead, and trimming that away would
+    /// skip text the reader never saw (and jump the visible text forward). The
+    /// buffer therefore exceeds the bound while a backlog exists and settles
+    /// back to it once the reveal has caught up.
+    pub fn push_reasoning(&mut self, text: &str) {
+        self.reasoning.push_str(text);
+        let excess = self.reasoning.len().saturating_sub(REASONING_BYTES);
+        let droppable = excess.min(self.reasoning_shown);
+        if droppable == 0 {
+            return;
+        }
+        // The reveal offset is a byte index into THIS buffer, so the cut has to
+        // land on a character boundary or the next slice panics.
+        let boundary = self
+            .reasoning
+            .char_indices()
+            .map(|(index, _)| index)
+            .find(|index| *index >= droppable)
+            .unwrap_or(self.reasoning.len());
+        self.reasoning.drain(..boundary);
+        self.reasoning_shown = self.reasoning_shown.saturating_sub(boundary);
     }
     /// The thinking block as transcript rows (S3b).
     ///
@@ -1718,58 +1745,48 @@ pub fn draw_with_pane(
     // Transcript: determine visible window over wrapped display rows
     // (text + optional dim timestamp). Deterministic: each stored line
     // expands to one or more rows at the pane's inner width via
-    // `wrapped_transcript_rows` (word boundaries, hard-break long tokens);
+    // `visible_transcript_rows` (word boundaries, hard-break long tokens);
     // stored text is never mutated. Scroll windows over rows, so the tail
     // of a long line stays readable instead of clipping off-screen.
     let height = transcript_area.height as usize;
-    // Build expanded line list with styles.
-    let entries: Vec<TranscriptEntry> = if !state.transcript.is_empty() {
-        state.transcript.clone()
-    } else {
-        state
-            .transcript_lines
-            .iter()
-            .map(|text| TranscriptEntry {
-                text: text.clone(),
-                timestamp: None,
-            })
-            .collect()
-    };
     // S3b: the thinking block renders as the last transcript rows, so it
-    // scrolls with the conversation and needs no layout surgery.
-    let mut entries = entries;
+    // scrolls with the conversation and needs no layout surgery. The answer's
+    // current line is appended the same way: it is what makes the answer read
+    // left to right instead of appearing whole.
     let reasoning_rows = state.reasoning_block_lines();
     let has_reasoning = !reasoning_rows.is_empty();
-    for line in reasoning_rows {
-        entries.push(TranscriptEntry { text: line, timestamp: None });
+    let blank = String::new();
+    let mut extras: Vec<(&str, Option<&str>)> =
+        Vec::with_capacity(reasoning_rows.len() + 2);
+    for line in &reasoning_rows {
+        extras.push((line.as_str(), None));
     }
     if !state.stream_tail.is_empty() {
-        // The answer's current line, revealed so far: this is what makes it
-        // read left to right instead of appearing whole.
-        entries.push(TranscriptEntry {
-            text: state.stream_tail.clone(),
-            timestamp: None,
-        });
+        extras.push((state.stream_tail.as_str(), None));
     }
     if has_reasoning && state.busy_since.is_some() {
         // Keep the indicator visually SEPARATE from the thinking block.
-        entries.push(TranscriptEntry { text: String::new(), timestamp: None });
+        extras.push((blank.as_str(), None));
     }
 
-    let wrapped =
-        wrapped_transcript_rows(&entries, transcript_area.width as usize);
-    let mut expanded: Vec<Line<'_>> = Vec::with_capacity(wrapped.len());
-    for (row, style) in &wrapped {
-        expanded.push(Line::from(row.as_str()).style(*style));
-    }
-    let total = expanded.len();
-    let max_scroll = total.saturating_sub(height);
-    let scroll = (state.scroll_offset as usize).min(max_scroll);
-    let start = if total <= height { 0 } else { total - height - scroll };
-    let end = (start + height).min(total);
-    let visible = &expanded[start..end];
+    // Only the rows the viewport shows are built (see
+    // [`visible_transcript_rows`]): the previous shape cloned and wrapped the
+    // WHOLE transcript every frame, so a frame cost grew with the session and a
+    // per-character reveal could not stay smooth.
+    let wrapped = visible_transcript_rows(
+        &state.transcript,
+        &state.transcript_lines,
+        &extras,
+        transcript_area.width as usize,
+        height,
+        state.scroll_offset,
+    );
+    let expanded: Vec<Line<'_>> = wrapped
+        .iter()
+        .map(|(row, style)| Line::from(row.as_str()).style(*style))
+        .collect();
 
-    let transcript = Paragraph::new(Text::from(visible.to_vec()))
+    let transcript = Paragraph::new(Text::from(expanded))
         .block(Block::default().borders(Borders::NONE))
         .style(Style::default().fg(Color::White));
     frame.render_widget(transcript, transcript_area);
@@ -2450,54 +2467,35 @@ pub fn render_to_buffer_with_pane(
     }
 
     let h = transcript_area.height as usize;
-    let entries: Vec<TranscriptEntry> = if !state.transcript.is_empty() {
-        state.transcript.clone()
-    } else {
-        state
-            .transcript_lines
-            .iter()
-            .map(|text| TranscriptEntry {
-                text: text.clone(),
-                timestamp: None,
-            })
-            .collect()
-    };
-    // S3b: the thinking block renders as the last transcript rows, so it
-    // scrolls with the conversation and needs no layout surgery.
-    let mut entries = entries;
+    // The same rows the `Frame` path builds, and the same bounded work: see
+    // [`visible_transcript_rows`].
     let reasoning_rows = state.reasoning_block_lines();
     let has_reasoning = !reasoning_rows.is_empty();
-    for line in reasoning_rows {
-        entries.push(TranscriptEntry { text: line, timestamp: None });
+    let blank = String::new();
+    let mut extras: Vec<(&str, Option<&str>)> =
+        Vec::with_capacity(reasoning_rows.len() + 2);
+    for line in &reasoning_rows {
+        extras.push((line.as_str(), None));
     }
     if !state.stream_tail.is_empty() {
-        // The answer's current line, revealed so far: this is what makes it
-        // read left to right instead of appearing whole.
-        entries.push(TranscriptEntry {
-            text: state.stream_tail.clone(),
-            timestamp: None,
-        });
+        extras.push((state.stream_tail.as_str(), None));
     }
     if has_reasoning && state.busy_since.is_some() {
-        // Keep the indicator visually SEPARATE from the thinking block.
-        entries.push(TranscriptEntry { text: String::new(), timestamp: None });
+        extras.push((blank.as_str(), None));
     }
-
-    // Same render-layer wrap as the `Frame` path above: scroll windows over
-    // wrapped rows so long lines stay readable instead of clipping.
-    let wrapped =
-        wrapped_transcript_rows(&entries, transcript_area.width as usize);
-    let mut expanded: Vec<Line<'_>> = Vec::with_capacity(wrapped.len());
-    for (row, style) in &wrapped {
-        expanded.push(Line::from(row.as_str()).style(*style));
-    }
-    let total = expanded.len();
-    let max_scroll = total.saturating_sub(h);
-    let scroll = (state.scroll_offset as usize).min(max_scroll);
-    let start = if total <= h { 0 } else { total - h - scroll };
-    let end = (start + h).min(total);
-    let visible = &expanded[start..end];
-    let transcript = Paragraph::new(Text::from(visible.to_vec()))
+    let wrapped = visible_transcript_rows(
+        &state.transcript,
+        &state.transcript_lines,
+        &extras,
+        transcript_area.width as usize,
+        h,
+        state.scroll_offset,
+    );
+    let expanded: Vec<Line<'_>> = wrapped
+        .iter()
+        .map(|(row, style)| Line::from(row.as_str()).style(*style))
+        .collect();
+    let transcript = Paragraph::new(Text::from(expanded))
         .block(Block::default().borders(Borders::NONE))
         .style(Style::default().fg(Color::White));
     transcript.render(transcript_area, &mut buf);
@@ -2856,9 +2854,16 @@ impl TuiSink {
             return;
         };
         let now = std::time::Instant::now();
+        // While the reader is owed text the frame cadence IS the character
+        // cadence (one character per frame); otherwise the ordinary interval.
+        let interval = if self.state.borrow().reveal_pending() {
+            REVEAL_CHAR_INTERVAL
+        } else {
+            REDRAW_INTERVAL
+        };
         let due = match self.last_redraw.get() {
             None => true,
-            Some(last) => now.duration_since(last) >= REDRAW_INTERVAL,
+            Some(last) => now.duration_since(last) >= interval,
         };
         if due {
             self.last_redraw.set(Some(now));
@@ -2872,11 +2877,12 @@ impl Write for TuiSink {
         let text = String::from_utf8_lossy(bytes);
         {
             let mut state = self.state.borrow_mut();
-            // S3c: hand the text to the REVEAL rather than the transcript,
-            // so a line the provider sends whole still appears left to
-            // right, and an unfinished line is visible as it grows.
+            // S3c: hand the text to the REVEAL rather than the transcript, so a
+            // line the provider sends whole still appears a character at a
+            // time, and an unfinished line is visible as it grows. The
+            // CHARACTER is released by the paint (one per frame), never here:
+            // this only buffers and asks for the frame that will release it.
             state.stream_buffer.push_str(&text);
-            state.reveal_now(std::time::Instant::now());
         }
         self.redraw_due();
         Ok(bytes.len())
@@ -4545,18 +4551,33 @@ mod tests {
         assert!(!content2.contains("working"));
     }
 
+    /// Release the whole backlog the way the paint path does -- one character
+    /// per frame -- without a terminal to paint into.
+    ///
+    /// The sink only BUFFERS now: a character is released by the frame that
+    /// shows it, so a test that wants text in the transcript paints.
+    fn paint_until_settled(state: &Rc<RefCell<TuiState>>) {
+        let mut guard = state.borrow_mut();
+        while guard.reveal_pending() {
+            guard.reveal_char();
+        }
+    }
+
     #[test]
     fn tui_sink_appends_sanitized_lines_verbatim() {
         let state = Rc::new(RefCell::new(TuiState::new()));
         let mut sink = TuiSink::new(state.clone());
         // Simulate sanitized lines as the session would write them.
         sink.write_all(b"hello world\n").expect("write");
+        paint_until_settled(&state);
         sink.write_all(b"second line\n").expect("write");
+        paint_until_settled(&state);
         let transcript = state.borrow().transcript_lines.clone();
         assert_eq!(transcript, vec!["hello world", "second line"]);
         // Ensure unsanitized content would be stored verbatim (the sink does
         // not inject sanitization; upstream already sanitized).
         sink.write_all(b"already sanitized ^@\n").expect("write");
+        paint_until_settled(&state);
         assert_eq!(state.borrow().transcript_lines[2], "already sanitized ^@");
     }
 
@@ -4564,15 +4585,15 @@ mod tests {
     fn tui_sink_respects_transcript_bound() {
         let state = Rc::new(RefCell::new(TuiState::new()));
         let mut sink = TuiSink::new(state.clone());
-        let start = std::time::Instant::now();
         for i in 0..(MAX_TRANSCRIPT_LINES + 50) {
             let line = format!("line {i}\n");
             sink.write_all(line.as_bytes()).expect("write");
-            // S3c: the reveal is paced, so advance the clock (a second per
-            // line is far more than the budget needs).
-            state.borrow_mut().reveal_now(
-                start + std::time::Duration::from_secs(i as u64 + 1),
-            );
+            // S3c: the reveal is one character per PAINT, so a test that wants
+            // the line in the transcript drains it the way the paint path does.
+            let mut guard = state.borrow_mut();
+            while guard.reveal_pending() {
+                guard.reveal_char();
+            }
         }
         let transcript = state.borrow().transcript_lines.clone();
         assert_eq!(transcript.len(), MAX_TRANSCRIPT_LINES);
@@ -5599,45 +5620,48 @@ mod tests {
     }
 
     #[test]
-    fn reveal_releases_text_at_the_configured_rate() {
-        // S3c: the answer and the thinking are revealed at a steady rate, so
-        // text reads left to right instead of appearing in provider chunks.
-        use std::time::{Duration, Instant};
+    fn the_reveal_releases_one_character_per_call() {
+        // The owner's rule: the text renders a character at a time, so one
+        // call releases exactly ONE character -- never a chunk, and never a
+        // burst to catch up.
         let mut state = TuiState::new();
-        let start = Instant::now();
-        // A long line is released a tick at a time: the reader sees it grow
-        // instead of the whole line appearing at once.
-        state.stream_buffer = "a".repeat(REVEAL_TICK_CHARS * 2) + "\n";
-        state.reasoning = "thinking hard".to_owned();
-        state.reveal_now(start);
-        assert_eq!(
-            state.stream_tail.chars().count(),
-            REVEAL_TICK_CHARS,
-            "the first tick releases one tick's budget"
-        );
+        assert!(!state.reveal_pending(), "nothing owed, nothing to release");
+        state.stream_buffer = "hi\n".to_owned();
+        state.reveal_char();
+        assert_eq!(state.stream_tail, "h");
+        state.reveal_char();
+        assert_eq!(state.stream_tail, "hi");
         assert!(
-            !state.stream_buffer.is_empty(),
-            "the rest stays buffered for later frames"
+            !state.transcript_lines.iter().any(|line| line == "hi"),
+            "the line is complete only when its newline is released"
         );
-        // One second later the remaining budget is owed, and it is less than
-        // the whole remainder: the reveal is PACED, not instant.
-        state.reveal_now(start + Duration::from_secs(1));
+        state.reveal_char();
         assert!(
-            !state.stream_buffer.is_empty(),
-            "a second releases the per-second rate, not the whole buffer"
+            state.transcript_lines.iter().any(|line| line == "hi"),
+            "the newline is the character that completes the row"
         );
-        // A short buffer is released completely, and the reasoning with it.
-        state.stream_buffer = "short line\n".to_owned();
-        state.reveal_now(start + Duration::from_secs(3));
-        assert!(state.stream_buffer.is_empty());
-        assert_eq!(state.reasoning_shown, state.reasoning.len());
-        assert!(
-            state
-                .transcript_lines
-                .iter()
-                .any(|line| line.ends_with("short line")),
-            "a revealed complete line lands in the transcript"
-        );
+        assert!(state.stream_tail.is_empty());
+        assert!(!state.reveal_pending(), "the answer is fully revealed");
+
+        // The thinking takes over, a character at a time, once the answer is
+        // out -- the order is the reveal's, the cadence is the painter's.
+        state.reasoning = "why".to_owned();
+        assert!(state.reveal_pending());
+        state.reveal_char();
+        assert_eq!(state.reasoning_shown, 1);
+        state.reveal_char();
+        state.reveal_char();
+        assert_eq!(state.reasoning_shown, 3);
+        assert!(!state.reveal_pending());
+    }
+
+    #[test]
+    fn the_character_cadence_is_the_documented_one() {
+        // One character per painted frame, so this interval is BOTH the
+        // character rate and the CPU budget: a frame is a full layout
+        // (~1.7 ms measured in the unoptimized build the dev flow runs), and
+        // 6 ms spends under a third of a core at the full 166 chars/s.
+        assert_eq!(REVEAL_CHAR_INTERVAL, std::time::Duration::from_millis(6));
     }
 
     #[test]
@@ -5763,13 +5787,14 @@ mod tests {
         }
         sink.write_all(b"streamed line\n").expect("write");
         assert_eq!(frames.get(), 1, "a new line asks for a frame");
+        paint_until_settled(&state);
         assert!(
             state
                 .borrow()
                 .transcript
                 .iter()
                 .any(|entry| entry.text == "streamed line"),
-            "the line still lands in the transcript"
+            "the line lands in the transcript once the frame releases it"
         );
         // Coalesced: a fast stream must not repaint per delta.
         sink.write_all(b"second line\n").expect("write");
@@ -8282,75 +8307,198 @@ mod tests {
     }
 
     #[test]
-    fn a_stream_faster_than_the_pace_stays_within_the_lag_bound() {
-        // The owner-reported defect this guards: a reasoning stream arriving
-        // faster than `REVEAL_CHARS_PER_SEC` left the display seconds behind --
-        // measured at 2904 chars behind after two seconds of a 1920 chars/s
-        // stream -- so the trace was still crawling past the reader long after
-        // the model had moved on, and a long enough backlog was trimmed away
-        // before it was ever shown. Pacing applies to text that arrives at a
-        // human speed; faster streams must be TRACKED.
-        use std::time::{Duration, Instant};
-        let mut state = TuiState::new();
-        let start = Instant::now();
-        let mut now = start;
-        let chunk = "thinking. ".repeat(4); // 40 chars, ten times the pace
-        let mut shown_at: Vec<usize> = Vec::new();
-        let mut steps: Vec<usize> = Vec::new();
-        let mut last = 0usize;
-        for _ in 0..120 {
-            state.reasoning.push_str(&chunk);
-            now += Duration::from_millis(16);
-            state.reveal_now(now);
-            if state.reasoning_shown > last {
-                steps.push(state.reasoning_shown - last);
+    fn the_visible_window_matches_the_whole_transcript_window() {
+        // The frame builds only the rows the viewport shows (the whole-
+        // transcript shape made a frame cost grow with the session, which no
+        // per-character reveal can afford). Those rows must be exactly the ones
+        // the whole-transcript version produced, for every width, height and
+        // scroll offset.
+        fn reference(
+            transcript: &[TranscriptEntry],
+            extras: &[(&str, Option<&str>)],
+            width: usize,
+            height: usize,
+            offset: u16,
+        ) -> Vec<(String, Style)> {
+            let mut rows: Vec<(String, Style)> = Vec::new();
+            for entry in transcript {
+                let style = style_for_transcript_line(&entry.text);
+                for row in wrap_line_to_width(&entry.text, width) {
+                    rows.push((row, style));
+                }
+                if let Some(ts) = &entry.timestamp {
+                    let dim = Style::default().fg(Color::DarkGray);
+                    for row in wrap_line_to_width(ts, width) {
+                        rows.push((row, dim));
+                    }
+                }
             }
-            last = state.reasoning_shown;
-            shown_at.push(last);
+            for (text, ts) in extras {
+                let style = style_for_transcript_line(text);
+                for row in wrap_line_to_width(text, width) {
+                    rows.push((row, style));
+                }
+                if let Some(ts) = ts {
+                    let dim = Style::default().fg(Color::DarkGray);
+                    for row in wrap_line_to_width(ts, width) {
+                        rows.push((row, dim));
+                    }
+                }
+            }
+            let total = rows.len();
+            let max_scroll = total.saturating_sub(height);
+            let scroll = (offset as usize).min(max_scroll);
+            let start =
+                if total <= height { 0 } else { total - height - scroll };
+            let end = (start + height).min(total);
+            rows[start..end].to_vec()
         }
-        let arrived = state.reasoning.len();
-        let lag = arrived - state.reasoning_shown;
-        assert!(
-            lag <= REVEAL_MAX_LAG_CHARS + chunk.len(),
-            "the display must track the stream: lag={lag} of {arrived} arrived"
+
+        for count in [0usize, 1, 5, 40, 200] {
+            let mut state = TuiState::new();
+            for i in 0..count {
+                let line = format!("> line {i} {}", "word ".repeat(i % 7));
+                state.transcript_lines.push(line.clone());
+                state.transcript.push(TranscriptEntry {
+                    text: line,
+                    timestamp: (i % 3 == 0)
+                        .then(|| "2026-09-12 10:00".to_owned()),
+                });
+            }
+            for width in [12usize, 21, 40, 100] {
+                for height in [1usize, 3, 24] {
+                    for offset in [0u16, 1, 7, 100, 5000] {
+                        let extras: Vec<(&str, Option<&str>)> = vec![
+                            ("thinking row", None),
+                            ("partial answer", None),
+                        ];
+                        let bounded = visible_transcript_rows(
+                            &state.transcript,
+                            &state.transcript_lines,
+                            &extras,
+                            width,
+                            height,
+                            offset,
+                        );
+                        let whole = reference(
+                            &state.transcript,
+                            &extras,
+                            width,
+                            height,
+                            offset,
+                        );
+                        assert_eq!(
+                            bounded, whole,
+                            "count={count} width={width} height={height} offset={offset}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_long_session_does_not_make_a_frame_expensive() {
+        // The bound is on the WORK, not on wall-clock: the frame builds only the
+        // rows the viewport shows, so its cost stops growing with the session.
+        // The whole-transcript shape measured ~5 ms at 24 lines and ~21 ms at
+        // 1200 lines in this build; the numbers are printed so a run records
+        // them, and the assertion is generous enough for a loaded machine.
+        use std::time::{Duration, Instant};
+        let build = |lines: usize| {
+            let mut state = TuiState::new();
+            for i in 0..lines {
+                let line =
+                    format!("> line {i} with some ordinary words on it");
+                state.transcript_lines.push(line.clone());
+                state
+                    .transcript
+                    .push(TranscriptEntry { text: line, timestamp: None });
+            }
+            state
+        };
+        let long = build(5000);
+        let short = build(24);
+        let extras: Vec<(&str, Option<&str>)> = vec![("thinking row", None)];
+
+        let start = Instant::now();
+        let rows = visible_transcript_rows(
+            &long.transcript,
+            &long.transcript_lines,
+            &extras,
+            100,
+            24,
+            0,
         );
-        // Still left to right: the revealed prefix only ever grows, and no
-        // single frame dumps more than one tick's worth.
-        assert!(
-            shown_at.windows(2).all(|pair| pair[1] >= pair[0]),
-            "the reveal never goes backwards"
+        let window_cost = start.elapsed();
+        assert_eq!(rows.len(), 24, "exactly one viewport of rows");
+
+        let frame_cost = |state: &TuiState| {
+            let frames = 20u32;
+            let start = Instant::now();
+            for _ in 0..frames {
+                let _ = render_to_buffer(state, 100, 30);
+            }
+            start.elapsed() / frames
+        };
+        let short_frame = frame_cost(&short);
+        let long_frame = frame_cost(&long);
+        println!(
+            "window {window_cost:?} at 5000 lines; frame {short_frame:?} at 24 lines vs {long_frame:?} at 5000"
         );
         assert!(
-            steps.iter().copied().max().unwrap_or(0) <= REVEAL_TICK_CHARS,
-            "one frame releases at most a tick's worth: max={:?}",
-            steps.iter().copied().max()
+            window_cost.as_millis() < 40,
+            "the window must not walk the session: {window_cost:?}"
+        );
+        assert!(
+            long_frame < short_frame * 3 + Duration::from_millis(10),
+            "a 5000-line session must not paint slower than a 24-line one: {long_frame:?} vs {short_frame:?}"
         );
     }
 
     #[test]
-    fn a_stream_at_reading_speed_is_still_paced() {
-        // The lag bound must not turn the reveal into a dump: while a channel
-        // is behind the reader's pace, a frame still releases only the paced
-        // budget, so the text still grows left to right.
-        use std::time::{Duration, Instant};
+    fn a_fast_trace_is_never_dropped_before_it_is_shown() {
+        // push_reasoning bounds what is RETAINED, never what the reader is
+        // still owed: with a per-character reveal a fast trace can be thousands
+        // of characters ahead, and trimming that away would skip text nobody
+        // saw and jump the visible row forward.
         let mut state = TuiState::new();
-        let start = Instant::now();
-        state.reasoning = "abcdefghij".repeat(12); // 120 chars, under the bound
-        state.reveal_last = Some(start);
-        state.reveal_debt = 0.0;
-        state.reveal_now(start + Duration::from_millis(16));
+        state.push_reasoning(&"z".repeat(REASONING_BYTES * 2));
         assert_eq!(
-            state.reasoning_shown, 3,
-            "one 16 ms frame releases the paced budget, not the buffer"
+            state.reasoning.len(),
+            REASONING_BYTES * 2,
+            "nothing revealed yet means nothing may be dropped"
         );
-        state.reveal_now(start + Duration::from_millis(116));
-        assert_eq!(
-            state.reasoning_shown, 27,
-            "100 ms more releases 100 ms of pace plus the carried debt"
-        );
+        assert_eq!(state.reasoning_shown, 0);
+
+        // Once text HAS been shown, the bound applies to it: the buffer settles
+        // back to REASONING_BYTES and the reveal offset is rebased onto a
+        // character boundary.
+        state.reasoning_shown = state.reasoning.len();
+        state.push_reasoning("more");
         assert!(
-            state.reasoning_shown < state.reasoning.len(),
-            "the rest is still buffered for later frames"
+            state.reasoning.len() <= REASONING_BYTES,
+            "revealed text is trimmed to the bound, got {}",
+            state.reasoning.len()
         );
+        // The rebase must leave a usable offset: revealing from it cannot panic.
+        state.reveal_char();
+        assert!(state.reasoning_shown <= state.reasoning.len());
+    }
+
+    #[test]
+    fn a_multibyte_trace_is_revealed_and_trimmed_on_character_boundaries() {
+        // The reveal offset is a BYTE index, so dropping a prefix has to land on
+        // a character boundary or the next slice panics.
+        let mut state = TuiState::new();
+        state.push_reasoning(&"é".repeat(REASONING_BYTES));
+        for _ in 0..64 {
+            state.reveal_char();
+        }
+        assert_eq!(state.reasoning_shown, 128, "two bytes per character");
+        state.reasoning_shown = state.reasoning.len();
+        state.push_reasoning("é");
+        assert!(state.reasoning.is_char_boundary(state.reasoning_shown));
+        state.reveal_char();
     }
 }

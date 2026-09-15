@@ -1441,9 +1441,15 @@ fn pump_worker(
     let mut stop;
     loop {
         // A drain never waits: an empty channel is the END of its work, not a
-        // tick to sit through.
+        // tick to sit through. Otherwise the wait is the TICK, and while the
+        // reader is owed text the tick is the character cadence -- one painted
+        // frame releases one character, so waking at the frame interval would
+        // cap the text at a third of the rate the cadence allows.
         let timeout = match until {
             Until::Drain => std::time::Duration::ZERO,
+            _ if state.borrow().reveal_pending() => {
+                crate::tui::REVEAL_CHAR_INTERVAL
+            }
             _ => WORKER_WAIT,
         };
         let event = match worker.wait(timeout) {
@@ -4219,11 +4225,11 @@ pub fn run_interactive_tui_with_options(
         let pane_cache = Rc::clone(&pane_cache);
         let draw_error = Rc::clone(&draw_error);
         move || {
-            // S3c: every paint releases the text the reader is owed, so the
-            // answer and the thinking grow left to right at a steady rate
-            // whatever chunk size the provider sent -- and the backlog keeps
-            // draining on the idle ticks after a turn ends.
-            tui_state.borrow_mut().reveal_now(std::time::Instant::now());
+            // S3c: every paint releases exactly ONE character of the text the
+            // reader is owed (owner ruling: the text renders a character at a
+            // time), so the reveal and the frame are the same event -- the
+            // cadence at which frames are painted IS the character rate.
+            tui_state.borrow_mut().reveal_char();
             if let Ok(mut terminal) = terminal.try_borrow_mut() {
                 // A frame already in progress is skipped, but a REAL failure
                 // (a dead terminal) is kept and reported once, instead of
@@ -4243,21 +4249,26 @@ pub fn run_interactive_tui_with_options(
             }
         }
     };
-    // A streamed turn can emit hundreds of deltas a second. The loop's own
-    // draws stay unconditional (they mark turn boundaries), but the
-    // PER-EVENT repaints are throttled: unthrottled, the process spends its
-    // time painting frames and the text arrives in lumps -- the "laggy, not
-    // smooth" report. A key press forces a frame so expanding is instant.
+    // A streamed turn can emit hundreds of deltas a second, and each painted
+    // frame releases ONE character (the reveal and the frame are the same
+    // event), so this throttle IS the character cadence:
+    // crate::tui::REVEAL_CHAR_INTERVAL while the reader is owed text, the
+    // ordinary redraw interval otherwise. A key press forces a frame so
+    // expanding is instant.
     let draw_throttled = {
         let draw_now = draw_now.clone();
+        let tui_state = Rc::clone(&tui_state);
         let last = Rc::new(std::cell::Cell::new(None::<std::time::Instant>));
         move || {
             let now = std::time::Instant::now();
+            let interval = if tui_state.borrow().reveal_pending() {
+                crate::tui::REVEAL_CHAR_INTERVAL
+            } else {
+                crate::tui::REDRAW_INTERVAL
+            };
             let due = match last.get() {
                 None => true,
-                Some(previous) => {
-                    now.duration_since(previous) >= crate::tui::REDRAW_INTERVAL
-                }
+                Some(previous) => now.duration_since(previous) >= interval,
             };
             if due {
                 last.set(Some(now));
@@ -4282,26 +4293,7 @@ pub fn run_interactive_tui_with_options(
         let mut sanitizer = crate::sanitize::TerminalSanitizer::new();
         move |text: &str| {
             let safe = sanitizer.push(text);
-            {
-                let mut state = tui_state.borrow_mut();
-                state.reasoning.push_str(&safe);
-                if state.reasoning.len() > crate::tui::REASONING_BYTES {
-                    let cut =
-                        state.reasoning.len() - crate::tui::REASONING_BYTES;
-                    let boundary = state
-                        .reasoning
-                        .char_indices()
-                        .map(|(index, _)| index)
-                        .find(|index| *index >= cut)
-                        .unwrap_or(cut);
-                    state.reasoning.drain(..boundary);
-                    // The reveal offset is a byte index into THIS buffer: after
-                    // trimming the front it must be rebased, or the next slice
-                    // lands on a non-character boundary and panics.
-                    state.reasoning_shown =
-                        state.reasoning_shown.saturating_sub(boundary);
-                }
-            }
+            tui_state.borrow_mut().push_reasoning(&safe);
             draw_now();
         }
     };
@@ -4967,18 +4959,12 @@ mod tests {
         }
     }
 
-    /// Release the sink's reveal budget so a test can read what was rendered.
-    ///
-    /// The live loop does this on every frame; a test asks for the whole
-    /// backlog at once (the pacing itself is pinned by the TUI tests).
+    /// Release the whole backlog, one character at a time -- exactly what the
+    /// paint path does, just without a terminal to paint into.
     fn settle_reveal(state: &Rc<RefCell<TuiState>>) {
         let mut guard = state.borrow_mut();
-        let base = std::time::Instant::now();
-        for step in 0..32 {
-            if guard.stream_buffer.is_empty() {
-                break;
-            }
-            guard.reveal_now(base + std::time::Duration::from_secs(step + 1));
+        while guard.reveal_pending() {
+            guard.reveal_char();
         }
     }
 
@@ -5445,7 +5431,9 @@ mod tests {
             let mut progress = || {
                 {
                     let mut guard = state.borrow_mut();
-                    guard.reveal_now(std::time::Instant::now());
+                    // One character per painted frame: the C3 acceptance is that
+                    // the frame -- not a provider event -- is what releases it.
+                    guard.reveal_char();
                     released.push(
                         guard.stream_tail.len()
                             + guard
@@ -7934,6 +7922,7 @@ mod tests {
             !tui_state.borrow().confirming_provider_removal,
             "removal flag must reset after the decision"
         );
+        settle_reveal(&tui_state);
         assert!(
             tui_state.borrow().transcript_lines.iter().any(|line| line
                 .contains(
@@ -7992,6 +7981,7 @@ mod tests {
                 tui_state.borrow().pending_approval.is_none(),
                 "modal must close after cancellation"
             );
+            settle_reveal(&tui_state);
             assert!(
                 tui_state
                     .borrow()
