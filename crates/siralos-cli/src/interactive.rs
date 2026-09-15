@@ -76,7 +76,8 @@ use crate::tui::TuiState;
 // same seam the shared drain uses, so one request covers both channels.
 use crate::sanitize::{TerminalSanitizer, sanitize_for_display};
 use crate::session_worker::{
-    EventSource, WorkerCommand, WorkerEvent, WorkerSource, WorkerWait,
+    EventSource, WorkerCommand, WorkerEvent, WorkerGuard, WorkerSource,
+    WorkerWait,
 };
 
 /// Session provider enum for B2 replay/record composition.
@@ -4114,7 +4115,7 @@ pub fn run_interactive_tui_with_options(
     let pane_cache: Rc<RefCell<Option<crate::tui::ContextPaneData>>> =
         Rc::new(RefCell::new(None));
     let tui_state = Rc::new(RefCell::new(TuiState::new()));
-    let mut worker = await_worker_ready(
+    let worker = await_worker_ready(
         WorkerSource::new(spawn_tui_worker(
             &workspace_root,
             options.config_path,
@@ -4125,7 +4126,19 @@ pub fn run_interactive_tui_with_options(
 
     // Guard restores raw mode + alternate screen on every exit path.
     // `mut`: `/mouse` re-pairs the terminal escape through it in-loop.
-    let mut _guard = TerminalGuard::enter().map_err(InteractiveError::Io)?;
+    let mut _guard = match TerminalGuard::enter() {
+        Ok(guard) => guard,
+        Err(error) => {
+            // No terminal was taken over, but the worker is already running:
+            // stop it and WAIT, so its one flush happens on this exit path too.
+            WorkerGuard::new(worker).shutdown();
+            return Err(InteractiveError::Io(error));
+        }
+    };
+    // C2 step 4: declared AFTER the terminal guard, so it drops FIRST — the
+    // worker is stopped and joined (and the recordings flushed exactly once, by
+    // the one owner) before the terminal is restored, on EVERY exit path.
+    let mut worker = WorkerGuard::new(worker);
     let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
     // S2 chunk 4: the terminal is SHARED, because the sink must be able to
     // ask for a frame while a streamed turn is arriving -- the loop itself
@@ -4588,7 +4601,7 @@ pub fn run_interactive_tui_with_options(
                 open_model_picker_via_worker(
                     &mut sink,
                     &tui_state,
-                    &mut worker,
+                    worker.source(),
                     &pane_cache,
                     &mut progress,
                     &mut reasoning_sink,
@@ -4599,7 +4612,7 @@ pub fn run_interactive_tui_with_options(
                     &workspace_root,
                     &tui_state,
                     &mut sink,
-                    &mut worker,
+                    worker.source(),
                     &pane_cache,
                     &mut progress,
                     &mut reasoning_sink,
@@ -4622,7 +4635,7 @@ pub fn run_interactive_tui_with_options(
                     &workspace_root,
                     &mut sink,
                     &tui_state,
-                    &mut worker,
+                    worker.source(),
                     &pane_cache,
                     &mut progress,
                     &mut reasoning_sink,
@@ -4641,10 +4654,11 @@ pub fn run_interactive_tui_with_options(
         draw_now();
     }
 
-    // Stop the worker and WAIT. The recordings' single flush (decision 78's
-    // one-owner rule) happens inside that join, so it has happened before
-    // `_guard` restores the terminal on this path. The paths that never reach
-    // this line -- an early `?` return, a panic -- are step 4's.
+    // C2 step 4: stop the worker and WAIT. The recordings' single flush
+    // (decision 78's one-owner rule) happens inside that join, so it has
+    // happened before `_guard` restores the terminal -- which it now does,
+    // right after this returns. The `WorkerGuard` covers the paths that never
+    // reach this line.
     worker.shutdown();
     Ok(())
 }
@@ -4679,7 +4693,7 @@ fn spawn_tui_worker(
 /// JOIN the worker: a frontend that returned an error while the worker was
 /// still flushing would lose the recordings on exactly the startup that failed.
 fn await_worker_ready(
-    worker: WorkerSource,
+    mut worker: WorkerSource,
     state: &Rc<RefCell<TuiState>>,
     pane: &Rc<RefCell<Option<crate::tui::ContextPaneData>>>,
 ) -> Result<WorkerSource, InteractiveError> {
@@ -7272,9 +7286,12 @@ mod tests {
             spawn_pos < guard_pos && ready_pos < guard_pos,
             "the worker must be spawned and its first event awaited BEFORE the terminal is taken over"
         );
+        let worker_guard_pos = body
+            .find("WorkerGuard::new")
+            .expect("the TUI holds the worker in a guard");
         assert!(
-            body.find("worker.shutdown()").is_some_and(|end| end > guard_pos),
-            "the exit path stops the worker (and joins), so its single flush happens before the terminal is restored"
+            guard_pos < worker_guard_pos,
+            "the worker guard is declared AFTER the terminal guard, so it drops (and joins) FIRST"
         );
         // And the TUI entry holds no session: the completion check for C2
         // step 3 is that the session value never exists on this thread.

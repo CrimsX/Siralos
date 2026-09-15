@@ -420,7 +420,11 @@ impl WorkerHandle {
 
     /// Stop the worker and WAIT for it: the recordings are flushed before this
     /// returns (decision 78's single-owner rule, decision 167 step 4).
-    pub fn shutdown(mut self) {
+    ///
+    /// Takes `&mut self` so the owner can be a guard that runs this on drop; a
+    /// second call is harmless (the join handle is already taken, and a send to
+    /// a stopped worker fails quietly).
+    pub fn shutdown(&mut self) {
         let _ = self.commands.send(WorkerCommand::Shutdown);
         if let Some(join) = self.join.take() {
             let _ = join.join();
@@ -492,8 +496,50 @@ impl WorkerSource {
 
     /// Stop the worker and WAIT for it: the recordings are flushed before this
     /// returns (decision 78's single-owner rule, decision 167 step 4).
-    pub fn shutdown(self) {
+    pub fn shutdown(&mut self) {
         self.handle.shutdown();
+    }
+}
+
+/// Step 4: the worker is stopped on EVERY exit path (decision 168 R6).
+///
+/// The normal exit calls `shutdown` explicitly, which is what a reader expects.
+/// This guard is what makes the guarantee true for the OTHER paths as well: an
+/// early `?` return, a panic inside the loop, or an exit branch added later
+/// that nobody remembers to shut down.
+///
+/// It must be declared AFTER the terminal guard: locals drop in reverse
+/// declaration order, so the join (and therefore the recordings' single flush)
+/// happens BEFORE the alternate screen is restored -- known, not hoped for.
+pub struct WorkerGuard {
+    source: WorkerSource,
+    stopped: bool,
+}
+
+impl WorkerGuard {
+    /// Take ownership of a running worker.
+    #[must_use]
+    pub fn new(source: WorkerSource) -> Self {
+        Self { source, stopped: false }
+    }
+
+    /// The worker, for as long as the guard has not stopped it.
+    pub fn source(&mut self) -> &mut WorkerSource {
+        &mut self.source
+    }
+
+    /// Send `Shutdown` and join -- exactly once.
+    pub fn shutdown(&mut self) {
+        if !self.stopped {
+            self.stopped = true;
+            self.source.shutdown();
+        }
+    }
+}
+
+impl Drop for WorkerGuard {
+    fn drop(&mut self) {
+        self.shutdown();
     }
 }
 
@@ -743,6 +789,38 @@ pub(crate) mod worker_source_tests {
     }
 
     #[test]
+    fn dropping_the_guard_stops_the_worker_exactly_once() {
+        // Step 4: the worker is stopped on EVERY exit path, which the guard is
+        // what makes true for the paths a reader is not looking at (an early
+        // `?` return, a panic). The property is the DROP.
+        let s = scripted();
+        {
+            let _guard = super::WorkerGuard::new(s.source);
+        }
+        assert_eq!(s.commands.try_recv(), Ok(WorkerCommand::Shutdown));
+        assert_eq!(
+            s.commands.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Disconnected),
+            "the guard took the handle with it, so a second Shutdown is impossible"
+        );
+    }
+
+    #[test]
+    fn an_explicit_shutdown_is_not_repeated_when_the_guard_drops() {
+        let s = scripted();
+        {
+            let mut guard = super::WorkerGuard::new(s.source);
+            guard.shutdown();
+        }
+        assert_eq!(s.commands.try_recv(), Ok(WorkerCommand::Shutdown));
+        assert_eq!(
+            s.commands.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Disconnected),
+            "the explicit exit path and the drop are one shutdown"
+        );
+    }
+
+    #[test]
     fn a_wait_reports_idle_then_the_event_and_then_a_gone_worker() {
         // The frontend's turn loop reads exactly these three outcomes: `Idle` is
         // the tick that keeps the reveal moving while the model is silent, and
@@ -935,7 +1013,7 @@ mod loop_tests {
             std::thread::current().id()
         ));
         std::fs::create_dir_all(&dir).expect("temp workspace");
-        let worker = super::spawn_worker(Some(dir.clone()), None);
+        let mut worker = super::spawn_worker(Some(dir.clone()), None);
         assert!(
             worker.send(WorkerCommand::Shutdown),
             "the worker accepts a command"
@@ -1343,6 +1421,59 @@ mod loop_tests {
             ],
             "the pane goes out before the header and again after the settled turn"
         );
+    }
+
+    #[test]
+    fn a_second_shutdown_never_flushes_a_second_time() {
+        let mut session = FakeSession::default();
+        run(
+            vec![WorkerCommand::Shutdown, WorkerCommand::Shutdown],
+            &mut session,
+            &CancelFlag::new(),
+        );
+        assert_eq!(session.flushes, 1, "the loop returns on the first one");
+    }
+
+    #[test]
+    fn the_recordings_flush_exactly_once_before_the_terminal_guard_releases() {
+        // Step 4's real question is not "was flush called" but "has the store
+        // been written by the time the frontend restores the terminal". This
+        // drives the REAL worker on a workspace that opted into record-replay
+        // and observes the store on disk after the guard drops.
+        let dir = std::env::temp_dir().join(format!(
+            "siralos-worker-flush-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp workspace");
+        std::fs::write(
+            dir.join("siralos.toml"),
+            "[profile]\nname = \"default\"\nprovider = \"example-vendor\"\nmodel = \"example/model-a\"\nendpoint = \"https://api.example.com/v1\"\nprotocol = \"openai-completions\"\nrecord-replay = true\n",
+        )
+        .expect("profile");
+        let store = dir.join(".siralos").join("replay-store.json");
+        assert!(!store.exists(), "nothing is written before the shutdown");
+
+        {
+            let mut guard = super::WorkerGuard::new(super::WorkerSource::new(
+                super::spawn_worker(Some(dir.clone()), None),
+            ));
+            // The worker composes before it answers, so waiting for the header
+            // makes the drop below a shutdown of a COMPOSED session.
+            assert!(
+                matches!(
+                    guard.source().wait(std::time::Duration::from_secs(60)),
+                    super::WorkerWait::Event(WorkerEvent::Ready(_))
+                ),
+                "the worker composed a session and announced its header"
+            );
+        }
+        assert!(
+            store.exists(),
+            "the guard joined the worker, so the recordings were flushed"
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
