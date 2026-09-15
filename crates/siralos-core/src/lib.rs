@@ -21,6 +21,7 @@ pub mod context_scheduler;
 pub mod determinism;
 pub mod doctor;
 pub mod domain;
+pub mod evaluation;
 pub mod evolution;
 pub mod executor;
 pub mod identity;

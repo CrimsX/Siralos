@@ -24,6 +24,7 @@
     "check:rust-all": "npm run check:rust && npm run check:differential && npm run check:rust-format && npm run check:rust-clippy && npm run test:rust",
     "check": "npm run format:check && npm run lint && npm run check:docs && npm run check:context && npm run check:identity && npm run check:public && npm run check:secrets && npm run check:rust-all",
     "siralos": "cargo run --locked --bin siralos --",
+    "evaluate": "cargo run --locked --features differential-harness --bin siralos-harness -- evaluate",
     "siralos:release": "cargo run --release --locked --bin siralos --",
     "build:domain-conformance": "node scripts/domain/build-conformance-guests.mjs"
   },

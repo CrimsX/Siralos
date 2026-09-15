@@ -12,6 +12,7 @@
 //! build.
 
 pub mod configuration;
+pub mod evaluation;
 pub mod interactive;
 pub mod output;
 pub mod sanitize;

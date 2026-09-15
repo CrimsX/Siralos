@@ -2300,6 +2300,47 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
     }
 }
 
+impl SessionComposition<'_> {
+    /// Ticket 135: provider-reported usage totalled over this session's
+    /// recordings.
+    ///
+    /// `None` means the session recorded nothing at all -- there is no
+    /// recorder, so this was not a `record-replay` run. `Some` with `None`
+    /// fields means the recorder exists and the provider reported no usage:
+    /// absent stays absent, never a fabricated zero (decision 102's rule).
+    /// Read this BEFORE `flush()`, which hands the recorder away.
+    pub(crate) fn usage_totals(
+        &self,
+    ) -> Option<siralos_core::evaluation::UsageTotals> {
+        let recorder = self.record_recorder.as_ref()?;
+        let recordings = recorder.records_snapshot();
+        let mut totals = siralos_core::evaluation::UsageTotals::default();
+        for recording in &recordings {
+            accumulate_usage(
+                &mut totals.input_tokens,
+                recording.identity.input_tokens,
+            );
+            accumulate_usage(
+                &mut totals.output_tokens,
+                recording.identity.output_tokens,
+            );
+            accumulate_usage(
+                &mut totals.cached_tokens,
+                recording.identity.cached_tokens,
+            );
+        }
+        Some(totals)
+    }
+}
+
+/// Add one reported value to a running total, leaving it absent when nothing
+/// reported one.
+fn accumulate_usage(total: &mut Option<u64>, value: Option<u64>) {
+    if let Some(value) = value {
+        *total = Some(total.unwrap_or(0).saturating_add(value));
+    }
+}
+
 /// Compose one session — the SINGLE definition both loops call (T4).
 ///
 /// This is the verbatim T1 composition block both loops duplicated:

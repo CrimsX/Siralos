@@ -262,6 +262,21 @@ npm run check
 
 This covers formatting, linting, documentation links, project-context, identity and public-hygiene ratchets, Rust architecture, R2 differential parity (pinned v33), Rust formatting, Clippy with warnings denied, and Rust tests.
 
+### Compare models (owner-run)
+
+Run one fixed, digest-bound task set through more than one configured provider/model and
+print one INFORMATIONAL comparison — evidence only, never a gate:
+
+```bash
+npm run evaluate -- --run first=<workspace-a> --run second=<workspace-b> --out eval.json
+```
+
+Each `--run <label>=<dir>` composes a session for that workspace's own `siralos.toml`, so
+the provider, model and credential are the profile's. This spends the profiles' real
+provider budget, so it is never part of `npm run check`; the offline proof of the same
+machinery (the deterministic fake plus two recorded replay models) runs in the gate as a
+lib test (decision 179).
+
 Run only the authoritative R2 parity decision:
 
 ```bash
