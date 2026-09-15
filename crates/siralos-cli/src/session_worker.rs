@@ -972,6 +972,23 @@ mod loop_tests {
         events
     }
     #[test]
+    fn a_domain_command_reports_what_the_session_did() {
+        // Decision 168 R4: these mutate the session's domain registry, so the
+        // report is the session's too -- the loop only relays it.
+        let mut session = FakeSession::default();
+        let cancel = CancelFlag::new();
+        let events = run(
+            vec![WorkerCommand::DomainsActivate("demo".to_owned())],
+            &mut session,
+            &cancel,
+        );
+        assert!(
+            events.contains(&WorkerEvent::Report("activated demo".to_owned())),
+            "got: {events:?}"
+        );
+    }
+
+    #[test]
     fn a_model_list_reaches_the_frontend() {
         let mut session = FakeSession::default();
         let cancel = CancelFlag::new();
