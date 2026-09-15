@@ -8481,6 +8481,28 @@ mod tests {
     }
 
     #[test]
+    fn an_idle_frame_is_byte_identical_and_releases_nothing() {
+        // C4 evidence pack, third number: the idle path must not disturb the
+        // frame. The loop now sweeps the worker channel on EVERY frame and the
+        // painters are open while text is owed, so the property that keeps the
+        // pinned tui-render subject valid is: with nothing owed, a frame is the
+        // same bytes and a release does nothing.
+        let mut state = TuiState::new();
+        state.push_line("> hello".to_owned());
+        state.status = "example-vendor / example-model".to_owned();
+        assert!(!state.reveal_pending(), "nothing is owed");
+        let first = render_to_buffer(&state, 100, 30);
+        // An idle release is a no-op, however often the loop sweeps.
+        for _ in 0..64 {
+            state.reveal_char();
+        }
+        assert!(!state.reveal_pending(), "still nothing owed");
+        assert!(state.stream_tail.is_empty());
+        let second = render_to_buffer(&state, 100, 30);
+        assert_eq!(first, second, "an idle frame is byte-identical");
+    }
+
+    #[test]
     fn a_backlog_drains_at_the_frame_rate() {
         // "Are you able to match the speed the model produces it?": with no
         // artificial cadence the only limiter is the frame cost, so a backlog
@@ -8505,9 +8527,21 @@ mod tests {
         }
         let elapsed = start.elapsed();
         let rate = owed as f64 / elapsed.as_secs_f64();
+        // The same reveal through the WIDGET path only (no terminal, no diff):
+        // it separates our own layout cost from the backend's, which is what
+        // decides whether a higher ceiling is ours to raise or the build's.
+        let widgets = {
+            let start = Instant::now();
+            let samples = 20u32;
+            for _ in 0..samples {
+                let _ = render_to_buffer(&state, 100, 30);
+            }
+            start.elapsed() / samples
+        };
         println!(
-            "{frames} frames for {owed} characters: {rate:.0} characters/s ({:?} per frame)",
-            elapsed / frames as u32
+            "{frames} frames for {owed} characters: {rate:.0} characters/s ({:?} per frame); widgets alone {widgets:?} -> {:.0} characters/s",
+            elapsed / frames as u32,
+            1.0 / widgets.as_secs_f64()
         );
         assert_eq!(frames, owed, "one character per frame, always");
         assert!(

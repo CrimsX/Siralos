@@ -382,9 +382,9 @@ result is good; the four checks in this ticket's acceptance (differential
 352/352, a stalled provider still yields events, stdio unchanged and byte-equal,
 `npm run check` exit 0) all hold on `c1ae919`.
 
-**C4 (the evidence pack) is deliberately NOT done** and is not needed for this
-ticket's acceptance: it would record frame counts under a scripted stall and
-cancel latency. The idle-frame half is already covered by the pinned
-`tui-render` differential subject, and the liveness half by
-`the_ui_paints_on_its_own_tick_with_no_provider_events`. If those numbers are
-wanted, C4 is a fresh slice with its own entry review, not a loose end here.
+**C4 (the evidence pack) was deferred here and landed afterwards** as its own
+slice, exactly as this note said it would: the owner asked for it, and
+[decision 172](../decisions/172-threaded-session-evidence-pack.md) records the
+numbers -- 197 frames painted in a 300 ms stall with one character released per
+frame, a cancel landing in one 20 ms event interval, and idle frames
+byte-identical. Ticket 130 is complete.

@@ -1501,4 +1501,150 @@ mod loop_tests {
         assert!(events.contains(&WorkerEvent::Report("context".to_owned())));
         assert!(events.contains(&WorkerEvent::Report("tools".to_owned())));
     }
+
+    /// A session that behaves like a STALLED provider: every event costs
+    /// `delay`, and every cancel is timestamped where it lands. The C4 evidence
+    /// pack measures the two things a stall decides -- how many frames the
+    /// frontend paints while nothing arrives, and how long a cancel takes to
+    /// reach the session.
+    struct StallingSession {
+        delay: std::time::Duration,
+        remaining: usize,
+        prompt: Option<String>,
+        cancels: std::sync::Arc<std::sync::Mutex<Vec<std::time::Instant>>>,
+    }
+
+    impl WorkerSession for StallingSession {
+        fn send_prompt(&mut self, prompt: &str) -> Result<(), String> {
+            self.prompt = Some(prompt.to_owned());
+            Ok(())
+        }
+        fn poll_event(&mut self) -> Option<ToolLoopEvent> {
+            if self.remaining == 0 {
+                return None;
+            }
+            // The stall: the provider read blocks here, exactly where a real
+            // one blocks, so nothing reaches the frontend while it does.
+            std::thread::sleep(self.delay);
+            self.remaining -= 1;
+            Some(ToolLoopEvent::TextDelta { text: "x".to_owned() })
+        }
+        fn is_responding(&self) -> bool {
+            self.remaining > 0
+        }
+        fn pane(&self) -> Option<crate::tui::ContextPaneData> {
+            None
+        }
+        fn context_report(&self) -> String {
+            String::new()
+        }
+        fn tools_report(&self) -> String {
+            String::new()
+        }
+        fn set_model(&mut self, _model: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn reload(&mut self) -> Result<String, String> {
+            Ok(String::new())
+        }
+        fn turn_settled(&mut self) {}
+        fn fetch_models(&mut self) -> Result<Vec<String>, String> {
+            Ok(Vec::new())
+        }
+        fn domains_add(&mut self, _folder: &str) -> Result<String, String> {
+            Ok(String::new())
+        }
+        fn domains_enable(&mut self, _id: &str) -> Result<String, String> {
+            Ok(String::new())
+        }
+        fn domains_activate(&mut self, _id: &str) -> Result<String, String> {
+            Ok(String::new())
+        }
+        fn status(&self) -> SessionStatus {
+            SessionStatus {
+                status: String::new(),
+                provider: None,
+                model: None,
+                endpoint: None,
+                protocol: String::new(),
+                credential_display: None,
+                credential_resolved: false,
+                context_suffix: String::new(),
+            }
+        }
+        fn cancel(&mut self) {
+            self.cancels
+                .lock()
+                .expect("cancel log")
+                .push(std::time::Instant::now());
+        }
+        fn enable_progress_ticks(&mut self) {}
+        fn flush(&mut self) {}
+    }
+
+    #[test]
+    fn a_stalled_turn_is_cancelled_within_an_event_interval() {
+        // C4 evidence: the cancel is an EXTERNAL flag polled between events, so
+        // its latency is bounded by the event interval, not by the turn. The
+        // numbers are printed because the point of the pack is the measurement.
+        let delay = std::time::Duration::from_millis(20);
+        let cancels = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut session = StallingSession {
+            delay,
+            remaining: 40, // ~800 ms of stalled turn
+            prompt: None,
+            cancels: std::sync::Arc::clone(&cancels),
+        };
+        let (command_tx, command_rx) = std::sync::mpsc::channel();
+        let (event_tx, event_rx) = std::sync::mpsc::channel();
+        let cancel = CancelFlag::new();
+        let thread_cancel = cancel.clone();
+        let worker = std::thread::spawn(move || {
+            super::run_worker_loop(
+                &command_rx,
+                &event_tx,
+                &thread_cancel,
+                &mut session,
+            );
+        });
+
+        command_tx
+            .send(WorkerCommand::Prompt("stall".to_owned()))
+            .expect("prompt");
+        // Wait until the turn is genuinely running (two events drained).
+        let mut drained = 0usize;
+        while drained < 2 {
+            match event_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                Ok(WorkerEvent::Session(_)) => drained += 1,
+                Ok(_) => {}
+                Err(error) => panic!("no events while stalling: {error}"),
+            }
+        }
+
+        let requested = std::time::Instant::now();
+        cancel.request();
+        let mut landed = None;
+        while requested.elapsed() < std::time::Duration::from_secs(5) {
+            if let Some(at) = cancels.lock().expect("cancel log").first() {
+                landed = Some(*at);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        let latency = landed
+            .expect("the flag reaches a blocked turn")
+            .duration_since(requested);
+        println!(
+            "cancel latency after a {delay:?} event interval: {latency:?} ({} events, {latency_events:.1} intervals)",
+            drained,
+            latency_events = latency.as_secs_f64() / delay.as_secs_f64(),
+        );
+        assert!(
+            latency <= delay * 3,
+            "the cancel must land within a few event intervals, took {latency:?}"
+        );
+
+        command_tx.send(WorkerCommand::Shutdown).expect("shutdown");
+        worker.join().expect("worker thread");
+    }
 }

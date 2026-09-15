@@ -5228,6 +5228,96 @@ mod tests {
     }
 
     #[test]
+    fn a_stall_paints_frames_and_never_stops_the_text() {
+        // C4 evidence pack, first number: how many frames does the frontend paint
+        // while a turn is STALLED? The worker here is silent for 300 ms (the same
+        // silence a blocked provider read produces -- the frontend cannot tell
+        // them apart, which is the point of putting the session on the other
+        // thread), and the progress closure is the live one's shape: release one
+        // character, then paint the production draw path.
+        //
+        // The numbers are printed because the pack is a measurement, not a claim;
+        // the assertions are the floors a stalled turn must clear.
+        use std::time::{Duration, Instant};
+        let silence = Duration::from_millis(300);
+        let root = temporary_directory("stall-frames");
+        let mut tui = ScriptedTui::new();
+        // Enough owed text that the FRAME rate, not the backlog, is the limit.
+        tui.sink
+            .write_all(format!("{}\n", "word ".repeat(400)).as_bytes())
+            .expect("sink");
+        let owed = tui.state.borrow().stream_buffer.len();
+
+        let backend = ratatui::backend::TestBackend::new(100, 30);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+        let events = tui.worker.events.clone();
+        let ticker = std::thread::spawn(move || {
+            std::thread::sleep(silence);
+            let _ =
+                events.send(crate::session_worker::WorkerEvent::TurnFinished);
+        });
+
+        let state = Rc::clone(&tui.state);
+        let mut frames = 0usize;
+        let mut released = 0usize;
+        let started = Instant::now();
+        {
+            let mut progress = || {
+                // What is released is what leaves the ANSWER buffer, one
+                // character at a time (a long line grows in the tail until its
+                // newline completes it).
+                let before = state.borrow().stream_buffer.chars().count();
+                state.borrow_mut().reveal_char();
+                let after = state.borrow().stream_buffer.chars().count();
+                if after != before {
+                    released += 1;
+                }
+                terminal
+                    .draw(|frame| {
+                        crate::tui::draw_with_pane(
+                            &state.borrow(),
+                            None,
+                            frame,
+                        )
+                    })
+                    .expect("frame");
+                frames += 1;
+                false
+            };
+            let mut reasoning = |_text: &str| {};
+            super::pump_worker(
+                &mut tui.worker.source,
+                &mut tui.sink,
+                &tui.state,
+                &tui.pane,
+                &mut progress,
+                &mut reasoning,
+                super::Until::TurnFinished,
+            )
+            .expect("relay");
+            ticker.join().expect("ticker thread");
+        }
+        let elapsed = started.elapsed();
+        let fps = frames as f64 / elapsed.as_secs_f64();
+        println!(
+            "stall {silence:?}: {frames} frames ({fps:.0} fps), {released} characters released, {owed} owed at the start, {elapsed:?} wall"
+        );
+        assert!(
+            frames >= 20,
+            "a stalled turn must keep painting, painted {frames}"
+        );
+        assert_eq!(
+            released, frames,
+            "and every frame released exactly one character"
+        );
+        assert!(
+            tui.state.borrow().reveal_pending(),
+            "the backlog outlives the stall (nothing was dropped to keep up)"
+        );
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
     fn a_models_fetch_crosses_to_the_picker_and_back() {
         // A bare `/model` (the loop's picker path) and `/models` both ask the
         // worker, because only the worker holds the endpoint and the credential.
