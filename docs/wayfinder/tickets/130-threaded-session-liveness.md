@@ -247,6 +247,24 @@ frame rate, so a stream faster than ~166 chars/s is shown slower than it arrives
 Nothing is dropped to hide that -- `push_reasoning` applies its bound to already
 revealed text only, so a backlog the reader is still owed is never trimmed away.
 
+## Owner follow-up 3: match the model's speed (2026-09-12)
+
+Owner: "are you able to match the speed the model produces it?" -- and then "this
+is model agnostic right? it will match depending on the model's speed?".
+
+Yes, by construction (decision [171](../decisions/171-reveal-tracks-the-model.md)):
+the reveal reads two text buffers fed by `TextDelta`/`ReasoningDelta` through the
+one provider-neutral bridge, so it knows nothing about a model, a provider, a
+token rate or a protocol. The fixed 6 ms cadence of follow-up 2 is gone --
+`paint_interval` returns ZERO while anything is owed and the ordinary cadence
+otherwise -- so the display rate IS the arrival rate.
+
+Measured ceiling, production draw path, unoptimized build (`cargo run`): **2.0 ms
+per frame, 498 characters a second**, one character per frame
+(`a_backlog_drains_at_the_frame_rate`: 250 characters in exactly 250 frames).
+Above it a burst displays slower than it arrived and nothing is dropped; that is
+the machine and the build, never the model.
+
 **The completion check held**: `dispatch_tui_command` takes
 `(command, workspace_root, state, sink, worker, pane, progress, reasoning)` --
 no `application`, and none of the six capability parameters. A source check in

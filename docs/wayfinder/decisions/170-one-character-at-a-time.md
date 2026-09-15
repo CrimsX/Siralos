@@ -67,6 +67,14 @@ the bound once the reveal catches up.
 can afford a smaller `REVEAL_CHAR_INTERVAL`; the constant is documented with the
 measured cost so the trade is visible where it is made.
 
+## 3a. Superseded in part (same day)
+
+The owner's next question -- "are you able to match the speed the model produces
+it?" -- removed the cadence this decision introduced:
+[171](171-reveal-tracks-the-model.md). The one-character rule stands; the fixed
+6 ms interval does not, so the display rate is the ARRIVAL rate. The frame-cost
+work here is what makes that affordable.
+
 ## 4. Evidence
 
 - `the_reveal_releases_one_character_per_call`: one call, one character, the

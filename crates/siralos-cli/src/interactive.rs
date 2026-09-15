@@ -1441,15 +1441,13 @@ fn pump_worker(
     let mut stop;
     loop {
         // A drain never waits: an empty channel is the END of its work, not a
-        // tick to sit through. Otherwise the wait is the TICK, and while the
-        // reader is owed text the tick is the character cadence -- one painted
-        // frame releases one character, so waking at the frame interval would
-        // cap the text at a third of the rate the cadence allows.
+        // tick to sit through. Neither does a turn while the reader is still
+        // owed text: the tick IS the frame, one character per frame, and
+        // matching the model's speed means painting that frame as soon as the
+        // previous one is done rather than on a timer.
         let timeout = match until {
             Until::Drain => std::time::Duration::ZERO,
-            _ if state.borrow().reveal_pending() => {
-                crate::tui::REVEAL_CHAR_INTERVAL
-            }
+            _ if state.borrow().reveal_pending() => std::time::Duration::ZERO,
             _ => WORKER_WAIT,
         };
         let event = match worker.wait(timeout) {
@@ -4249,23 +4247,22 @@ pub fn run_interactive_tui_with_options(
             }
         }
     };
-    // A streamed turn can emit hundreds of deltas a second, and each painted
-    // frame releases ONE character (the reveal and the frame are the same
-    // event), so this throttle IS the character cadence:
-    // crate::tui::REVEAL_CHAR_INTERVAL while the reader is owed text, the
-    // ordinary redraw interval otherwise. A key press forces a frame so
-    // expanding is instant.
+    // Each painted frame releases ONE character (the reveal and the frame are
+    // the same event), so while the reader is owed text this throttle is OPEN:
+    // the text tracks the model at whatever rate frames can be painted, which
+    // is what "match the speed the model produces it" means. Once nothing is
+    // owed the ordinary redraw interval applies again. A key press forces a
+    // frame so expanding is instant.
     let draw_throttled = {
         let draw_now = draw_now.clone();
         let tui_state = Rc::clone(&tui_state);
         let last = Rc::new(std::cell::Cell::new(None::<std::time::Instant>));
         move || {
             let now = std::time::Instant::now();
-            let interval = if tui_state.borrow().reveal_pending() {
-                crate::tui::REVEAL_CHAR_INTERVAL
-            } else {
-                crate::tui::REDRAW_INTERVAL
-            };
+            let interval = crate::tui::paint_interval(
+                tui_state.borrow().reveal_pending(),
+                crate::tui::REDRAW_INTERVAL,
+            );
             let due = match last.get() {
                 None => true,
                 Some(previous) => now.duration_since(previous) >= interval,
@@ -4346,13 +4343,13 @@ pub fn run_interactive_tui_with_options(
         let mut should_exit_outer = false;
         // Outer bounded idle poll — single wait for idle redraw; inner drain is
         // ZERO. The wait is the idle interval, EXCEPT while the reader is still
-        // owed text: a frame releases one character, so a backlog left over
-        // after the turn would otherwise drain at 20 characters a second.
-        let idle_poll = if tui_state.borrow().reveal_pending() {
-            crate::tui::REVEAL_CHAR_INTERVAL
-        } else {
-            crate::tui::TUI_IDLE_POLL
-        };
+        // owed text: a frame releases one character, so painting on a timer
+        // would both drain a leftover backlog slowly and cap the text below the
+        // rate the model produces it.
+        let idle_poll = crate::tui::paint_interval(
+            tui_state.borrow().reveal_pending(),
+            crate::tui::TUI_IDLE_POLL,
+        );
         let has_event =
             crossterm::event::poll(idle_poll).map_err(InteractiveError::Io)?;
         if has_event {
@@ -5640,14 +5637,15 @@ mod tests {
         )
         .expect("read interactive.rs");
         let poll = src
-            .find("let idle_poll = if tui_state.borrow().reveal_pending()")
+            .find("let idle_poll = crate::tui::paint_interval(")
             .expect("the idle poll consults the reveal");
         let after = &src[poll..];
         let body = &after[..after.find(';').expect("a statement")];
         assert!(
-            body.contains("REVEAL_CHAR_INTERVAL")
+            body.contains("paint_interval")
+                && body.contains("reveal_pending()")
                 && body.contains("TUI_IDLE_POLL"),
-            "the idle wait is the character cadence while text is owed, the idle interval otherwise: {body}"
+            "the idle wait is unthrottled while text is owed, the idle interval otherwise: {body}"
         );
     }
 

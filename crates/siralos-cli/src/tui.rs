@@ -71,18 +71,20 @@ pub const REASONING_ROWS: usize = 8;
 /// How much of the newest thinking line the COLLAPSED row previews.
 pub const THINKING_TAIL_CHARS: usize = 60;
 
-/// The cadence at which a frame may release ONE character.
+/// How long a painter waits before it paints the next frame.
 ///
-/// The reveal renders a character at a time (owner ruling), so the frame
-/// cadence IS the character rate: every painted frame releases exactly one
-/// character, and how often frames are painted is what makes the text flow
-/// faster or slower. One frame is a full layout -- measured at 2.2 ms in the
-/// unoptimized build the dev flow runs (`cargo run`), independent of the
-/// session length since the render builds only the visible window -- so this
-/// interval is also a CPU budget: 6 ms spends about a third of a core while it
-/// sustains the full 166 characters a second, and less whenever the model
-/// streams slower than that. It is the one knob for the reveal's feel.
-pub const REVEAL_CHAR_INTERVAL: Duration = Duration::from_millis(6);
+/// While the reveal owes the reader text it waits NOTHING: the reveal renders a
+/// character at a time (owner ruling), so matching the speed the model produces
+/// means painting one frame per character as fast as frames can be painted.
+/// The frame cost is then the only limiter -- measured at 2.2 ms in the
+/// unoptimized build the dev flow runs (`cargo run`), which is a ceiling of
+/// roughly 450 characters a second, several times higher than a reasoning
+/// stream. Once nothing is owed, `idle` applies again, so a quiet UI does not
+/// spin.
+#[must_use]
+pub const fn paint_interval(owed: bool, idle: Duration) -> Duration {
+    if owed { Duration::ZERO } else { idle }
+}
 
 /// Toggle result line when mouse capture turns on: states the result and
 /// the copy trade (capture steals click-drag selection) with the way back.
@@ -1108,7 +1110,7 @@ impl TuiState {
     /// character at a time, so the character rate IS the frame rate. The paint
     /// path is the only caller -- one call, one painted frame, one character --
     /// which is why there is no timer, no rate budget and no catch-up here. The
-    /// painters own the cadence ([`REVEAL_CHAR_INTERVAL`]); this owns the ORDER:
+    /// painters own the cadence ([`paint_interval`]); this owns the ORDER:
     /// the answer first, the thinking after it.
     pub fn reveal_char(&mut self) {
         if let Some(ch) = self.stream_buffer.chars().next() {
@@ -2855,12 +2857,12 @@ impl TuiSink {
         };
         let now = std::time::Instant::now();
         // While the reader is owed text the frame cadence IS the character
-        // cadence (one character per frame); otherwise the ordinary interval.
-        let interval = if self.state.borrow().reveal_pending() {
-            REVEAL_CHAR_INTERVAL
-        } else {
-            REDRAW_INTERVAL
-        };
+        // cadence and nothing throttles it (see `paint_interval`); otherwise
+        // the ordinary interval.
+        let interval = paint_interval(
+            self.state.borrow().reveal_pending(),
+            REDRAW_INTERVAL,
+        );
         let due = match self.last_redraw.get() {
             None => true,
             Some(last) => now.duration_since(last) >= interval,
@@ -5656,12 +5658,17 @@ mod tests {
     }
 
     #[test]
-    fn the_character_cadence_is_the_documented_one() {
-        // One character per painted frame, so this interval is BOTH the
-        // character rate and the CPU budget: a frame is a full layout
-        // (~1.7 ms measured in the unoptimized build the dev flow runs), and
-        // 6 ms spends under a third of a core at the full 166 chars/s.
-        assert_eq!(REVEAL_CHAR_INTERVAL, std::time::Duration::from_millis(6));
+    fn the_painters_are_unthrottled_while_text_is_owed() {
+        // One character per painted frame, and the owner's next ask is that the
+        // text track the SPEED the model produces it: so while anything is
+        // owed, a painter waits NOTHING (the frame cost is the limiter), and
+        // once nothing is owed the ordinary cadence is back and an idle UI
+        // stops spinning.
+        use std::time::Duration;
+        assert_eq!(paint_interval(true, REDRAW_INTERVAL), Duration::ZERO);
+        assert_eq!(paint_interval(true, TUI_IDLE_POLL), Duration::ZERO);
+        assert_eq!(paint_interval(false, REDRAW_INTERVAL), REDRAW_INTERVAL);
+        assert_eq!(paint_interval(false, TUI_IDLE_POLL), TUI_IDLE_POLL);
     }
 
     #[test]
@@ -5796,9 +5803,26 @@ mod tests {
                 .any(|entry| entry.text == "streamed line"),
             "the line lands in the transcript once the frame releases it"
         );
-        // Coalesced: a fast stream must not repaint per delta.
+        // While text is OWED the request is deliberately NOT coalesced: one
+        // painted frame releases one character, so the stream needs a frame per
+        // character to be shown at the speed the model produces it.
         sink.write_all(b"second line\n").expect("write");
-        assert_eq!(frames.get(), 1, "a frame already asked for is enough");
+        assert_eq!(
+            frames.get(),
+            2,
+            "a delta that is still owed asks for its own frame"
+        );
+        // Once nothing is owed, the ordinary redraw interval coalesces again.
+        paint_until_settled(&state);
+        sink.write_all(b"third line\n").expect("write");
+        paint_until_settled(&state);
+        let coalesced = frames.get();
+        sink.write_all(b"fourth line\n").expect("write");
+        assert_eq!(
+            frames.get(),
+            coalesced + 1,
+            "one more frame for the next owed character"
+        );
     }
 
     #[test]
@@ -8453,6 +8477,42 @@ mod tests {
         assert!(
             long_frame < short_frame * 3 + Duration::from_millis(10),
             "a 5000-line session must not paint slower than a 24-line one: {long_frame:?} vs {short_frame:?}"
+        );
+    }
+
+    #[test]
+    fn a_backlog_drains_at_the_frame_rate() {
+        // "Are you able to match the speed the model produces it?": with no
+        // artificial cadence the only limiter is the frame cost, so a backlog
+        // drains one character per painted frame, as fast as frames can be
+        // painted. The measured rate is printed -- this build is unoptimized
+        // (the dev flow runs \`cargo run\`), and a release build is several
+        // times cheaper -- and the floor is generous enough for a slow machine.
+        use std::time::Instant;
+        let mut state = TuiState::new();
+        state.reasoning = "thinking. ".repeat(25); // 250 characters owed
+        let owed = state.reasoning.len();
+        let backend = ratatui::backend::TestBackend::new(100, 30);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+        let start = Instant::now();
+        let mut frames = 0usize;
+        while state.reveal_pending() {
+            state.reveal_char();
+            terminal
+                .draw(|frame| draw_with_pane(&state, None, frame))
+                .expect("frame");
+            frames += 1;
+        }
+        let elapsed = start.elapsed();
+        let rate = owed as f64 / elapsed.as_secs_f64();
+        println!(
+            "{frames} frames for {owed} characters: {rate:.0} characters/s ({:?} per frame)",
+            elapsed / frames as u32
+        );
+        assert_eq!(frames, owed, "one character per frame, always");
+        assert!(
+            rate > 100.0,
+            "the frame cost is the only limiter; measured {rate:.0} characters/s"
         );
     }
 
