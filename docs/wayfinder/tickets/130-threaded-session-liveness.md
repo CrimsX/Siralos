@@ -123,6 +123,17 @@ That closes every transport the switch needs. What remains is the rewiring
 itself and step 4 -- `Shutdown` on every exit path, join before the terminal is
 restored.
 
+The rewiring itself now has a placement decision written BEFORE the edit
+([168](../decisions/168-c2-step3-wiring-placement.md)): measuring it first showed
+the job is not the short call-site list above but roughly ninety
+composition-derived values plus six capability parameters on the shared
+dispatcher. The decision fixes where each one goes -- the credential stays in
+the worker (so `/models` becomes `ModelsFetch`/`Models` and no secret enters UI
+state), display values ride the status snapshot, an arm that only RENDERS keeps
+a report while an arm that reads capability state to DECIDE moves to the worker,
+and the switch stays one commit because a staged one would leave two
+compositions alive (the divergence 167 forbids).
+
 ## Slices
 
 | Slice | Content                                                                                                                                                                                          | Acceptance                                                                                                               |
