@@ -907,6 +907,18 @@ mod loop_tests {
         }
         events
     }
+    #[test]
+    fn a_model_list_reaches_the_frontend() {
+        let mut session = FakeSession::default();
+        let cancel = CancelFlag::new();
+        let events =
+            run(vec![WorkerCommand::ModelsFetch], &mut session, &cancel);
+        assert!(
+            events
+                .contains(&WorkerEvent::Models(vec!["fake-model".to_owned()])),
+            "the list is data for the picker, got: {events:?}"
+        );
+    }
 
     #[test]
     fn the_worker_announces_the_header_before_any_command() {
