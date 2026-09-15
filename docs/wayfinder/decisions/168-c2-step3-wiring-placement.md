@@ -79,6 +79,29 @@ twelve `context_session_holder` uses collapse into the cached pane
 the terminal guard restores, so the single flush (decision 78's owner rule) is
 known to have happened rather than hoped for.
 
+### 3a. The classification, measured
+
+Only four of the dispatcher's fifteen arms touch capability state at all
+(`dispatch_tui_command`, arms as of `47cab9b`):
+
+| Arm                                                                   | Values                                  | Verdict                                                                                                                 |
+| --------------------------------------------------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `Context` (1375)                                                      | `context_control`                       | report -- `ContextReport` already exists, and the report belongs where the control is applied                           |
+| `Tools` (1384)                                                        | `tool_definitions`, `policy`            | report -- `ToolsReport` already exists                                                                                  |
+| `DomainsAdd` (1395), `DomainsEnable` (1404), `DomainsActivate` (1413) | `hosts`, `manifests`, `profile_plugins` | open -- each is a `render_*(workspace_root, ..)` written to the sink, so any persistence already lives in those helpers |
+
+Every other arm (`Exit`, `Provider`, `ProviderRemove`, `Model`, `Models`,
+`Evolve`, `Reload`, `Mouse`, `Prompt`) touches none of the six, and four of them
+already have commands (`Prompt`, `SetModel`, `ModelsFetch`, `Reload`).
+
+The open question the switch must settle before it edits, stated rather than
+guessed: do the three domain renderers persist (install/enable writing
+`siralos.toml`) or only display? If they persist, they stay frontend-side like
+the picker and need the installed registry as DISPLAY data on the snapshot
+(ids and manifest names, no secrets -- R3); if they only display, they are
+reports like `Context` and `Tools`. Either way the six parameters leave the
+signature, which is the completion check.
+
 ## 4. Consequences
 
 - The switch stays ONE commit. A staged switch -- spawning the worker and
