@@ -175,7 +175,8 @@ section 2 the measured inventory behind it.
 
 ## C2 step 3, C2 step 4 and C3 landed (2026-09-12)
 
-The switch is in, as two commits, plus the tick:
+The switch is in, as two commits, plus the tick (and one review fix on top of
+it):
 
 - `cb66824` -- C2 step 3, the atomic switch. `run_interactive_tui_with_options`
   resolves the workspace root itself (R1: it owns the profile writes), spawns
@@ -193,6 +194,12 @@ The switch is in, as two commits, plus the tick:
   silent, and every frame now drains the channel first (`Until::Drain`, a
   zero-timeout sweep) so the loop is a genuine channel drain, not only while a
   command is outstanding.
+- `00d93eb` -- the review fix on C3. Reading the drain back found two defects
+  its tests did not cover: a closed channel was announced on EVERY frame (now
+  only a relay that was WAITING reports it, once), and an answer seen by a drain
+  was collected and dropped (a turn and a drain now render through the shared
+  bridge, so an answer is never swallowed). Both are pinned by a test that fails
+  when the guard is reverted.
 
 **The completion check held**: `dispatch_tui_command` takes
 `(command, workspace_root, state, sink, worker, pane, progress, reasoning)` --
