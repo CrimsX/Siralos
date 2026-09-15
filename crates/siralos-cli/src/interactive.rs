@@ -1855,6 +1855,10 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
         self.application.cancel();
     }
 
+    fn enable_progress_ticks(&mut self) {
+        self.application.enable_provider_progress_ticks();
+    }
+
     fn flush(&mut self) {
         // Exactly once, by the single owner (decision 78). `take` is what
         // makes that mechanical: a second flush finds nothing to flush.

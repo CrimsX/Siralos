@@ -178,6 +178,10 @@ pub trait WorkerSession {
     fn cancel(&mut self);
     /// Flush the recordings -- called EXACTLY once, on shutdown.
     fn flush(&mut self);
+    /// Turn on the keep-alive ticks (C2 step 3). Only a frontend that repaints
+    /// while it waits wants them: the worker's session belongs to the TUI, so
+    /// the WORKER turns them on, and stdio's session must not get them.
+    fn enable_progress_ticks(&mut self);
 }
 
 /// The narrow source the shared drain reads (C2 step 3b).
@@ -462,6 +466,7 @@ pub fn spawn_worker(
         };
         match crate::interactive::compose_session(options) {
             Ok(mut session) => {
+                session.enable_progress_ticks();
                 run_worker_loop(
                     &command_rx,
                     &event_tx,
@@ -948,6 +953,7 @@ mod loop_tests {
                 credential_display: None,
             }
         }
+        fn enable_progress_ticks(&mut self) {}
         fn flush(&mut self) {
             self.flushes += 1;
         }
