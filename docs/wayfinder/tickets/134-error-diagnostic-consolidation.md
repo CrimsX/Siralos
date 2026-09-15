@@ -1,7 +1,7 @@
 ---
 title: "Error and diagnostic consolidation, unblocked by the completed migration"
 label: "wayfinder:ticket"
-status: open
+status: closed
 date: "2026-09-12"
 supersedes: []
 ---
@@ -31,3 +31,26 @@ the current shape is the design, recorded in the RFC index as owned.
 
 - Changing any error message that a test or the differential corpus pins.
 - Introducing a new error framework before the review says it is worth one.
+
+## Resolution (2026-09-12)
+
+[Decision 177](../decisions/177-error-diagnostic-consolidation.md) answers the
+question and closes RFC-0011: **per-subsystem typed errors are the design**, no
+consolidation slice.
+
+The decisive argument is mechanical: the dependency direction is
+`cli → adapters → core` (enforced by `npm run check:rust`), so a shared error
+vocabulary in `core` cannot name an adapter or CLI failure without inverting that
+direction, and the alternatives are worse — a mega-enum in core, `dyn Error`
+everywhere (losing the typed precision the style guide requires), or shared string
+codes (a second vocabulary beside the typed one).
+
+Counted for the record: 30 named error enums (core 18, adapters 9, cli 3), each
+naming its subsystem and operation, none importing an error framework. What IS
+shared is the presentation boundary — `sanitize_for_display` and the terminal
+sanitizer, plus the bounded diagnostic model in `siralos_core::language` — which is
+where a common shape belongs.
+
+RFC-0011 is recorded as **owned by the design** in the RFC index; the one thing that
+would reopen it is a cross-layer consumer needing a stable machine-readable category
+(mapped at the boundary by each layer, not by merging the layers' types).
