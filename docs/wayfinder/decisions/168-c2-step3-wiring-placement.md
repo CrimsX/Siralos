@@ -116,10 +116,37 @@ only work left.
   transport in this arc (the drain seam, the source, the reload, the settled
   turn, the header), so it lands before the switch rather than inside it.
 
-## 5. What remains
+## 5. What landed (2026-09-12)
+
+All three items are in, as ticket 130 records:
 
 1. `ModelsFetch`/`Models` plus the picker's display fields on the status
-   snapshot (additive, safe).
-2. The atomic switch: spawn the worker, cache `Ready`/`Pane`, replace the
-   command arms, drop `dispatch_tui_command`'s composition parameters.
-3. Step 4: `Shutdown` and join on every exit path.
+   snapshot (`856c6cf`, `47cab9b`).
+2. The atomic switch (`cb66824`). `dispatch_tui_command` takes
+   `(command, workspace_root, state, sink, worker, pane, progress, reasoning)`:
+   no `application`, none of the six capability parameters, no second
+   composition. A source check asserts the TUI body never calls
+   `compose_session`.
+3. Step 4 (`dfa450f`): `WorkerGuard` shuts down and joins on drop, declared
+   after the terminal guard so it drops first, and every pre-guard failure path
+   joins explicitly.
+
+C3 (`1d0df16`) then made the relay's idle wait the 16 ms tick and gave the loop
+a per-frame zero-timeout drain, which is the shape this record assumed the loop
+would end up with.
+
+### 5a. Three deltas the edit needed, none of which bend a rule
+
+- **`SessionStatus` gained `credential_resolved` and `context_suffix`.** R3 said
+  display may cross; these are the two display facts the frontend cannot derive.
+  The `/models` arm decides on resolution (its gate is unchanged, and it must
+  not spend a request on a credential that did not resolve), and a transient
+  status keeps the `ctx N/4096` suffix it no longer has the metrics to compute.
+  Neither is the credential: R2 holds, and its test still composes
+  `key:super-secret-value` and asserts the snapshot cannot leak it.
+- **The startup pane is pushed BEFORE `Ready`, not after.** A frontend that
+  waits for the header must already hold the pane it will draw with that header;
+  the other order makes the first frame a race with no way to state a bound.
+- **`SetModel` sends no report of its own.** The frontend owns the profile write
+  and prints its outcome (D3); the worker applies live and re-announces the
+  header. A second line from the worker would say it twice.

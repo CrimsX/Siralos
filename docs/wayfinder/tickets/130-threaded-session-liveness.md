@@ -173,14 +173,93 @@ send `Shutdown` and join on every exit path before the terminal guard restores.
 Decision 168 section 3a records the arm classification that edit needs, and
 section 2 the measured inventory behind it.
 
+## C2 step 3, C2 step 4 and C3 landed (2026-09-12)
+
+The switch is in, as two commits, plus the tick:
+
+- `cb66824` -- C2 step 3, the atomic switch. `run_interactive_tui_with_options`
+  resolves the workspace root itself (R1: it owns the profile writes), spawns
+  the worker BEFORE the terminal guard, waits for its first events THERE (so
+  startup diagnostics and a composition failure stay on the normal screen), and
+  then holds no session at all: `TuiState` caches what `Ready`/`Pane` push and
+  `pump_worker` relays the channel.
+- `dfa450f` -- C2 step 4. `WorkerGuard` owns the source and shuts it down on
+  drop, declared after `TerminalGuard` so it drops (and joins) FIRST; the one
+  path before that guard (a failed `TerminalGuard::enter`) stops the worker
+  explicitly, and `await_worker_ready` takes the source by value so its failure
+  paths join too.
+- `1d0df16` -- C3. The relay's idle wait IS the 16 ms tick that runs the reveal,
+  the pulse, the thinking expansion and the interrupt key while the worker is
+  silent, and every frame now drains the channel first (`Until::Drain`, a
+  zero-timeout sweep) so the loop is a genuine channel drain, not only while a
+  command is outstanding.
+
+**The completion check held**: `dispatch_tui_command` takes
+`(command, workspace_root, state, sink, worker, pane, progress, reasoning)` --
+no `application`, and none of the six capability parameters. A source check in
+`compose_session_before_guard_no_terminal_needed` also asserts the TUI body
+never calls `compose_session`, so "one session" is mechanical rather than
+remembered.
+
+### What the edit added to the design
+
+- `SessionStatus` gained `credential_resolved` (the `/models` gate decides on
+  it today, and the frontend cannot recompute it without the secret) and
+  `context_suffix` (so a TRANSIENT status -- the add-flow's "fetching
+  models..." -- keeps the `ctx N/4096` readout the frontend no longer has the
+  metrics for). Decision 168 R3 extended, not bent: both are display facts.
+- The startup pane is pushed BEFORE the header. Sending it after would have made
+  the first frame a race between the header and the pane; before, a frontend that
+  waits for the header already holds the pane it will draw with it.
+- `SetModel` no longer emits a report of its own: the frontend owns the profile
+  write and already prints its outcome (167 D3), so a second line would say the
+  same thing twice. The header is still re-announced.
+- A turn's settled pane is pushed after `turn_settled`, so the snapshot the
+  frontend draws reflects the demand tick -- the bottom-of-loop rebuild it
+  replaced ran after that tick too.
+
+### Evidence
+
+- `npm run check` exit 0 on `dfa450f` (format, lint, docs, context, identity,
+  public hygiene, secrets, architecture, differential, fmt, clippy with warnings
+  denied, workspace tests); differential **352/352 applicable required**, 4
+  platform skips, 0 informational deviations.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings` exit 0;
+  `cargo fmt --all --check` exit 0; `cargo test --workspace` green (302 CLI lib
+  tests).
+- The loop is driven, not just compiled: seven tests dispatch through the real
+  `dispatch_tui_command` over a scripted `WorkerSource` and assert the
+  `WorkerCommand` each arm sends and the events it applies (header, pane,
+  report, failure, models, a whole turn, the persist-then-`SetModel` ordering).
+- C3's acceptance: `the_ui_paints_on_its_own_tick_with_no_provider_events`
+  drives the PRODUCTION draw path over a `TestBackend` with no provider event
+  for 200 ms and asserts the released answer grows across frames and that the
+  painted frame carries it. Removing the idle tick makes it fail
+  (mutation-checked).
+- The recordings flush is observed, not asserted: the guard test drives a real
+  worker on a record-replay workspace and finds `.siralos/replay-store.json` on
+  disk by the time the guard returns.
+
+### Behaviour notes (deliberate, small)
+
+- `/reload` now refreshes the header, because the worker re-announces it; the
+  old in-loop arm printed the report and left a stale header behind.
+- A prompt the session REFUSES (already responding) is reported as
+  `Worker failed: ...` and the loop continues; the old path returned the error
+  out of the whole TUI and ended the session. The refusal is unreachable from the
+  key path (submission happens between turns), so this is an error-path
+  improvement rather than a change anyone will see.
+- `/models` keeps its old gate: a provider, an endpoint AND a credential that
+  actually RESOLVED. That is why the snapshot carries the resolution as a fact.
+
 ## Slices
 
-| Slice | Content                                                                                                                                                                                          | Acceptance                                                                                                               |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| C1    | Boundary inventory and choice: where the thread boundary goes, what moves, what stays. The session already composes its own provider, so the worker may build it and core stays single-threaded. | a written inventory of every touch point (turn, commands, approvals, context pane, replay flush) with the owner for each |
-| C2    | The worker: spawn, command channel, event channel, an external cancel flag polled between events, clean shutdown, and the record-replay flush on exit.                                           | the session's observable event sequence is UNCHANGED (differential 352/352) and a stalled provider still yields events   |
-| C3    | The UI loop: crossterm poll with a short timeout, the 16 ms tick driving reveal/pulse/draw, the drain becoming a channel drain.                                                                  | a test proves the UI paints on its own tick with NO provider events                                                      |
-| C4    | Evidence pack: a fake slow provider, frame counts during a stall, cancel latency, idle frames byte-identical.                                                                                    | counts recorded; the pinned frames unchanged when idle; full gate green                                                  |
+| Slice | Status                      | Content                                                                                                                                                                                          | Acceptance                                                                                                               |
+| ----- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| C1    | done (decision 166)         | Boundary inventory and choice: where the thread boundary goes, what moves, what stays. The session already composes its own provider, so the worker may build it and core stays single-threaded. | a written inventory of every touch point (turn, commands, approvals, context pane, replay flush) with the owner for each |
+| C2    | done (`cb66824`, `dfa450f`) | The worker: spawn, command channel, event channel, an external cancel flag polled between events, clean shutdown, and the record-replay flush on exit.                                           | the session's observable event sequence is UNCHANGED (differential 352/352) and a stalled provider still yields events   |
+| C3    | done (`1d0df16`)            | The UI loop: crossterm poll with a short timeout, the 16 ms tick driving reveal/pulse/draw, the drain becoming a channel drain.                                                                  | a test proves the UI paints on its own tick with NO provider events                                                      |
+| C4    | NOT STARTED                 | Evidence pack: a fake slow provider, frame counts during a stall, cancel latency, idle frames byte-identical.                                                                                    | counts recorded; the pinned frames unchanged when idle; full gate green                                                  |
 
 ## Invariants this arc must not break
 
