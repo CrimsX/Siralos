@@ -201,6 +201,30 @@ it):
   bridge, so an answer is never swallowed). Both are pinned by a test that fails
   when the guard is reverted.
 
+## Owner follow-up: the thinking's reveal lagged (2026-09-12)
+
+Owner, after the three commits landed: "the thinking still seems delayed and not
+smooth". The frame cadence was no longer the cause -- C3's test proves the UI
+paints with no provider event at all -- the REVEAL was: it paced text at
+`REVEAL_CHARS_PER_SEC` (240) and capped a frame at `REVEAL_TICK_CHARS` (480),
+so a stream arriving faster than the pace fell behind without bound. Measured on
+the production `reveal_now`: after two seconds of a 1920 chars/s reasoning
+stream the display had shown 936 of 3840 characters -- **2904 characters, about
+twelve seconds, behind** -- and it was still crawling past the reader after the
+model had moved on. A longer backlog than `REASONING_BYTES` (8192) was also
+trimmed away before it was ever shown.
+
+Decision [169](../decisions/169-reveal-tracks-a-fast-stream.md) records the rule
+that replaces it: a channel is PACED below `REVEAL_MAX_LAG_CHARS` (160) and
+TRACKED above it (up to one tick's worth per frame), per channel, so a streaming
+answer can no longer starve the thinking. After the change the same three
+measured streams settle at the same 157-character lag whatever their speed, and
+the answer-and-thinking pacing for everything at a human speed is unchanged.
+
+The regression tests measure both halves: a 2400 chars/s stream must stay inside
+the bound (the test fails when the bound is made unreachable) and a
+reading-speed stream must still be released at the pace.
+
 **The completion check held**: `dispatch_tui_command` takes
 `(command, workspace_root, state, sink, worker, pane, progress, reasoning)` --
 no `application`, and none of the six capability parameters. A source check in

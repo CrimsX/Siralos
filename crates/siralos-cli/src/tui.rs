@@ -76,8 +76,21 @@ pub const THINKING_TAIL_CHARS: usize = 60;
 pub const REVEAL_CHARS_PER_SEC: f64 = 240.0;
 
 /// The most one tick may release, so a long stall cannot dump a wall of
-/// text the instant a frame is painted.
+/// text the instant a frame is painted. It is ALSO the most a channel may
+/// release per frame while catching up (see `REVEAL_MAX_LAG_CHARS`).
 pub const REVEAL_TICK_CHARS: usize = 480;
+
+/// How far the revealed text may fall behind what has already arrived.
+///
+/// `REVEAL_CHARS_PER_SEC` alone cannot work: a reasoning stream that arrives at
+/// 2000 chars/s leaves a 240 chars/s reveal seconds behind, and the trace is
+/// still crawling past the reader long after the model has moved on (and, once
+/// the backlog passes `REASONING_BYTES`, text is trimmed away before it was ever
+/// shown). Past this bound a channel stops being paced and closes the gap, at
+/// most one `REVEAL_TICK_CHARS` per frame, so the display tracks the model
+/// within a couple of lines and still grows left to right for everything that
+/// arrives at a human speed.
+pub const REVEAL_MAX_LAG_CHARS: usize = 160;
 
 /// Toggle result line when mouse capture turns on: states the result and
 /// the copy trade (capture steals click-drag selection) with the way back.
@@ -1067,14 +1080,28 @@ impl TuiState {
             }
         };
         self.reveal_last = Some(now);
-        let allowance = budget.min(REVEAL_TICK_CHARS as f64).floor() as usize;
-        let mut take = allowance;
-        if take == 0 {
+        let paced = budget.min(REVEAL_TICK_CHARS as f64).floor() as usize;
+        // Each channel is paced, and each channel ALSO closes its own gap once
+        // it has fallen further behind than `REVEAL_MAX_LAG_CHARS`: a stream
+        // faster than the pace must not leave the reader watching text the
+        // model finished producing seconds ago. Per channel, so a long answer
+        // cannot starve the thinking (they used to share one budget, and the
+        // answer always spent it first).
+        let answer_pending = self.stream_buffer.chars().count();
+        let thinking_pending =
+            self.reasoning.len().saturating_sub(self.reasoning_shown);
+        let catch_up = |pending: usize| {
+            pending.saturating_sub(REVEAL_MAX_LAG_CHARS).min(REVEAL_TICK_CHARS)
+        };
+        let answer_allowance = paced.max(catch_up(answer_pending));
+        let thinking_allowance = paced.max(catch_up(thinking_pending));
+        if answer_allowance == 0 && thinking_allowance == 0 {
             self.reveal_debt = budget;
             return;
         }
         // Answer channel: complete lines become transcript rows, the rest
         // stays visible as the growing tail.
+        let mut take = answer_allowance;
         while take > 0 {
             let Some(ch) = self.stream_buffer.chars().next() else {
                 break;
@@ -1088,25 +1115,28 @@ impl TuiState {
                 self.stream_tail.push(ch);
             }
         }
-        let answer_spent = allowance - take;
-        // Thinking channel: what the answer did not spend reveals the
-        // reasoning, so both channels share one pacing budget.
+        let answer_spent = answer_allowance - take;
+        // Thinking channel: its OWN allowance. The two channels used to share
+        // one budget, which meant a streaming answer starved the thinking
+        // completely; per channel, each keeps its pace instead.
+        let mut thinking_take = thinking_allowance;
         let mut thinking_spent = 0usize;
-        if take > 0 && self.reasoning_shown < self.reasoning.len() {
+        if thinking_take > 0 && self.reasoning_shown < self.reasoning.len() {
             let mut shown = self.reasoning_shown;
             for ch in self.reasoning[shown..].chars() {
-                if take == 0 {
+                if thinking_take == 0 {
                     break;
                 }
                 shown += ch.len_utf8();
-                take -= 1;
+                thinking_take -= 1;
                 thinking_spent += 1;
             }
             self.reasoning_shown = shown;
         }
         // Only the budget actually LEFT OVER carries: what was spent is gone.
         // BOTH channels spend from it -- charging only the answer let the
-        // thinking stream at the tick cap instead of the configured rate.
+        // thinking stream at the tick cap instead of the configured rate. A
+        // catch-up frame overspends it, which simply leaves no debt behind.
         let spent = (answer_spent + thinking_spent) as f64;
         self.reveal_debt = (budget - spent).max(0.0);
     }
@@ -8248,6 +8278,79 @@ mod tests {
         assert!(
             count_items <= 8,
             "viewport must bound to 8, got {count_items}"
+        );
+    }
+
+    #[test]
+    fn a_stream_faster_than_the_pace_stays_within_the_lag_bound() {
+        // The owner-reported defect this guards: a reasoning stream arriving
+        // faster than `REVEAL_CHARS_PER_SEC` left the display seconds behind --
+        // measured at 2904 chars behind after two seconds of a 1920 chars/s
+        // stream -- so the trace was still crawling past the reader long after
+        // the model had moved on, and a long enough backlog was trimmed away
+        // before it was ever shown. Pacing applies to text that arrives at a
+        // human speed; faster streams must be TRACKED.
+        use std::time::{Duration, Instant};
+        let mut state = TuiState::new();
+        let start = Instant::now();
+        let mut now = start;
+        let chunk = "thinking. ".repeat(4); // 40 chars, ten times the pace
+        let mut shown_at: Vec<usize> = Vec::new();
+        let mut steps: Vec<usize> = Vec::new();
+        let mut last = 0usize;
+        for _ in 0..120 {
+            state.reasoning.push_str(&chunk);
+            now += Duration::from_millis(16);
+            state.reveal_now(now);
+            if state.reasoning_shown > last {
+                steps.push(state.reasoning_shown - last);
+            }
+            last = state.reasoning_shown;
+            shown_at.push(last);
+        }
+        let arrived = state.reasoning.len();
+        let lag = arrived - state.reasoning_shown;
+        assert!(
+            lag <= REVEAL_MAX_LAG_CHARS + chunk.len(),
+            "the display must track the stream: lag={lag} of {arrived} arrived"
+        );
+        // Still left to right: the revealed prefix only ever grows, and no
+        // single frame dumps more than one tick's worth.
+        assert!(
+            shown_at.windows(2).all(|pair| pair[1] >= pair[0]),
+            "the reveal never goes backwards"
+        );
+        assert!(
+            steps.iter().copied().max().unwrap_or(0) <= REVEAL_TICK_CHARS,
+            "one frame releases at most a tick's worth: max={:?}",
+            steps.iter().copied().max()
+        );
+    }
+
+    #[test]
+    fn a_stream_at_reading_speed_is_still_paced() {
+        // The lag bound must not turn the reveal into a dump: while a channel
+        // is behind the reader's pace, a frame still releases only the paced
+        // budget, so the text still grows left to right.
+        use std::time::{Duration, Instant};
+        let mut state = TuiState::new();
+        let start = Instant::now();
+        state.reasoning = "abcdefghij".repeat(12); // 120 chars, under the bound
+        state.reveal_last = Some(start);
+        state.reveal_debt = 0.0;
+        state.reveal_now(start + Duration::from_millis(16));
+        assert_eq!(
+            state.reasoning_shown, 3,
+            "one 16 ms frame releases the paced budget, not the buffer"
+        );
+        state.reveal_now(start + Duration::from_millis(116));
+        assert_eq!(
+            state.reasoning_shown, 27,
+            "100 ms more releases 100 ms of pace plus the carried debt"
+        );
+        assert!(
+            state.reasoning_shown < state.reasoning.len(),
+            "the rest is still buffered for later frames"
         );
     }
 }
