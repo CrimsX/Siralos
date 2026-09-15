@@ -91,6 +91,15 @@ pub struct SessionStatus {
     /// never leaves the worker (decision 168 R2): a frontend that received it
     /// could put a secret in `TuiState`, the render path and any log.
     pub credential_display: Option<String>,
+    /// Whether the declared credential RESOLVED. The `/models` arm decides on
+    /// this today, so the frontend needs the answer and not the secret;
+    /// `false` also covers "no credential declared".
+    pub credential_resolved: bool,
+    /// The context-usage suffix the status line carries (` | ctx N/4096`), empty
+    /// when the context subsystem is off. It crosses so a frontend can
+    /// re-render a TRANSIENT status -- the add-flow's "fetching models..." --
+    /// with the same suffix instead of dropping a readout it cannot compute.
+    pub context_suffix: String,
 }
 
 /// The external cancel flag (decision 167): the UI sets it, the worker polls it
@@ -214,8 +223,16 @@ pub fn run_worker_loop<S: WorkerSession>(
     cancel: &CancelFlag,
     session: &mut S,
 ) {
-    // The frontend cannot derive its header any more: it arrives first, and
-    // again whenever a command moves the composition under it.
+    // The startup pane snapshot goes FIRST. The frontend used to BUILD it
+    // before its loop and cannot any more -- the metrics and the history live
+    // here (decision 167 D1) -- and a frontend that waits for the header must
+    // already hold the pane it will draw with that header. Sending it after the
+    // header would make the first frame a race.
+    if let Some(pane) = session.pane() {
+        let _ = events.send(WorkerEvent::Pane(pane));
+    }
+    // The frontend cannot derive its header any more: it arrives before any
+    // command, and again whenever a command moves the composition under it.
     let _ = events.send(WorkerEvent::Ready(session.status()));
     while let Ok(command) = commands.recv() {
         match command {
@@ -233,6 +250,11 @@ pub fn run_worker_loop<S: WorkerSession>(
                             }
                         }
                         session.turn_settled();
+                        // The settled pane: the demand loop has just run, so
+                        // this is the first snapshot that can show its effect.
+                        if let Some(pane) = session.pane() {
+                            let _ = events.send(WorkerEvent::Pane(pane));
+                        }
                         let _ = events.send(WorkerEvent::TurnFinished);
                     }
                     Err(message) => {
@@ -252,9 +274,11 @@ pub fn run_worker_loop<S: WorkerSession>(
             }
             WorkerCommand::SetModel(model) => {
                 match session.set_model(&model) {
+                    // No report of its own: the frontend owns the profile
+                    // write and already reported its outcome (decision 167
+                    // D3), so a line here would say it twice. The header IS
+                    // re-announced, because the composition moved under it.
                     Ok(()) => {
-                        let note = format!("model switched to {model}");
-                        let _ = events.send(WorkerEvent::Report(note));
                         let _ =
                             events.send(WorkerEvent::Ready(session.status()));
                     }
@@ -326,6 +350,23 @@ pub fn run_worker_loop<S: WorkerSession>(
     let _ = events.send(WorkerEvent::Stopped);
 }
 
+/// One bounded wait on the worker (C2 step 3).
+///
+/// A frontend cannot use a blocking receive for a turn: it must keep its own
+/// clock while the worker is silent, because that clock is what keeps the
+/// reveal, the pulse and the key handling moving. The three outcomes are the
+/// whole protocol of a wait -- an event, a tick, or a worker that is gone.
+#[derive(Debug)]
+pub enum WorkerWait {
+    /// One event arrived.
+    Event(WorkerEvent),
+    /// Nothing arrived within the timeout: this is the frontend's tick, not an
+    /// error.
+    Idle,
+    /// The worker is gone: the channel closed, so nothing more will arrive.
+    Gone,
+}
+
 /// The UI's handle on a running worker (C2 step 2).
 ///
 /// Dropping it does NOT stop the worker: `shutdown` sends the command and joins,
@@ -347,6 +388,19 @@ impl WorkerHandle {
     /// The next worker event, or `None` when the worker has stopped.
     pub fn recv(&self) -> Option<WorkerEvent> {
         self.events.recv().ok()
+    }
+
+    /// Wait up to `timeout` for the next event (C2 step 3).
+    pub fn wait(&self, timeout: std::time::Duration) -> WorkerWait {
+        match self.events.recv_timeout(timeout) {
+            Ok(event) => WorkerWait::Event(event),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                WorkerWait::Idle
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                WorkerWait::Gone
+            }
+        }
     }
 
     /// Everything the worker has already produced, without blocking.
@@ -416,6 +470,24 @@ impl WorkerSource {
     #[must_use]
     pub fn cancel_flag(&self) -> &CancelFlag {
         self.handle.cancel_flag()
+    }
+
+    /// Wait up to `timeout` for the next worker event (C2 step 3).
+    ///
+    /// `drain_events` keeps its non-blocking `poll_event`; a frontend that owns
+    /// a clock uses THIS instead, so an idle worker costs one tick rather than
+    /// a blocked UI thread.
+    pub fn wait(&self, timeout: std::time::Duration) -> WorkerWait {
+        self.handle.wait(timeout)
+    }
+
+    /// The next worker event, WAITING for it (C2 step 3).
+    ///
+    /// Only for the one moment a frontend can afford to wait with nothing to
+    /// draw: the startup handshake, before its terminal exists. Inside a turn
+    /// the frontend uses `wait`, because its clock must keep running.
+    pub fn recv(&self) -> Option<WorkerEvent> {
+        self.handle.recv()
     }
 
     /// Stop the worker and WAIT for it: the recordings are flushed before this
@@ -669,6 +741,36 @@ pub(crate) mod worker_source_tests {
             "shutdown is the command that flushes the recordings"
         );
     }
+
+    #[test]
+    fn a_wait_reports_idle_then_the_event_and_then_a_gone_worker() {
+        // The frontend's turn loop reads exactly these three outcomes: `Idle` is
+        // the tick that keeps the reveal moving while the model is silent, and
+        // `Gone` is a worker that died before it answered.
+        let s = scripted();
+        assert!(
+            matches!(
+                s.source.wait(std::time::Duration::from_millis(1)),
+                super::WorkerWait::Idle
+            ),
+            "an empty channel is a tick, not an error"
+        );
+
+        s.events.send(text("a")).expect("send");
+        match s.source.wait(std::time::Duration::from_secs(5)) {
+            super::WorkerWait::Event(event) => assert_eq!(event, text("a")),
+            other => panic!("expected the event, got {other:?}"),
+        }
+
+        drop(s.events);
+        assert!(
+            matches!(
+                s.source.wait(std::time::Duration::from_millis(1)),
+                super::WorkerWait::Gone
+            ),
+            "a worker that vanished must be distinguishable from an idle one"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -878,7 +980,9 @@ mod loop_tests {
         responding: bool,
         models: Vec<String>,
         reload_report: Option<String>,
+        reload_refusal: Option<String>,
         settled: usize,
+        pane: Option<crate::tui::ContextPaneData>,
     }
 
     impl WorkerSession for FakeSession {
@@ -901,7 +1005,7 @@ mod loop_tests {
             self.responding
         }
         fn pane(&self) -> Option<crate::tui::ContextPaneData> {
-            None
+            self.pane.clone()
         }
         fn context_report(&self) -> String {
             "context".to_owned()
@@ -915,14 +1019,17 @@ mod loop_tests {
             Ok(())
         }
         fn reload(&mut self) -> Result<String, String> {
-            // Faithful to the REAL adapter, which refuses until the reload path
-            // moves behind this boundary: a permissive double would hide it.
-            // A test that needs the success path sets `reload_report`.
-            match self.reload_report.take() {
-                Some(report) => Ok(report),
-                None => Err("reload is not available through the worker yet"
-                    .to_owned()),
+            // Faithful to the REAL adapter: it re-reads the profile,
+            // recomposes, applies and RETURNS the report, so a reload reaches
+            // the frontend as a Report. `reload_refusal` exists because the
+            // loop must still report a refusal truthfully if a session ever
+            // has one -- the adapter does not today.
+            if let Some(message) = self.reload_refusal.take() {
+                return Err(message);
             }
+            Ok(self.reload_report.take().unwrap_or_else(|| {
+                "reload applied: nothing changed\n".to_owned()
+            }))
         }
         fn cancel(&mut self) {
             self.cancels += 1;
@@ -951,6 +1058,8 @@ mod loop_tests {
                 endpoint: None,
                 protocol: "openai-completions".to_owned(),
                 credential_display: None,
+                credential_resolved: false,
+                context_suffix: String::new(),
             }
         }
         fn enable_progress_ticks(&mut self) {}
@@ -1058,6 +1167,8 @@ mod loop_tests {
                     endpoint: None,
                     protocol: "openai-completions".to_owned(),
                     credential_display: None,
+                    credential_resolved: false,
+                    context_suffix: String::new(),
                 }),
                 WorkerEvent::Report(
                     "reload applied: model=beta (restart to converge)\n"
@@ -1070,6 +1181,8 @@ mod loop_tests {
                     endpoint: None,
                     protocol: "openai-completions".to_owned(),
                     credential_display: None,
+                    credential_resolved: false,
+                    context_suffix: String::new(),
                 }),
                 // The command channel closed without a Shutdown: the loop
                 // still flushes once, and says so.
@@ -1080,25 +1193,43 @@ mod loop_tests {
     }
 
     #[test]
-    fn a_model_switch_reaches_the_session_and_a_reload_refusal_is_reported() {
-        // The bridge commands are driven through the loop: a double that
-        // discards its argument, or a refusal that returned Ok, would let a
-        // broken wiring pass this.
+    fn a_model_switch_reaches_the_session_and_reannounces_the_header() {
+        // The bridge command is driven through the loop: a double that
+        // discarded its argument would let a broken wiring pass this.
         let mut session = FakeSession::default();
         let events = run(
             vec![
                 WorkerCommand::SetModel("example/model-b".to_owned()),
-                WorkerCommand::Reload,
                 WorkerCommand::Shutdown,
             ],
             &mut session,
             &CancelFlag::new(),
         );
         assert_eq!(session.models, vec!["example/model-b".to_owned()]);
-        assert!(events.contains(&WorkerEvent::Report(
-            "model switched to example/model-b".to_owned()
-        )));
-        // Reload is not wired to the worker yet: it must SAY so, not pretend.
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, WorkerEvent::Ready(_)))
+                .count(),
+            2,
+            "the header is announced at startup and again when the switch moved the composition: {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, WorkerEvent::Report(_))),
+            "the frontend owns the persist and its message, so the worker adds no line of its own"
+        );
+    }
+
+    #[test]
+    fn a_reload_refusal_is_reported_not_swallowed() {
+        let mut session = FakeSession {
+            reload_refusal: Some("reload is not available".to_owned()),
+            ..FakeSession::default()
+        };
+        let events =
+            run(vec![WorkerCommand::Reload], &mut session, &CancelFlag::new());
         assert!(events.iter().any(|event| matches!(
             event,
             WorkerEvent::Failed(message) if message.contains("not available")
@@ -1176,6 +1307,42 @@ mod loop_tests {
         );
         assert_eq!(session.cancels, 1, "Cancel reaches the session");
         assert_eq!(events.last(), Some(&WorkerEvent::Stopped));
+    }
+
+    #[test]
+    fn the_worker_pushes_the_startup_pane_and_a_settled_one() {
+        // Decision 167 D1: the frontend no longer BUILDS the pane -- it cannot,
+        // because the metrics and the history live here. It arrives with the
+        // header, after every event, and once more after the turn settled (the
+        // demand tick has run by then).
+        let pane = crate::tui::ContextPaneData {
+            counters: vec![("ticks_total".to_owned(), 3)],
+            ring: Vec::new(),
+            activity: Vec::new(),
+        };
+        let mut session = FakeSession {
+            pane: Some(pane.clone()),
+            events: vec![ToolLoopEvent::ResponseStarted].into(),
+            ..FakeSession::default()
+        };
+        let events = run(
+            vec![WorkerCommand::Prompt("hi".to_owned())],
+            &mut session,
+            &CancelFlag::new(),
+        );
+        assert_eq!(
+            events,
+            vec![
+                WorkerEvent::Pane(pane.clone()),
+                WorkerEvent::Ready(session.status()),
+                WorkerEvent::Session(ToolLoopEvent::ResponseStarted),
+                WorkerEvent::Pane(pane.clone()),
+                WorkerEvent::Pane(pane),
+                WorkerEvent::TurnFinished,
+                WorkerEvent::Stopped,
+            ],
+            "the pane goes out before the header and again after the settled turn"
+        );
     }
 
     #[test]

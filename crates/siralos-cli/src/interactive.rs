@@ -5,6 +5,7 @@
 //! snapshots. It does not implement projection policy, Tool authorization,
 //! persistence, mutation, or an asynchronous runtime.
 
+use std::cell::RefCell;
 use std::fmt;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
@@ -70,7 +71,13 @@ use crate::output::{
     format_context_audit, format_context_status, format_domains,
     format_plugin_added, format_tool_projection, format_tools,
 };
+use crate::tui::TuiState;
+// `EventSource` is imported for its `cancel`: the relay cancels through the
+// same seam the shared drain uses, so one request covers both channels.
 use crate::sanitize::{TerminalSanitizer, sanitize_for_display};
+use crate::session_worker::{
+    EventSource, WorkerCommand, WorkerEvent, WorkerSource, WorkerWait,
+};
 
 /// Session provider enum for B2 replay/record composition.
 enum SessionProvider {
@@ -249,6 +256,10 @@ pub enum InteractiveError {
     ToolRegistry(ToolRegistryError),
     /// Terminal input or output failed.
     Io(io::Error),
+    /// The worker could not compose the session. The message is the
+    /// composition error relayed verbatim, so a frontend that shows the
+    /// worker's own wording shows exactly what a local composition would have.
+    Worker(String),
 }
 
 impl fmt::Display for InteractiveError {
@@ -266,6 +277,10 @@ impl fmt::Display for InteractiveError {
             Self::Io(error) => {
                 write!(formatter, "terminal I/O failed: {error}")
             }
+            // Verbatim: the worker relayed the composition error's own text,
+            // and re-wrapping it would change a diagnostic a user may be
+            // pasting into a bug report.
+            Self::Worker(message) => write!(formatter, "{message}"),
         }
     }
 }
@@ -500,18 +515,27 @@ fn render_provider_line(
     provider: Option<&str>,
     credential_raw: Option<&str>,
 ) -> String {
+    render_provider_line_display(
+        provider,
+        redacted_credential_display(credential_raw),
+    )
+}
+
+/// The same line from the ALREADY-REDACTED display form (C2 step 3).
+///
+/// The TUI renders it from the worker's status snapshot, where the raw
+/// credential never arrives (decision 168 R2), so the line has to be
+/// composable from the redacted form alone — one definition of the wording,
+/// two sources of the value.
+fn render_provider_line_display(
+    provider: Option<&str>,
+    credential: String,
+) -> String {
     let name = provider.unwrap_or("no provider configured");
-    let cred = match credential_raw {
-        None => "absent".to_owned(),
-        Some(s) if s.starts_with("key:") => "key:***".to_owned(),
-        Some(s) if s.starts_with("env:") => s.to_owned(),
-        Some(s) => format!("env:{s}"),
-    };
-    format!("provider: {name}\ncredential: {cred}\n")
+    format!("provider: {name}\ncredential: {credential}\n")
 }
 
 /// Redacted credential display for status surfaces (key:*** / env:NAME / absent).
-#[allow(dead_code)]
 fn redacted_credential_display(raw: Option<&str>) -> String {
     match raw {
         None => "absent".to_owned(),
@@ -1022,14 +1046,12 @@ fn render_tools_segment<P>(
     tool_definitions: &[siralos_core::tool::registry::RegisteredToolInfo],
     policy: &PermissionPolicy,
     application: &SiralosApplication<'_, P>,
-) -> Vec<u8>
+) -> String
 where
     P: siralos_core::provider::ModelProvider,
 {
-    let mut out = format_tools(tool_definitions, policy).into_bytes();
-    out.extend_from_slice(
-        format_tool_projection(application.last_projection()).as_bytes(),
-    );
+    let mut out = format_tools(tool_definitions, policy);
+    out.push_str(&format_tool_projection(application.last_projection()));
     out
 }
 
@@ -1085,9 +1107,11 @@ where
                 .map_err(InteractiveError::Io)?;
         }
         SlashCommand::Tools => {
-            let bytes =
+            let rendered =
                 render_tools_segment(tool_definitions, policy, application);
-            writer.write_all(&bytes).map_err(InteractiveError::Io)?;
+            writer
+                .write_all(rendered.as_bytes())
+                .map_err(InteractiveError::Io)?;
         }
         SlashCommand::Domains => {
             let rendered =
@@ -1337,172 +1361,511 @@ where
     Ok(false)
 }
 
-/// Dispatch one parsed [`SlashCommand`] to the TUI sink — the second thin
-/// per-frontend writer over the shared parse + render helpers. Returns
-/// `true` when the loop must exit (`/exit`).
+/// How long a relay waits for the worker before it runs the frontend's tick.
+///
+/// This IS the point of the worker boundary: with the session on the other
+/// thread the frontend owns its clock, so the reveal, the pulse, the thinking
+/// expansion and the interrupt key keep their cadence while the model is
+/// silent. It is the same interval the sink's redraw throttle uses.
+const WORKER_WAIT: std::time::Duration = crate::tui::REDRAW_INTERVAL;
+
+/// When a worker relay stops (C2 step 3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Until {
+    /// A turn: the worker's `TurnFinished`, or a worker that stopped first.
+    TurnFinished,
+    /// One answer to a request command: the first `Report`, `Failed` or
+    /// `Models`. The CALLER renders it, because each arm owns its wording.
+    Answer,
+    /// An applied composition change: the `Ready` that follows, or a `Failed`.
+    Applied,
+}
+
+/// What one relay run collected, beyond what it applied itself.
+#[derive(Debug, Default)]
+struct ReplyEffects {
+    /// The answer event, when the caller asked for one.
+    answer: Option<WorkerEvent>,
+    /// The worker stopped before the wait was satisfied.
+    stopped: bool,
+}
+
+/// Apply the worker's header snapshot to the frontend's own state (C2 step 3).
+///
+/// The header, the picker's values and the context suffix are all derived from
+/// the composition, which lives in the worker now (decision 168 R3: display may
+/// cross, authority may not). This is the frontend half of `Ready`.
+fn apply_status(
+    state: &Rc<RefCell<TuiState>>,
+    status: &crate::session_worker::SessionStatus,
+) {
+    let mut state = state.borrow_mut();
+    state.status = status.status.clone();
+    state.provider = status.provider.clone();
+    state.model = status.model.clone();
+    state.endpoint = status.endpoint.clone();
+    state.protocol = status.protocol.clone();
+    state.credential_display = status.credential_display.clone();
+    state.credential_resolved = status.credential_resolved;
+    state.context_suffix = status.context_suffix.clone();
+}
+
+/// Relay worker events into the frontend (C2 step 3).
+///
+/// This is the TUI's drain. The channel is read in order; the events that are
+/// frontend STATE (the header snapshot, the pane, the model list) are applied
+/// here; the events that are transcript cross the terminal sanitizer through
+/// the one shared bridge, so the sanitizer stays the single output boundary and
+/// a failure keeps the wording the stdio frontend shows.
+///
+/// `progress` runs on every event AND on every idle tick, exactly as the
+/// session's keep-alive ticks did, so liveness no longer depends on the
+/// provider's cadence.
 #[allow(clippy::too_many_arguments)]
-fn dispatch_tui_command<P>(
-    command: &SlashCommand<'_>,
-    workspace_root: &Path,
-    tool_definitions: &[siralos_core::tool::registry::RegisteredToolInfo],
-    policy: &PermissionPolicy,
-    application: &mut SiralosApplication<'_, P>,
+fn pump_worker(
+    worker: &mut WorkerSource,
     sink: &mut crate::tui::TuiSink,
-    hosts: &mut BTreeMap<String, DomainHost>,
-    manifests: &mut BTreeMap<String, PluginManifest>,
-    profile_plugins: Option<&[String]>,
-    context_control: Option<&ContextPolicy>,
-    context_system_enabled: bool,
-    context_session_holder: &mut Option<
-        siralos_adapters::context_session::ContextSystemSession,
-    >,
-    context_history_len: &mut usize,
-    provider: Option<&str>,
-    live_provider: &SessionProvider,
-    applied_model: &mut Option<String>,
-    applied_model_display_name: &mut Option<String>,
-    applied_credential_raw: &mut Option<String>,
-    applied_endpoint: &mut Option<String>,
-    applied_credential: &mut Option<HostCredential>,
-    applied_protocol_str: &mut String,
+    state: &Rc<RefCell<TuiState>>,
+    pane: &Rc<RefCell<Option<crate::tui::ContextPaneData>>>,
     progress: &mut dyn FnMut() -> bool,
     reasoning: &mut dyn FnMut(&str),
-) -> Result<bool, InteractiveError>
-where
-    P: siralos_core::provider::ModelProvider,
-{
-    match command {
-        SlashCommand::Context => {
-            let sanitized = render_context_segment(
-                application,
-                context_control,
-                context_system_enabled,
-                context_session_holder,
+    until: Until,
+) -> Result<ReplyEffects, InteractiveError> {
+    let mut sanitizer = TerminalSanitizer::new();
+    let mut effects = ReplyEffects::default();
+    let mut stop;
+    loop {
+        let event = match worker.wait(WORKER_WAIT) {
+            WorkerWait::Event(event) => event,
+            WorkerWait::Idle => {
+                // Nothing arrived: this is the tick, not a stall.
+                if progress() {
+                    worker.cancel();
+                }
+                continue;
+            }
+            WorkerWait::Gone => {
+                effects.stopped = true;
+                // Truthful, not silent: the frontend would otherwise wait for
+                // output that can never arrive.
+                let message = sanitize_for_display(
+                    "worker stopped before it finished\n",
+                );
+                sink.write_all(message.as_bytes())
+                    .map_err(InteractiveError::Io)?;
+                break;
+            }
+        };
+        stop = false;
+        match event {
+            // Frontend state, never transcript. `Ready` is ignored by the
+            // shared bridge on purpose, so it is applied here.
+            WorkerEvent::Ready(status) => {
+                apply_status(state, &status);
+                stop = until == Until::Applied;
+            }
+            WorkerEvent::Pane(data) => {
+                // The shared slot the draw path reads, so the very next frame
+                // shows the pane the worker just pushed (decision 167 D1).
+                *pane.borrow_mut() = Some(data);
+            }
+            WorkerEvent::TurnFinished => stop = true,
+            WorkerEvent::Stopped => {
+                effects.stopped = true;
+                stop = true;
+            }
+            // One answer, handed back UNRENDERED: the caller owns the wording.
+            WorkerEvent::Report(text) if until != Until::TurnFinished => {
+                effects.answer = Some(WorkerEvent::Report(text));
+                stop = true;
+            }
+            WorkerEvent::Failed(message) if until != Until::TurnFinished => {
+                effects.answer = Some(WorkerEvent::Failed(message));
+                stop = true;
+            }
+            WorkerEvent::Models(models) if until != Until::TurnFinished => {
+                effects.answer = Some(WorkerEvent::Models(models));
+                stop = true;
+            }
+            // Everything else is transcript. `Pane` never reaches this arm (it
+            // is frontend state and is handled above); the bridge keeps its own
+            // arm for its direct callers and its tests.
+            other => {
+                let mut scratch_pane = None;
+                crate::session_worker::apply_worker_event(
+                    other,
+                    &mut sanitizer,
+                    sink,
+                    reasoning,
+                    &mut scratch_pane,
+                )
+                .map_err(InteractiveError::Io)?;
+            }
+        }
+        // The per-event tick: what the keep-alive events used to drive.
+        if progress() {
+            worker.cancel();
+        }
+        if stop {
+            break;
+        }
+    }
+    Ok(effects)
+}
+
+/// Render the answer one request command received (C2 step 3).
+///
+/// The wording is the shared bridge's, so a refusal cannot look like success
+/// and the sanitizer stays the single output boundary. A worker that died
+/// before answering has already been reported by the relay.
+fn render_answer(
+    answer: Option<WorkerEvent>,
+    sink: &mut crate::tui::TuiSink,
+) -> Result<(), InteractiveError> {
+    let Some(event) = answer else {
+        return Ok(());
+    };
+    let mut sanitizer = TerminalSanitizer::new();
+    let mut scratch_pane = None;
+    crate::session_worker::apply_worker_event(
+        event,
+        &mut sanitizer,
+        sink,
+        &mut |_| {},
+        &mut scratch_pane,
+    )
+    .map_err(InteractiveError::Io)
+}
+
+/// Ask the worker one request command and return its answer (C2 step 3).
+///
+/// Six dispatcher arms are exactly this shape: send, relay, render whatever
+/// comes back. The relay is where the tick, the pane cache and the sanitizer
+/// boundary live, so the arms stay one line of intent each.
+#[allow(clippy::too_many_arguments)]
+fn ask_worker(
+    worker: &mut WorkerSource,
+    sink: &mut crate::tui::TuiSink,
+    state: &Rc<RefCell<TuiState>>,
+    pane: &Rc<RefCell<Option<crate::tui::ContextPaneData>>>,
+    progress: &mut dyn FnMut() -> bool,
+    reasoning: &mut dyn FnMut(&str),
+    command: WorkerCommand,
+    until: Until,
+) -> Result<Option<WorkerEvent>, InteractiveError> {
+    let _ = worker.send(command);
+    let effects =
+        pump_worker(worker, sink, state, pane, progress, reasoning, until)?;
+    Ok(effects.answer)
+}
+
+/// Bare `/model`: ask the worker for the provider's models and open the
+/// switch picker over them (C2 step 3).
+///
+/// The fetch reads the endpoint AND the credential, so it belongs where they
+/// live (decision 168 R2) and only the ids come back. The picker itself is the
+/// same `ModelPicker` + sliding viewport the add-flow uses; a missing
+/// provider/endpoint, or a failed or empty fetch, is reported truthfully with
+/// the explicit-id hint instead of opening an empty picker.
+#[allow(clippy::too_many_arguments)]
+fn open_model_picker_via_worker(
+    sink: &mut crate::tui::TuiSink,
+    state: &Rc<RefCell<TuiState>>,
+    worker: &mut WorkerSource,
+    pane: &Rc<RefCell<Option<crate::tui::ContextPaneData>>>,
+    progress: &mut dyn FnMut() -> bool,
+    reasoning: &mut dyn FnMut(&str),
+) -> Result<(), InteractiveError> {
+    let (provider, endpoint) = {
+        let state = state.borrow();
+        (state.provider.clone(), state.endpoint.clone())
+    };
+    if provider.is_none() || endpoint.is_none() {
+        let msg = sanitize_for_display(
+            "no provider configured — pass /model <id> to switch once a provider is set, or add one with /provider\n",
+        );
+        sink.write_all(msg.as_bytes()).map_err(InteractiveError::Io)?;
+        return Ok(());
+    }
+    let answer = ask_worker(
+        worker,
+        sink,
+        state,
+        pane,
+        progress,
+        reasoning,
+        WorkerCommand::ModelsFetch,
+        Until::Answer,
+    )?;
+    match answer {
+        Some(WorkerEvent::Models(models)) if !models.is_empty() => {
+            crate::tui::open_model_switch_picker(
+                &mut state.borrow_mut(),
+                models,
             );
-            let _ = sink.write_all(sanitized.as_bytes());
+        }
+        _ => {
+            let msg = sanitize_for_display(
+                "model list unavailable — pass /model <id> to switch\n",
+            );
+            sink.write_all(msg.as_bytes()).map_err(InteractiveError::Io)?;
+        }
+    }
+    Ok(())
+}
+
+/// `/model <id>` and the model picker's Enter: persist on the frontend, apply
+/// in the worker (decision 167 D3).
+///
+/// The frontend owns the profile write, so a refused switch changes neither
+/// disk nor session, and the message the user reads is the persist's own --
+/// one definition, both frontends. Only once it succeeded does the worker learn
+/// about it, and the header it re-announces is the proof the live cells moved.
+#[allow(clippy::too_many_arguments)]
+fn switch_model_via_worker(
+    workspace_root: &Path,
+    sink: &mut crate::tui::TuiSink,
+    state: &Rc<RefCell<TuiState>>,
+    worker: &mut WorkerSource,
+    pane: &Rc<RefCell<Option<crate::tui::ContextPaneData>>>,
+    progress: &mut dyn FnMut() -> bool,
+    reasoning: &mut dyn FnMut(&str),
+    new_model: &str,
+) -> Result<(), InteractiveError> {
+    let provider = state.borrow().provider.clone();
+    match persist_switched_model(
+        workspace_root,
+        provider.as_deref(),
+        new_model,
+    ) {
+        Ok(message) => {
+            let rendered = sanitize_for_display(&message);
+            sink.write_all(rendered.as_bytes())
+                .map_err(InteractiveError::Io)?;
+            // Apply it where the session lives. A worker that is already gone
+            // is not silent: the relay reports it.
+            let answer = ask_worker(
+                worker,
+                sink,
+                state,
+                pane,
+                progress,
+                reasoning,
+                WorkerCommand::SetModel(new_model.to_owned()),
+                Until::Applied,
+            )?;
+            render_answer(answer, sink)?;
+        }
+        Err(reason) => {
+            let rendered = sanitize_for_display(&reason);
+            sink.write_all(rendered.as_bytes())
+                .map_err(InteractiveError::Io)?;
+        }
+    }
+    Ok(())
+}
+
+/// Dispatch one parsed [`SlashCommand`] to the TUI sink — the second thin
+/// per-frontend writer over the shared parse + render helpers, and since C2
+/// step 3 the frontend half of the worker boundary.
+///
+/// The session is NOT here any more (decision 167). An arm that needs it sends
+/// a [`WorkerCommand`] and relays the answer; an arm that only renders reads
+/// the cached `Ready` snapshot. The capability state the old signature carried
+/// — the tool definitions, the permission policy, the domain hosts and
+/// manifests, the plugin selection and the context control — went with it
+/// (decision 168 R4: capability is authority, and the frontend may not hold
+/// authority it cannot enforce). Returns `true` when the loop must exit.
+#[allow(clippy::too_many_arguments)]
+fn dispatch_tui_command(
+    command: &SlashCommand<'_>,
+    workspace_root: &Path,
+    state: &Rc<RefCell<TuiState>>,
+    sink: &mut crate::tui::TuiSink,
+    worker: &mut WorkerSource,
+    pane: &Rc<RefCell<Option<crate::tui::ContextPaneData>>>,
+    progress: &mut dyn FnMut() -> bool,
+    reasoning: &mut dyn FnMut(&str),
+) -> Result<bool, InteractiveError> {
+    match command {
+        // `/context` and `/tools` read capability state to RENDER it, and the
+        // render belongs where the control is applied (decision 168 R4): the
+        // worker holds the projection, the context control and the audit, and
+        // answers with the very bytes the frontend used to build.
+        SlashCommand::Context => {
+            let answer = ask_worker(
+                worker,
+                sink,
+                state,
+                pane,
+                progress,
+                reasoning,
+                WorkerCommand::ContextReport,
+                Until::Answer,
+            )?;
+            render_answer(answer, sink)?;
         }
         SlashCommand::Tools => {
-            let bytes =
-                render_tools_segment(tool_definitions, policy, application);
-            let _ = sink.write_all(&bytes);
+            let answer = ask_worker(
+                worker,
+                sink,
+                state,
+                pane,
+                progress,
+                reasoning,
+                WorkerCommand::ToolsReport,
+                Until::Answer,
+            )?;
+            render_answer(answer, sink)?;
         }
         SlashCommand::Domains => {
+            // Display only, and the workspace root is frontend state (R1), so
+            // this stays a local render.
             let rendered =
                 sanitize_for_display(&render_domains(workspace_root));
             let _ = sink.write_all(rendered.as_bytes());
         }
         SlashCommand::Exit => return Ok(true),
+        // The three domain arms MUTATE the session's domain registry and
+        // activate hosts, so the session does it (decision 168 R4). The worker
+        // calls the very same `render_*` helpers, so neither the report nor the
+        // side effect forks.
         SlashCommand::DomainsAdd(folder) => {
-            let rendered = sanitize_for_display(&render_add_plugin(
-                workspace_root,
-                folder.unwrap_or(""),
-                hosts,
-                manifests,
-            ));
-            let _ = sink.write_all(rendered.as_bytes());
+            let answer = ask_worker(
+                worker,
+                sink,
+                state,
+                pane,
+                progress,
+                reasoning,
+                WorkerCommand::DomainsAdd(folder.unwrap_or("").to_owned()),
+                Until::Answer,
+            )?;
+            render_answer(answer, sink)?;
         }
         SlashCommand::DomainsEnable(id) => {
-            let rendered = sanitize_for_display(&render_enable(
-                workspace_root,
-                hosts,
-                manifests,
-                id.unwrap_or(""),
-            ));
-            let _ = sink.write_all(rendered.as_bytes());
+            let answer = ask_worker(
+                worker,
+                sink,
+                state,
+                pane,
+                progress,
+                reasoning,
+                WorkerCommand::DomainsEnable(id.unwrap_or("").to_owned()),
+                Until::Answer,
+            )?;
+            render_answer(answer, sink)?;
         }
         SlashCommand::DomainsActivate(id) => {
-            let rendered = sanitize_for_display(&render_activate(
-                workspace_root,
-                hosts,
-                manifests,
-                id.unwrap_or(""),
-                profile_plugins,
-            ));
-            let _ = sink.write_all(rendered.as_bytes());
+            let answer = ask_worker(
+                worker,
+                sink,
+                state,
+                pane,
+                progress,
+                reasoning,
+                WorkerCommand::DomainsActivate(id.unwrap_or("").to_owned()),
+                Until::Answer,
+            )?;
+            render_answer(answer, sink)?;
         }
         SlashCommand::Provider => {
-            let rendered = sanitize_for_display(&render_provider_line(
-                provider,
-                applied_credential_raw.as_deref(),
-            ));
+            // Rendered from the cached snapshot. The raw credential never
+            // crosses (decision 168 R2), so the display form is what shows —
+            // and it is already redacted where it lives.
+            let (provider, credential) = {
+                let state = state.borrow();
+                (state.provider.clone(), state.credential_display.clone())
+            };
+            let rendered =
+                sanitize_for_display(&render_provider_line_display(
+                    provider.as_deref(),
+                    credential.unwrap_or_else(|| "absent".to_owned()),
+                ));
             let _ = sink.write_all(rendered.as_bytes());
         }
         SlashCommand::ProviderRemove => {
             // Intercepted in-loop (opening the confirmation needs the
-            // `TuiState`, which this sink-only writer does not hold), so
-            // this arm is unreachable — kept only for exhaustiveness.
+            // `TuiState`, which this writer does not hold), so this arm is
+            // unreachable — kept only for exhaustiveness.
         }
         SlashCommand::Model(argument) => {
-            // Bare `/model` is intercepted in-loop (fetch + picker) and
-            // never reaches this writer; keep the display fallback for
-            // direct callers. `Some(id)` performs the same
-            // switch-and-persist as the stdio form.
+            // Bare `/model` is intercepted in-loop (it opens the switch
+            // picker), so the display fallback here is for direct callers.
+            // `Some(id)` is the same switch-and-persist as the stdio form,
+            // split across the boundary by decision 167 D3.
             match argument {
                 None => {
-                    let effective = applied_model_display_name
-                        .clone()
-                        .filter(|name| !name.is_empty())
-                        .or(applied_model.clone());
+                    let model = state.borrow().model.clone();
                     let rendered = sanitize_for_display(&render_model_line(
-                        effective.as_deref(),
+                        model.as_deref(),
                     ));
                     let _ = sink.write_all(rendered.as_bytes());
                 }
                 Some(id) => {
-                    let outcome = apply_model_switch(
+                    switch_model_via_worker(
                         workspace_root,
-                        live_provider,
-                        provider,
-                        applied_model,
-                        applied_model_display_name,
+                        sink,
+                        state,
+                        worker,
+                        pane,
+                        progress,
+                        reasoning,
                         id,
-                    );
-                    let rendered = sanitize_for_display(
-                        outcome.as_deref().unwrap_or_else(|reason| reason),
-                    );
-                    let _ = sink.write_all(rendered.as_bytes());
+                    )?;
                 }
             }
         }
         SlashCommand::Models => {
-            // I6 blocking fetch — same as stdio, synchronous freeze documented.
-            match (
-                provider,
-                applied_endpoint.as_deref(),
-                applied_credential.as_ref(),
-            ) {
-                (Some(_), Some(ep), Some(cred)) => {
-                    match siralos_adapters::provider::generic::fetch_models(
-                        ep,
-                        Some(cred),
-                    ) {
-                        Ok(models) => {
-                            if models.is_empty() {
-                                let line = "no models returned\n";
-                                let _ = sink.write_all(
-                                    sanitize_for_display(line).as_bytes(),
-                                );
-                            } else {
-                                for id in models {
-                                    let line = format!("{id}\n");
-                                    let sanitized =
-                                        sanitize_for_display(&line);
-                                    let _ =
-                                        sink.write_all(sanitized.as_bytes());
-                                }
+            // I6: the fetch reads the endpoint and the credential, so it runs
+            // where they live (decision 168 R2) and only the ids cross. The
+            // gate is today's: a provider, an endpoint AND a credential that
+            // actually resolved, so an unconfigured session still gets the
+            // honest line instead of spending a request on nothing.
+            let (configured, credential_resolved) = {
+                let state = state.borrow();
+                (
+                    state.provider.is_some() && state.endpoint.is_some(),
+                    state.credential_resolved,
+                )
+            };
+            if !configured || !credential_resolved {
+                let msg = "no provider configured — set [profile] provider/endpoint and credential (env:...) in siralos.toml\n";
+                let sanitized = sanitize_for_display(msg);
+                let _ = sink.write_all(sanitized.as_bytes());
+            } else {
+                let answer = ask_worker(
+                    worker,
+                    sink,
+                    state,
+                    pane,
+                    progress,
+                    reasoning,
+                    WorkerCommand::ModelsFetch,
+                    Until::Answer,
+                )?;
+                match answer {
+                    Some(WorkerEvent::Models(models)) => {
+                        if models.is_empty() {
+                            let line = "no models returned\n";
+                            let _ = sink.write_all(
+                                sanitize_for_display(line).as_bytes(),
+                            );
+                        } else {
+                            for id in models {
+                                let line = format!("{id}\n");
+                                let sanitized = sanitize_for_display(&line);
+                                let _ = sink.write_all(sanitized.as_bytes());
                             }
                         }
-                        Err(err) => {
-                            let line = format!("models fetch error: {err}\n");
-                            let sanitized = sanitize_for_display(&line);
-                            let _ = sink.write_all(sanitized.as_bytes());
-                        }
                     }
-                }
-                _ => {
-                    let msg = "no provider configured — set [profile] provider/endpoint and credential (env:...) in siralos.toml\n";
-                    let sanitized = sanitize_for_display(msg);
-                    let _ = sink.write_all(sanitized.as_bytes());
+                    Some(WorkerEvent::Failed(message)) => {
+                        let line = format!("models fetch error: {message}\n");
+                        let sanitized = sanitize_for_display(&line);
+                        let _ = sink.write_all(sanitized.as_bytes());
+                    }
+                    // The relay has already reported a worker that stopped.
+                    _ => {}
                 }
             }
         }
@@ -1511,32 +1874,21 @@ where
             let _ = sink.write_all(rendered.as_bytes());
         }
         SlashCommand::Reload => {
-            // SAFE HALF (TUI sink arm): same pure report as stdio — no
-            // live mutation. Reachable when dispatched directly (the
-            // in-loop path below prefers the same helper).
-            let live_model = live_provider.live_model();
-            let (mut report, recomposed_config) = reload_report(
-                workspace_root,
-                provider,
-                live_model.as_deref().or(applied_model.as_deref()),
-                applied_credential_raw.as_deref(),
-                applied_endpoint.as_deref(),
-                applied_protocol_str.as_str(),
-            );
-            apply_reloaded_config(
-                live_provider,
-                live_model.as_deref(),
-                applied_model,
-                applied_model_display_name,
-                applied_endpoint,
-                applied_protocol_str,
-                applied_credential,
-                applied_credential_raw,
-                recomposed_config,
-                &mut report,
-            );
-            let rendered = sanitize_for_display(&report);
-            let _ = sink.write_all(rendered.as_bytes());
+            // The reload READS the profile, RECOMPOSES and moves the live
+            // cells, so it runs with the session (decision 167 D3) and returns
+            // the report this frontend shows. The header is re-announced with
+            // it, so `/reload` no longer leaves a stale one behind.
+            let answer = ask_worker(
+                worker,
+                sink,
+                state,
+                pane,
+                progress,
+                reasoning,
+                WorkerCommand::Reload,
+                Until::Applied,
+            )?;
+            render_answer(answer, sink)?;
         }
         SlashCommand::Mouse => {
             // Intercepted in-loop (flipping needs the live `TuiState` plus
@@ -1544,21 +1896,19 @@ where
             // sink-only arm is unreachable — kept for exhaustiveness.
         }
         SlashCommand::Prompt(prompt) => {
-            // Prompt path: same as stdio — send to application, drain with
-            // sanitizer via sink.
-            application.send_prompt((*prompt).to_owned()).map_err(
-                |error| {
-                    InteractiveError::Io(io::Error::other(error.to_string()))
-                },
+            // The turn runs where the session is. The relay renders the whole
+            // turn -- deltas through the sanitizer, the thinking to its sink,
+            // the pane snapshots, the demand tick's effect and the end signal.
+            let _ = ask_worker(
+                worker,
+                sink,
+                state,
+                pane,
+                progress,
+                reasoning,
+                WorkerCommand::Prompt((*prompt).to_owned()),
+                Until::TurnFinished,
             )?;
-            drain_events(application, sink, progress, reasoning)?;
-            if let Some(session) = context_session_holder {
-                drive_context_demand(
-                    application,
-                    session,
-                    context_history_len,
-                );
-            }
         }
     }
     Ok(false)
@@ -1648,8 +1998,9 @@ pub(crate) struct SessionComposition<'a> {
     applied_model_display_name: Option<String>,
     /// Applied endpoint from the composed profile (H6 host for picker).
     applied_endpoint: Option<String>,
-    /// Whether the credential for the applied provider is present (U7).
-    #[allow(dead_code)]
+    /// Whether the credential for the applied provider RESOLVED (U7). Crosses
+    /// to the frontend as `SessionStatus::credential_resolved` -- the fact, not
+    /// the value.
     credential_present: bool,
     /// Retained credential for /models fetch (I6) — the live HostCredential
     /// (if any) resolved from the profile's `credential = "env:..."` or `key:...`.
@@ -1730,11 +2081,28 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
     }
 
     fn context_report(&self) -> String {
-        format_context_status(self.application.last_projection())
+        // The SAME renderer the stdio dispatcher writes: the projection claim,
+        // the applied profile's context control, and the audit segment. All
+        // three inputs live here (decision 168 R4: a report belongs where the
+        // control is applied). The frontend used to call this renderer itself,
+        // so the bytes it renders do not move.
+        render_context_segment(
+            &self.application,
+            self.context_control.as_ref(),
+            self.context_system_enabled,
+            &self.context_session_holder,
+        )
     }
 
     fn tools_report(&self) -> String {
-        format_tool_projection(self.application.last_projection())
+        // Same as stdio: the registration-ordered definitions plus the current
+        // projection, both of which live here (the registry is borrowed by the
+        // application and is not `Clone`).
+        render_tools_segment(
+            &self.tool_definitions,
+            &self.policy,
+            &self.application,
+        )
     }
 
     fn set_model(&mut self, model: &str) -> Result<(), String> {
@@ -1816,6 +2184,14 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
                 .applied_credential_raw
                 .as_deref()
                 .map(|raw| redacted_credential_display(Some(raw))),
+            // The RESOLUTION, not the value: the frontend's `/models` arm
+            // decides on exactly this today.
+            credential_resolved: self.credential_present,
+            // The suffix alone, so a transient status keeps the readout.
+            context_suffix: crate::tui::append_context_usage(
+                String::new(),
+                self.context_session_holder.as_ref().map(|s| &s.metrics),
+            ),
         }
     }
 
@@ -3691,17 +4067,22 @@ fn drive_context_demand<P>(
 /// `crossterm::event::poll` pump, so this loop calls the SAME shared helpers
 /// through its own terminal wiring. T2 consolidated the approval surface; T3
 /// consolidated the audit/pane gating; T4 (decision 108) settles the FINAL
-/// ledger — shared: `compose_session`, `parse_slash_command`,
-/// `render_context_segment`/`render_tools_segment`,
+/// ledger — shared: `parse_slash_command`,
+/// `render_context_segment`/`render_tools_segment` (now called by the worker),
 /// `dispatch_stdio_command`/`dispatch_tui_command`, `handle_key`,
-/// `flush_record_replay`. Permanent residual: the TUI loop owns the
-/// `TerminalGuard`/`Terminal`/`TuiState`/`TuiSink` terminal state (plus
+/// `flush_record_replay` (now the worker's). Permanent residual: the TUI loop
+/// owns the `TerminalGuard`/`Terminal`/`TuiState`/`TuiSink` terminal state (plus
 /// Ctrl+C-exit, the PageUp viewport lookup, and the modal verdict lines).
 ///
-/// No threads: `crossterm::event::poll` with a 100ms timeout; blocking provider
-/// rounds freeze the redraw (documented T1 limitation — status showed "working"
-/// before the step). The terminal state is restored via a drop guard on every
-/// exit path (panic-safe).
+/// C2 step 3 (ticket 130): the SESSION IS NOT HERE. The worker composes it
+/// (decision 167), this loop holds only commands, events and the cached
+/// `Ready`/`Pane` snapshots, and the two talk over the channels in
+/// [`crate::session_worker`]. The provider's cadence no longer sets the frame
+/// cadence: the relay ticks on its own clock while the worker is silent.
+///
+/// The terminal state is restored via a drop guard on every exit path
+/// (panic-safe), and the worker is stopped and joined before that guard runs
+/// (decision 168 R6).
 pub fn run_interactive_tui_stdio() -> Result<(), InteractiveError> {
     run_interactive_tui_with_options(InteractiveOptions::default())
 }
@@ -3713,15 +4094,34 @@ pub fn run_interactive_tui_with_options(
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use crate::tui::{
-        TerminalGuard, TuiSink, TuiState, build_context_pane, draw_with_pane,
-    };
+    use crate::tui::{TerminalGuard, TuiSink, TuiState, draw_with_pane};
 
-    // --- Session composition BEFORE the alternate screen (R6) ---
-    // Startup diagnostics (lock drift, skill/context warnings) print via
-    // eprintln before TerminalGuard::enter so they remain visible; no compose
-    // step needs the terminal.
-    let session = compose_session(options)?;
+    // --- The worker composes the session BEFORE the alternate screen (R6) ---
+    // Startup diagnostics (lock drift, skill/context warnings, profile and
+    // credential errors) are `eprintln` from the worker thread. This waits for
+    // its first event, so every one of them is on the normal screen before the
+    // alternate screen exists — and a composition failure is reported exactly
+    // where the synchronous composition used to report it.
+    //
+    // R1: the frontend keeps the workspace root, because it owns the profile
+    // writes (`/provider`, `/provider remove`, `/model`).
+    let workspace_root = match options.workspace_root {
+        Some(path) => path.to_path_buf(),
+        None => std::env::current_dir()
+            .map_err(InteractiveError::CurrentDirectory)?,
+    };
+    let workspace_root = resolve_workspace_root(&workspace_root)?;
+    let pane_cache: Rc<RefCell<Option<crate::tui::ContextPaneData>>> =
+        Rc::new(RefCell::new(None));
+    let tui_state = Rc::new(RefCell::new(TuiState::new()));
+    let mut worker = await_worker_ready(
+        WorkerSource::new(spawn_tui_worker(
+            &workspace_root,
+            options.config_path,
+        )),
+        &tui_state,
+        &pane_cache,
+    )?;
 
     // Guard restores raw mode + alternate screen on every exit path.
     // `mut`: `/mouse` re-pairs the terminal escape through it in-loop.
@@ -3734,60 +4134,13 @@ pub fn run_interactive_tui_with_options(
         Rc::new(RefCell::new(ratatui::Terminal::new(backend).map_err(
             |e| InteractiveError::Io(io::Error::other(e.to_string())),
         )?));
-    // The last pane the loop built, so a sink-driven frame never blanks it.
-    let pane_cache: Rc<RefCell<Option<crate::tui::ContextPaneData>>> =
-        Rc::new(RefCell::new(None));
-    let SessionComposition {
-        workspace_root,
-        tool_definitions,
-        policy,
-        mut application,
-        live_provider,
-        mut hosts,
-        mut manifests,
-        profile_plugins,
-        context_control,
-        context_system_enabled,
-        mut context_session_holder,
-        mut context_history_len,
-        record_recorder,
-        replay_store_path,
-        applied_provider,
-        mut applied_model,
-        mut applied_model_display_name,
-        mut applied_endpoint,
-        credential_present: _,
-        mut applied_credential,
-        mut applied_credential_raw,
-        mut applied_protocol_str,
-    } = session;
-    // TUI state + sink (sanitizer boundary stays upstream; sink appends verbatim)
-    // S5: header/status prefers model display name when present.
-    // Recomputed after every `/model` switch below (same preference rule).
-    let mut effective_model: Option<String> = applied_model_display_name
-        .clone()
-        .filter(|s| !s.is_empty())
-        .or(applied_model.clone());
-    let tui_state = Rc::new(RefCell::new(TuiState::new()));
     {
-        let base = "";
-        let metrics_opt = context_session_holder.as_ref().map(|s| &s.metrics);
-        let composed = crate::tui::compose_status_line_with_context(
-            base,
-            applied_provider.as_deref(),
-            effective_model.as_deref(),
-            metrics_opt,
-        );
-        let mut state = tui_state.borrow_mut();
-        state.status = composed;
-        state.provider = applied_provider.clone();
-        state.model = effective_model.clone();
         // H2: banner + greeting at session start (TUI-only, stdio unchanged).
+        // The header itself arrived with `Ready` and was applied before the
+        // terminal was taken over, so this only prepends the greeting.
+        let mut state = tui_state.borrow_mut();
         crate::tui::push_banner_and_greeting(&mut state);
     }
-    // The TUI can repaint and read keys while a turn runs, so it wants the
-    // keep-alive ticks; the harness and stdio paths leave them off.
-    application.enable_provider_progress_ticks();
     let mut sink = TuiSink::new(tui_state.clone());
 
     // One place that paints a frame, callable from the loop and from the
@@ -3925,14 +4278,9 @@ pub fn run_interactive_tui_with_options(
         }
     };
 
-    // Initial draw (T3: the context pane renders when the shared audit
-    // gate passes — opted in AND built — and is byte-identical to T2
-    // otherwise).
-    *pane_cache.borrow_mut() = build_context_pane(
-        context_system_enabled,
-        context_session_holder.as_ref().map(|session| &session.metrics),
-        application.history(),
-    );
+    // Initial draw. The context pane is already cached: the worker pushed it
+    // before the header (T3's gate — opted in AND built — is the WORKER's now,
+    // and an opted-out session simply receives no pane, byte-identical to T2).
     draw_now();
 
     // Event loop: P1 zero-timeout drain + immediate draw, outer 50ms idle poll.
@@ -3967,17 +4315,8 @@ pub fn run_interactive_tui_with_options(
                                 &workspace_root,
                                 &mut sink,
                             ) {
-                                let base = "";
-                                let metrics_opt = context_session_holder
-                                    .as_ref()
-                                    .map(|s| &s.metrics);
                                 let composed =
-                                    crate::tui::compose_status_line_with_context(
-                                        base,
-                                        applied_provider.as_deref(),
-                                        effective_model.as_deref(),
-                                        metrics_opt,
-                                    );
+                                    transient_status(&tui_state.borrow(), "");
                                 tui_state.borrow_mut().status = composed;
                             }
                         } else {
@@ -4013,16 +4352,10 @@ pub fn run_interactive_tui_with_options(
                                 tui_state.borrow_mut().busy_since = pending
                                     .as_ref()
                                     .map(|_| std::time::Instant::now());
-                                let metrics_opt = context_session_holder
-                                    .as_ref()
-                                    .map(|s| &s.metrics);
-                                let composed =
-                                    crate::tui::compose_status_line_with_context(
-                                        base,
-                                        applied_provider.as_deref(),
-                                        effective_model.as_deref(),
-                                        metrics_opt,
-                                    );
+                                let composed = transient_status(
+                                    &tui_state.borrow(),
+                                    base,
+                                );
                                 tui_state.borrow_mut().status = composed;
                                 // One submit per drain: dispatch once, keep
                                 // the last line when several arrive together.
@@ -4100,15 +4433,7 @@ pub fn run_interactive_tui_with_options(
                     tui_state.borrow_mut().provider_add_form = None;
                 }
             }
-            let base = "";
-            let metrics_opt =
-                context_session_holder.as_ref().map(|s| &s.metrics);
-            let composed = crate::tui::compose_status_line_with_context(
-                base,
-                applied_provider.as_deref(),
-                effective_model.as_deref(),
-                metrics_opt,
-            );
+            let composed = transient_status(&tui_state.borrow(), "");
             tui_state.borrow_mut().status = composed;
         }
         // S2: model fetch integration — after ApiKey advance, fetch once (blocking, freeze documented).
@@ -4117,15 +4442,14 @@ pub fn run_interactive_tui_with_options(
             guard.provider_add_form.as_ref().is_some_and(|f| f.fetching_models)
         };
         if needs_fetch {
-            // Show fetching status while blocking.
+            // Show fetching status while blocking. The add-flow's fetch is
+            // FRONTEND-side on purpose: it uses the values the user is typing
+            // into the form, not the session's credential (decision 168 R2 is
+            // about the composed credential, which stays in the worker).
             {
-                let metrics_opt =
-                    context_session_holder.as_ref().map(|s| &s.metrics);
-                let fetching = crate::tui::compose_status_line_with_context(
+                let fetching = transient_status(
+                    &tui_state.borrow(),
                     "fetching models...",
-                    applied_provider.as_deref(),
-                    effective_model.as_deref(),
-                    metrics_opt,
                 );
                 tui_state.borrow_mut().status = fetching;
             }
@@ -4155,16 +4479,9 @@ pub fn run_interactive_tui_with_options(
                     form.apply_fetch_result(fetch_result);
                 }
             }
-            // Restore ready status after fetch (pane will re-render on next loop).
+            // Restore ready status after the fetch.
             {
-                let metrics_opt =
-                    context_session_holder.as_ref().map(|s| &s.metrics);
-                let ready = crate::tui::compose_status_line_with_context(
-                    "ready",
-                    applied_provider.as_deref(),
-                    effective_model.as_deref(),
-                    metrics_opt,
-                );
+                let ready = transient_status(&tui_state.borrow(), "ready");
                 tui_state.borrow_mut().status = ready;
             }
         }
@@ -4173,13 +4490,6 @@ pub fn run_interactive_tui_with_options(
         // submitted text and `working` is never seen until the response
         // arrives -- the "press Enter" and "looks frozen" reports.
         if pending_submit.is_some() {
-            *pane_cache.borrow_mut() = build_context_pane(
-                context_system_enabled,
-                context_session_holder
-                    .as_ref()
-                    .map(|session| &session.metrics),
-                application.history(),
-            );
             draw_now();
         }
         if let Some(input_line) = pending_submit.take() {
@@ -4201,10 +4511,19 @@ pub fn run_interactive_tui_with_options(
                 let _ = sink.write_all(sanitized.as_bytes());
             } else if let SlashCommand::Provider = command {
                 // C1: /provider with no configured provider OR the "add" entry opens the sequential add-flow form.
+                // The values come from the cached `Ready` snapshot (R3).
+                let (provider, model, endpoint) = {
+                    let state = tui_state.borrow();
+                    (
+                        state.provider.clone(),
+                        state.model.clone(),
+                        state.endpoint.clone(),
+                    )
+                };
                 let entries = crate::tui::provider_entries_from_session(
-                    applied_provider.as_deref(),
-                    effective_model.as_deref(),
-                    applied_endpoint.as_deref(),
+                    provider.as_deref(),
+                    model.as_deref(),
+                    endpoint.as_deref(),
                 );
                 if entries.is_empty() {
                     crate::tui::open_provider_add_form(
@@ -4221,10 +4540,18 @@ pub fn run_interactive_tui_with_options(
                 // no-op; otherwise arm the y/N confirmation modal (the
                 // decision resolves through the single outcome in the
                 // modal branch below).
+                let (provider, model, endpoint) = {
+                    let state = tui_state.borrow();
+                    (
+                        state.provider.clone(),
+                        state.model.clone(),
+                        state.endpoint.clone(),
+                    )
+                };
                 let entries = crate::tui::provider_entries_from_session(
-                    applied_provider.as_deref(),
-                    effective_model.as_deref(),
-                    applied_endpoint.as_deref(),
+                    provider.as_deref(),
+                    model.as_deref(),
+                    endpoint.as_deref(),
                 );
                 if entries.is_empty() {
                     let msg = sanitize_for_display(
@@ -4258,90 +4585,22 @@ pub fn run_interactive_tui_with_options(
                     let _ = sink.write_all(msg.as_bytes());
                 }
             } else if let SlashCommand::Model(None) = command {
-                // Bare `/model` in the TUI: fetch the provider's models
-                // and open the switch picker (the same `ModelPicker` +
-                // sliding viewport the add-flow uses). A missing
-                // provider/endpoint, or a failed/empty fetch, is reported
-                // truthfully with the explicit-id hint.
-                match (
-                    applied_provider.as_deref(),
-                    applied_endpoint.as_deref(),
-                ) {
-                    (Some(_), Some(endpoint)) => {
-                        match siralos_adapters::provider::generic::fetch_models(
-                            endpoint,
-                            applied_credential.as_ref(),
-                        ) {
-                            Ok(models) if !models.is_empty() => {
-                                crate::tui::open_model_switch_picker(
-                                    &mut tui_state.borrow_mut(),
-                                    models,
-                                );
-                            }
-                            _ => {
-                                let msg = sanitize_for_display(
-                                    "model list unavailable — pass /model <id> to switch\n",
-                                );
-                                let _ = sink.write_all(msg.as_bytes());
-                            }
-                        }
-                    }
-                    _ => {
-                        let msg = sanitize_for_display(
-                            "no provider configured — pass /model <id> to switch once a provider is set, or add one with /provider\n",
-                        );
-                        let _ = sink.write_all(msg.as_bytes());
-                    }
-                }
-            } else if let SlashCommand::Reload = command {
-                // `/reload` in-loop (TUI): same pure report as stdio —
-                // no live mutation, no picker, no TTY requirement.
-                let live_model = live_provider.live_model();
-                let (mut report, recomposed_config) = reload_report(
-                    &workspace_root,
-                    applied_provider.as_deref(),
-                    live_model.as_deref().or(applied_model.as_deref()),
-                    applied_credential_raw.as_deref(),
-                    applied_endpoint.as_deref(),
-                    applied_protocol_str.as_str(),
-                );
-                apply_reloaded_config(
-                    live_provider,
-                    live_model.as_deref(),
-                    &mut applied_model,
-                    &mut applied_model_display_name,
-                    &mut applied_endpoint,
-                    &mut applied_protocol_str,
-                    &mut applied_credential,
-                    &mut applied_credential_raw,
-                    recomposed_config,
-                    &mut report,
-                );
-                let rendered = sanitize_for_display(&report);
-                let _ = sink.write_all(rendered.as_bytes());
+                open_model_picker_via_worker(
+                    &mut sink,
+                    &tui_state,
+                    &mut worker,
+                    &pane_cache,
+                    &mut progress,
+                    &mut reasoning_sink,
+                )?;
             } else {
                 let should_exit = dispatch_tui_command(
                     &command,
                     &workspace_root,
-                    &tool_definitions,
-                    &policy,
-                    &mut application,
+                    &tui_state,
                     &mut sink,
-                    &mut hosts,
-                    &mut manifests,
-                    profile_plugins.as_deref(),
-                    context_control.as_ref(),
-                    context_system_enabled,
-                    &mut context_session_holder,
-                    &mut context_history_len,
-                    applied_provider.as_deref(),
-                    live_provider,
-                    &mut applied_model,
-                    &mut applied_model_display_name,
-                    &mut applied_credential_raw,
-                    &mut applied_endpoint,
-                    &mut applied_credential,
-                    &mut applied_protocol_str,
+                    &mut worker,
+                    &pane_cache,
                     &mut progress,
                     &mut reasoning_sink,
                 )?;
@@ -4353,75 +4612,144 @@ pub fn run_interactive_tui_with_options(
             }
             // Model-switch picker selection: the picker's Enter arms
             // `pending_model_switch`; resolve it through the same
-            // switch-and-persist as the explicit-argument form.
+            // switch-and-persist as the explicit-argument form. The header and
+            // the displayed model follow from the worker's `Ready` -- the
+            // frontend no longer guesses them (decision 168 R3).
             let pending_model =
                 tui_state.borrow_mut().pending_model_switch.take();
             if let Some(selected) = pending_model {
-                let outcome = apply_model_switch(
+                switch_model_via_worker(
                     &workspace_root,
-                    live_provider,
-                    applied_provider.as_deref(),
-                    &mut applied_model,
-                    &mut applied_model_display_name,
+                    &mut sink,
+                    &tui_state,
+                    &mut worker,
+                    &pane_cache,
+                    &mut progress,
+                    &mut reasoning_sink,
                     &selected,
-                );
-                let rendered = sanitize_for_display(
-                    outcome.as_deref().unwrap_or_else(|reason| reason),
-                );
-                let _ = sink.write_all(rendered.as_bytes());
+                )?;
             }
-            // Refresh the displayed model after any switch (explicit or
-            // picker): display-name preference, same rule as session start.
-            // A switch clears the display name, so the raw id shows next.
-            effective_model = applied_model_display_name
-                .clone()
-                .filter(|name| !name.is_empty())
-                .or(applied_model.clone());
-            tui_state.borrow_mut().model = effective_model.clone();
-            let base = "";
-            let metrics_opt =
-                context_session_holder.as_ref().map(|s| &s.metrics);
-            let composed = crate::tui::compose_status_line_with_context(
-                base,
-                applied_provider.as_deref(),
-                effective_model.as_deref(),
-                metrics_opt,
-            );
-            tui_state.borrow_mut().status = composed;
         }
         // A draw failure is reported ONCE (a dead terminal must not spin in
         // silence) and then cleared.
         if let Some(message) = draw_error.borrow_mut().take() {
             eprintln!("siralos: terminal draw failed: {message}");
         }
-        // One draw at loop bottom — every drained batch or idle tick (P1: immediate after drain)
-        *pane_cache.borrow_mut() = build_context_pane(
-            context_system_enabled,
-            context_session_holder.as_ref().map(|session| &session.metrics),
-            application.history(),
-        );
+        // One draw at loop bottom — every drained batch or idle tick (P1:
+        // immediate after drain). The pane is whatever the worker last pushed
+        // (decision 167 D1), so there is nothing to rebuild here.
         draw_now();
     }
 
-    // Decision 78 B2: the shared record-replay flush both loops call.
-    flush_record_replay(record_recorder, &replay_store_path);
+    // Stop the worker and WAIT. The recordings' single flush (decision 78's
+    // one-owner rule) happens inside that join, so it has happened before
+    // `_guard` restores the terminal on this path. The paths that never reach
+    // this line -- an early `?` return, a panic -- are step 4's.
+    worker.shutdown();
     Ok(())
+}
+
+/// Spawn the worker the TUI drives (C2 step 3).
+///
+/// R1: the frontend keeps the workspace root for profile writes, so it hands
+/// the worker OWNED paths -- the session is composed on the far thread
+/// (decision 167) and cannot borrow this stack frame.
+fn spawn_tui_worker(
+    workspace_root: &Path,
+    config_path: Option<&Path>,
+) -> crate::session_worker::WorkerHandle {
+    crate::session_worker::spawn_worker(
+        Some(workspace_root.to_path_buf()),
+        config_path.map(Path::to_path_buf),
+    )
+}
+
+/// Wait for the worker's first events, BEFORE the terminal is taken over
+/// (C2 step 3).
+///
+/// The worker composes the session on its own thread, so its startup
+/// diagnostics (`eprintln`: lock drift, a profile that was not applied, a
+/// credential that did not resolve) must land on the normal screen, and a
+/// composition failure must be reported exactly where the synchronous
+/// composition used to report it. Both are what this wait buys.
+///
+/// The pane snapshot arrives BEFORE the header when the context subsystem is
+/// on, so the first frame already has both.
+/// It takes the source BY VALUE because every failure path here still has to
+/// JOIN the worker: a frontend that returned an error while the worker was
+/// still flushing would lose the recordings on exactly the startup that failed.
+fn await_worker_ready(
+    worker: WorkerSource,
+    state: &Rc<RefCell<TuiState>>,
+    pane: &Rc<RefCell<Option<crate::tui::ContextPaneData>>>,
+) -> Result<WorkerSource, InteractiveError> {
+    loop {
+        match worker.recv() {
+            Some(WorkerEvent::Pane(data)) => *pane.borrow_mut() = Some(data),
+            Some(WorkerEvent::Ready(status)) => {
+                apply_status(state, &status);
+                return Ok(worker);
+            }
+            Some(WorkerEvent::Failed(message)) => {
+                // The composition failed: the worker is done, so stop it (the
+                // guard would too) and report the worker's own words.
+                worker.shutdown();
+                return Err(InteractiveError::Worker(message));
+            }
+            Some(WorkerEvent::Stopped) | None => {
+                worker.shutdown();
+                return Err(InteractiveError::Worker(
+                    "the worker stopped before it composed a session"
+                        .to_owned(),
+                ));
+            }
+            // Nothing else can precede the first command (the worker sends the
+            // pane, then the header, then blocks); if it ever does, say so
+            // instead of dropping it silently.
+            Some(other) => {
+                worker.shutdown();
+                return Err(InteractiveError::Worker(format!(
+                    "the worker announced {other:?} before its header"
+                )));
+            }
+        }
+    }
+}
+
+/// Re-render the status row with a transient base, keeping the worker's
+/// context-usage suffix (C2 step 3).
+///
+/// The frontend holds no metrics any more, so the suffix is cached from the
+/// last `Ready`; without it a transient status ("fetching models...") would
+/// silently drop the context readout an opted-in session shows.
+fn transient_status(state: &TuiState, base: &str) -> String {
+    format!(
+        "{}{}",
+        crate::tui::compose_status_line(
+            base,
+            state.provider.as_deref(),
+            state.model.as_deref(),
+        ),
+        state.context_suffix,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         InteractiveOptions, SessionProvider, SlashCommand, ToolLoopEvent,
-        apply_model_switch, apply_provider_remove_confirmation,
+        TuiState, apply_model_switch, apply_provider_remove_confirmation,
         compose_session, is_unknown_slash_command, parse_slash_command,
         persist_switched_model, remove_profile_config, render_evolve_lines,
         render_model_line, render_provider_line,
         run_interactive_session_with_options, slash_command_catalog,
         write_profile_config,
     };
+    use std::cell::RefCell;
     use std::fs::{create_dir, create_dir_all, read, remove_dir_all, write};
     use std::io::Cursor;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+    use std::rc::Rc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     /// C2 step 3b: the drain is source-agnostic. A fake source stands in for
@@ -4475,6 +4803,506 @@ mod tests {
         );
         assert_eq!(source.cancels, 1, "a frontend request cancels the source");
         assert_eq!(ticks, 3, "progress sees every drained event");
+    }
+
+    // ---- C2 step 3: the WORKER path drives this loop -----------------------
+
+    /// Everything one scripted dispatcher run needs, minus the test's own
+    /// closures: the worker side (a channel this test owns), the frontend state
+    /// the dispatcher writes, and the sink it renders through.
+    struct ScriptedTui {
+        worker: crate::session_worker::worker_source_tests::Scripted,
+        state: Rc<RefCell<TuiState>>,
+        pane: Rc<RefCell<Option<crate::tui::ContextPaneData>>>,
+        sink: crate::tui::TuiSink,
+    }
+
+    impl ScriptedTui {
+        fn new() -> Self {
+            let state = Rc::new(RefCell::new(TuiState::new()));
+            let sink = crate::tui::TuiSink::new(Rc::clone(&state));
+            Self {
+                worker: crate::session_worker::worker_source_tests::scripted(),
+                state,
+                pane: Rc::new(RefCell::new(None)),
+                sink,
+            }
+        }
+
+        /// Queue the worker's answer(s) before the command is dispatched.
+        fn answer(&self, events: Vec<crate::session_worker::WorkerEvent>) {
+            for event in events {
+                self.worker.events.send(event).expect("scripted answer");
+            }
+        }
+
+        /// The command the dispatcher sent, if any.
+        fn command(&self) -> Option<crate::session_worker::WorkerCommand> {
+            self.worker.commands.try_recv().ok()
+        }
+
+        /// Run one command through the REAL dispatcher.
+        fn dispatch(
+            &mut self,
+            command: &SlashCommand<'_>,
+            workspace_root: &Path,
+            ticks: &mut usize,
+        ) -> bool {
+            let mut progress = || {
+                *ticks += 1;
+                false
+            };
+            // The live loop's reasoning sink buffers the thinking onto the
+            // state and repaints; the test only needs the buffering, because
+            // the sanitizer and the bounding are pinned by the TUI tests.
+            let state = Rc::clone(&self.state);
+            let mut reasoning = move |text: &str| {
+                state.borrow_mut().reasoning.push_str(text);
+            };
+            let exit = super::dispatch_tui_command(
+                command,
+                workspace_root,
+                &self.state,
+                &mut self.sink,
+                &mut self.worker.source,
+                &self.pane,
+                &mut progress,
+                &mut reasoning,
+            )
+            .expect("dispatch");
+            settle_reveal(&self.state);
+            exit
+        }
+
+        /// The transcript as one string, after the reveal has been released.
+        fn transcript(&self) -> String {
+            settle_reveal(&self.state);
+            self.state.borrow().transcript_lines.join("\n")
+        }
+    }
+
+    /// Release the sink's reveal budget so a test can read what was rendered.
+    ///
+    /// The live loop does this on every frame; a test asks for the whole
+    /// backlog at once (the pacing itself is pinned by the TUI tests).
+    fn settle_reveal(state: &Rc<RefCell<TuiState>>) {
+        let mut guard = state.borrow_mut();
+        let base = std::time::Instant::now();
+        for step in 0..32 {
+            if guard.stream_buffer.is_empty() {
+                break;
+            }
+            guard.reveal_now(base + std::time::Duration::from_secs(step + 1));
+        }
+    }
+
+    fn scripted_pane() -> crate::tui::ContextPaneData {
+        crate::tui::ContextPaneData {
+            counters: vec![("ticks_total".to_owned(), 3)],
+            ring: Vec::new(),
+            activity: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_dispatcher_asks_the_worker_and_renders_its_answer() {
+        // C2 step 3's real acceptance: the session-touching arms SEND a
+        // WorkerCommand and RENDER the answer, driven through the production
+        // dispatcher over a channel this test owns.
+        let root = temporary_directory("worker-dispatch-arms");
+        for (command, request, answer, expected) in [
+            (
+                SlashCommand::Context,
+                crate::session_worker::WorkerCommand::ContextReport,
+                crate::session_worker::WorkerEvent::Report(
+                    "Context projection (mode live)\n".to_owned(),
+                ),
+                "Context projection (mode live)",
+            ),
+            (
+                SlashCommand::Tools,
+                crate::session_worker::WorkerCommand::ToolsReport,
+                crate::session_worker::WorkerEvent::Report(
+                    "Tool projection: 3 available\n".to_owned(),
+                ),
+                "Tool projection: 3 available",
+            ),
+            (
+                SlashCommand::DomainsAdd(Some("demo")),
+                crate::session_worker::WorkerCommand::DomainsAdd(
+                    "demo".to_owned(),
+                ),
+                crate::session_worker::WorkerEvent::Report(
+                    "added demo\n".to_owned(),
+                ),
+                "added demo",
+            ),
+            (
+                SlashCommand::DomainsEnable(Some("demo")),
+                crate::session_worker::WorkerCommand::DomainsEnable(
+                    "demo".to_owned(),
+                ),
+                crate::session_worker::WorkerEvent::Report(
+                    "enabled demo\n".to_owned(),
+                ),
+                "enabled demo",
+            ),
+            (
+                SlashCommand::DomainsActivate(Some("demo")),
+                crate::session_worker::WorkerCommand::DomainsActivate(
+                    "demo".to_owned(),
+                ),
+                crate::session_worker::WorkerEvent::Report(
+                    "activated demo\n".to_owned(),
+                ),
+                "activated demo",
+            ),
+            (
+                SlashCommand::Reload,
+                crate::session_worker::WorkerCommand::Reload,
+                crate::session_worker::WorkerEvent::Report(
+                    "reload applied: nothing changed\n".to_owned(),
+                ),
+                "reload applied: nothing changed",
+            ),
+        ] {
+            let mut tui = ScriptedTui::new();
+            tui.answer(vec![answer]);
+            let mut ticks = 0usize;
+            let exit = tui.dispatch(&command, &root, &mut ticks);
+            assert!(!exit, "{command:?} is not an exit");
+            assert_eq!(
+                tui.command(),
+                Some(request),
+                "{command:?} must ask the worker"
+            );
+            assert!(
+                tui.transcript().contains(expected),
+                "{command:?} renders the worker's answer, got {:?}",
+                tui.transcript()
+            );
+        }
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_dispatcher_applies_the_header_pane_and_failure_it_receives() {
+        // The events that are frontend STATE: the header snapshot moves the
+        // picker's values, the pane lands in the shared slot, and a failure is
+        // rendered with the shared wording (never as success).
+        let root = temporary_directory("worker-dispatch-state");
+        let mut tui = ScriptedTui::new();
+        tui.answer(vec![
+            crate::session_worker::WorkerEvent::Pane(scripted_pane()),
+            crate::session_worker::WorkerEvent::Ready(
+                crate::session_worker::SessionStatus {
+                    status: "example-vendor / Example A | ctx 7/4096"
+                        .to_owned(),
+                    provider: Some("example-vendor".to_owned()),
+                    model: Some("Example A".to_owned()),
+                    endpoint: Some("https://api.example.com/v1".to_owned()),
+                    protocol: "openai-completions".to_owned(),
+                    credential_display: Some("key:***".to_owned()),
+                    credential_resolved: true,
+                    context_suffix: " | ctx 7/4096".to_owned(),
+                },
+            ),
+            crate::session_worker::WorkerEvent::Report("ok\n".to_owned()),
+        ]);
+        let mut ticks = 0usize;
+        tui.dispatch(&SlashCommand::Context, &root, &mut ticks);
+
+        {
+            let state = tui.state.borrow();
+            assert_eq!(
+                state.status,
+                "example-vendor / Example A | ctx 7/4096"
+            );
+            assert_eq!(state.provider.as_deref(), Some("example-vendor"));
+            assert_eq!(state.model.as_deref(), Some("Example A"));
+            assert_eq!(
+                state.endpoint.as_deref(),
+                Some("https://api.example.com/v1")
+            );
+            assert_eq!(state.protocol, "openai-completions");
+            assert_eq!(state.credential_display.as_deref(), Some("key:***"));
+            assert!(state.credential_resolved);
+            assert_eq!(state.context_suffix, " | ctx 7/4096");
+        }
+        assert!(
+            tui.pane.borrow().is_some(),
+            "the pushed pane goes into the shared slot the draw path reads"
+        );
+        assert!(
+            tui.transcript().contains("ok"),
+            "the report still reaches the transcript"
+        );
+
+        // A failure is the shared bridge's wording: it cannot look like success.
+        let mut failed = ScriptedTui::new();
+        failed.answer(vec![crate::session_worker::WorkerEvent::Failed(
+            "no provider configured".to_owned(),
+        )]);
+        failed.dispatch(&SlashCommand::Context, &root, &mut ticks);
+        assert!(
+            failed
+                .transcript()
+                .contains("Worker failed: no provider configured"),
+            "got {:?}",
+            failed.transcript()
+        );
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_dispatcher_renders_the_provider_line_from_the_cached_snapshot() {
+        // Decision 168 R2: the RAW credential never crosses, so the provider
+        // line renders from the ALREADY-REDACTED display form the snapshot
+        // carries.
+        let root = temporary_directory("worker-provider-line");
+        let mut tui = ScriptedTui::new();
+        {
+            let mut state = tui.state.borrow_mut();
+            state.provider = Some("example-vendor".to_owned());
+            state.credential_display = Some("key:***".to_owned());
+        }
+        let mut ticks = 0usize;
+        tui.dispatch(&SlashCommand::Provider, &root, &mut ticks);
+        let text = tui.transcript();
+        assert!(
+            text.contains("provider: example-vendor")
+                && text.contains("credential: key:***"),
+            "got {text:?}"
+        );
+        assert!(
+            tui.command().is_none(),
+            "a display-only arm must not disturb the worker"
+        );
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_turn_runs_in_the_worker_and_the_frontend_renders_it() {
+        // The whole point of the switch: the frontend renders a turn it does not
+        // run. The scripted worker sends the sequence a real session sends, and
+        // the dispatcher must render every part of it.
+        let root = temporary_directory("worker-turn");
+        let mut tui = ScriptedTui::new();
+        tui.answer(vec![
+            crate::session_worker::WorkerEvent::Session(
+                ToolLoopEvent::ResponseStarted,
+            ),
+            crate::session_worker::WorkerEvent::Session(
+                ToolLoopEvent::TextDelta { text: "hi".to_owned() },
+            ),
+            // The end-of-answer event is what closes the line: the reveal keeps
+            // an unfinished line in its growing tail by design (S3c).
+            crate::session_worker::WorkerEvent::Session(
+                ToolLoopEvent::ResponseCompleted,
+            ),
+            crate::session_worker::WorkerEvent::Session(
+                ToolLoopEvent::ReasoningDelta { text: "why".to_owned() },
+            ),
+            crate::session_worker::WorkerEvent::Pane(scripted_pane()),
+            crate::session_worker::WorkerEvent::TurnFinished,
+        ]);
+        let mut ticks = 0usize;
+        let exit =
+            tui.dispatch(&SlashCommand::Prompt("hello"), &root, &mut ticks);
+        assert!(!exit, "a turn is not an exit");
+        assert_eq!(
+            tui.command(),
+            Some(crate::session_worker::WorkerCommand::Prompt(
+                "hello".to_owned()
+            )),
+            "the prompt crosses as a command, not as a call"
+        );
+        assert!(tui.transcript().contains("hi"), "got {:?}", tui.transcript());
+        assert_eq!(
+            tui.state.borrow().reasoning,
+            "why",
+            "thinking keeps its own sink"
+        );
+        assert!(tui.pane.borrow().is_some(), "the turn's pane was applied");
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_frontend_keeps_ticking_while_the_worker_is_silent() {
+        // C2's acceptance in its frontend form: a stalled provider must not stop
+        // the frame. The worker here answers after 60 ms; the relay ticks on its
+        // own 16 ms clock the whole time.
+        let root = temporary_directory("worker-silent-tick");
+        let mut tui = ScriptedTui::new();
+        let events = tui.worker.events.clone();
+        let ticker = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            let _ =
+                events.send(crate::session_worker::WorkerEvent::TurnFinished);
+        });
+        let mut ticks = 0usize;
+        tui.dispatch(&SlashCommand::Prompt("slow"), &root, &mut ticks);
+        ticker.join().expect("ticker thread");
+        assert!(
+            ticks >= 1,
+            "the relay must tick while nothing arrives, ticks={ticks}"
+        );
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_models_fetch_crosses_to_the_picker_and_back() {
+        // A bare `/model` (the loop's picker path) and `/models` both ask the
+        // worker, because only the worker holds the endpoint and the credential.
+        let root = temporary_directory("worker-models");
+        let mut tui = ScriptedTui::new();
+        {
+            let mut state = tui.state.borrow_mut();
+            state.provider = Some("example-vendor".to_owned());
+            state.endpoint = Some("https://api.example.com/v1".to_owned());
+            state.credential_resolved = true;
+        }
+        tui.answer(vec![crate::session_worker::WorkerEvent::Models(vec![
+            "example/model-b".to_owned(),
+        ])]);
+        super::open_model_picker_via_worker(
+            &mut tui.sink,
+            &tui.state,
+            &mut tui.worker.source,
+            &tui.pane,
+            &mut || false,
+            &mut |_text: &str| {},
+        )
+        .expect("picker");
+        assert_eq!(
+            tui.command(),
+            Some(crate::session_worker::WorkerCommand::ModelsFetch),
+            "the fetch is a command now"
+        );
+        assert!(
+            tui.state.borrow().model_switch_picker.is_some(),
+            "the ids open the switch picker"
+        );
+
+        // `/models` prints the same ids through the dispatcher.
+        let mut listed = ScriptedTui::new();
+        {
+            let mut state = listed.state.borrow_mut();
+            state.provider = Some("example-vendor".to_owned());
+            state.endpoint = Some("https://api.example.com/v1".to_owned());
+            state.credential_resolved = true;
+        }
+        listed.answer(vec![crate::session_worker::WorkerEvent::Models(vec![
+            "example/model-b".to_owned(),
+        ])]);
+        let mut ticks = 0usize;
+        listed.dispatch(&SlashCommand::Models, &root, &mut ticks);
+        assert_eq!(
+            listed.command(),
+            Some(crate::session_worker::WorkerCommand::ModelsFetch)
+        );
+        assert!(
+            listed.transcript().contains("example/model-b"),
+            "got {:?}",
+            listed.transcript()
+        );
+
+        // An unresolved credential must not spend a request: the gate is
+        // today's, kept on purpose (decision 168 R2/R3).
+        let mut unconfigured = ScriptedTui::new();
+        {
+            let mut state = unconfigured.state.borrow_mut();
+            state.provider = Some("example-vendor".to_owned());
+            state.endpoint = Some("https://api.example.com/v1".to_owned());
+        }
+        unconfigured.dispatch(&SlashCommand::Models, &root, &mut ticks);
+        assert_eq!(
+            unconfigured.command(),
+            None,
+            "an unresolved credential must not spend a request"
+        );
+        assert!(
+            unconfigured.transcript().contains("no provider configured"),
+            "got {:?}",
+            unconfigured.transcript()
+        );
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_model_switch_persists_first_and_then_commands_the_worker() {
+        // Decision 167 D3: persist-before-live by ORDERING. The profile write is
+        // the frontend's (it owns the file); the live apply is the worker's, and
+        // it answers with the header that proves the composition moved.
+        let root = temporary_directory("worker-model-switch");
+        write(
+            root.join("siralos.toml"),
+            "[profile]\nname = \"default\"\nprovider = \"example-vendor\"\nmodel = \"example/model-a\"\nendpoint = \"https://api.example.com/v1\"\nprotocol = \"openai-completions\"\n",
+        )
+        .expect("profile");
+        let mut tui = ScriptedTui::new();
+        {
+            let mut state = tui.state.borrow_mut();
+            state.provider = Some("example-vendor".to_owned());
+            state.model = Some("Example A".to_owned());
+        }
+        tui.answer(vec![crate::session_worker::WorkerEvent::Ready(
+            crate::session_worker::SessionStatus {
+                status: "example-vendor / example/model-b".to_owned(),
+                provider: Some("example-vendor".to_owned()),
+                model: Some("example/model-b".to_owned()),
+                endpoint: Some("https://api.example.com/v1".to_owned()),
+                protocol: "openai-completions".to_owned(),
+                credential_display: None,
+                credential_resolved: false,
+                context_suffix: String::new(),
+            },
+        )]);
+        let mut ticks = 0usize;
+        tui.dispatch(
+            &SlashCommand::Model(Some("example/model-b")),
+            &root,
+            &mut ticks,
+        );
+        assert_eq!(
+            tui.command(),
+            Some(crate::session_worker::WorkerCommand::SetModel(
+                "example/model-b".to_owned()
+            )),
+            "the worker applies the switch it did not persist"
+        );
+        let written = read(root.join("siralos.toml")).expect("read profile");
+        let written = String::from_utf8(written).expect("utf8");
+        assert!(
+            written.contains("model = \"example/model-b\""),
+            "the persist happened FIRST, on the frontend, got: {written}"
+        );
+        assert_eq!(
+            tui.state.borrow().model.as_deref(),
+            Some("example/model-b"),
+            "the header comes from the worker's Ready, so the display name cannot lie"
+        );
+
+        // A refused persist changes NOTHING and sends NOTHING: no provider means
+        // no profile to write (decision 167 D3).
+        let mut refused = ScriptedTui::new();
+        refused.dispatch(
+            &SlashCommand::Model(Some("example/model-c")),
+            &root,
+            &mut ticks,
+        );
+        assert_eq!(
+            refused.command(),
+            None,
+            "a refused switch must not reach the session"
+        );
+        let written = read(root.join("siralos.toml")).expect("read profile");
+        let written = String::from_utf8(written).expect("utf8");
+        assert!(
+            !written.contains("example/model-c"),
+            "a refused switch must not touch the disk"
+        );
+        let _ = remove_dir_all(root);
     }
 
     #[test]
@@ -4568,19 +5396,30 @@ mod tests {
     #[test]
     fn the_demand_loop_runs_where_the_history_lives() {
         // Decision 167 and the C2 inventory: the demand loop reads the
-        // session's OWN history, so every owner calls it -- both frontends AND
-        // the worker adapter's settled-turn hook. The property is "this call is
-        // still here", which is what a source check can settle (the same idiom
-        // `compose_session_before_guard_no_terminal_needed` uses).
+        // session's OWN history, so it runs where the history lives. Since C2
+        // step 3 that is exactly TWO owners -- the stdio arm (in-thread) and the
+        // worker's settled-turn hook (the TUI's session) -- and the TUI frontend
+        // must NOT drive it any more, because it holds no history to read.
+        // The property is "this call is here, and not there", which is what a
+        // source check can settle.
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("src/interactive.rs"),
         )
         .expect("read interactive.rs");
-        let calls = src.matches("drive_context_demand(").count();
-        assert!(
-            calls >= 3,
-            "the stdio arm, the TUI arm and the worker hook all drive the demand loop, found {calls}"
+        // Count call SITES, not the test's own source text: the assertion
+        // strings below contain the needle too.
+        let calls = src
+            .lines()
+            .filter(|line| line.contains("drive_context_demand("))
+            .filter(|line| !line.trim_start().starts_with("//"))
+            // The assertion strings below contain the needle too: a line that
+            // SEARCHES for the call is not a call.
+            .filter(|line| !line.contains("contains("))
+            .count();
+        assert_eq!(
+            calls, 2,
+            "the stdio arm and the worker hook drive the demand loop; the TUI frontend does not, found {calls}"
         );
         let hook =
             src.find("fn turn_settled").expect("the adapter settles turns");
@@ -6400,7 +7239,8 @@ mod tests {
 
     #[test]
     fn compose_session_before_guard_no_terminal_needed() {
-        // R6: compose_session must succeed without any terminal guard (startup diagnostics visible)
+        // R6: composition must succeed without any terminal guard (startup
+        // diagnostics visible).
         let root = temporary_directory("compose-ordering");
         let opts = InteractiveOptions {
             workspace_root: Some(&root),
@@ -6409,18 +7249,45 @@ mod tests {
         let session = compose_session(opts);
         assert!(session.is_ok(), "compose_session should not need a terminal");
         let _ = remove_dir_all(root);
-        // Source check: run_interactive_tui_with_options composes before guard
+        // C2 step 3 source check: the TUI no longer composes in-thread, so the
+        // invariant is now "the worker is spawned AND its header awaited before
+        // TerminalGuard::enter" -- the composition's diagnostics and a
+        // composition failure still land on the normal screen.
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("src/interactive.rs"),
         )
         .expect("read interactive.rs");
-        let compose_pos =
-            src.find("let session = compose_session").expect("compose");
-        let guard_pos = src.find("TerminalGuard::enter").expect("guard");
+        let entry = src
+            .find("pub fn run_interactive_tui_with_options")
+            .expect("the TUI entry");
+        let body = &src[entry..];
+        let spawn_pos =
+            body.find("spawn_tui_worker(").expect("the TUI spawns the worker");
+        let ready_pos =
+            body.find("await_worker_ready(").expect("the TUI waits for it");
+        let guard_pos =
+            body.find("TerminalGuard::enter").expect("guard position");
         assert!(
-            compose_pos < guard_pos,
-            "compose_session must appear before TerminalGuard::enter"
+            spawn_pos < guard_pos && ready_pos < guard_pos,
+            "the worker must be spawned and its first event awaited BEFORE the terminal is taken over"
+        );
+        assert!(
+            body.find("worker.shutdown()").is_some_and(|end| end > guard_pos),
+            "the exit path stops the worker (and joins), so its single flush happens before the terminal is restored"
+        );
+        // And the TUI entry holds no session: the completion check for C2
+        // step 3 is that the session value never exists on this thread.
+        let tui_body = &src[entry
+            ..src[entry..]
+                .find(
+                    "
+#[cfg(test)]",
+                )
+                .map_or(src.len(), |end| entry + end)];
+        assert!(
+            !tui_body.contains("compose_session("),
+            "the frontend must not compose a session any more (decision 167)"
         );
     }
 

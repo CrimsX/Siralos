@@ -881,6 +881,23 @@ pub struct TuiState {
     pub provider: Option<String>,
     /// Model for header bar (P2).
     pub model: Option<String>,
+    /// Endpoint the worker composed the session with (C2 step 3, decision 168
+    /// R3). Display only: the picker shows it, and `/provider` renders it.
+    pub endpoint: Option<String>,
+    /// Protocol the worker built the provider with (R3).
+    pub protocol: String,
+    /// The credential in its ALREADY-REDACTED display form (R2). The raw value
+    /// never reaches the frontend, so this is what the provider surfaces show.
+    pub credential_display: Option<String>,
+    /// Whether the declared credential RESOLVED. The `/models` arm decides on
+    /// this today and the frontend cannot recompute it, so the worker answers
+    /// it as a fact (never the value).
+    pub credential_resolved: bool,
+    /// The context-usage suffix the worker's status line carries
+    /// (` | ctx N/4096`), empty when the subsystem is off. Cached because a
+    /// TRANSIENT status (the add-flow's "fetching models...") must keep the
+    /// readout, and the frontend no longer holds the metrics that build it.
+    pub context_suffix: String,
     /// Provider picker popup (H6) — when Some, Up/Down + Enter/Esc handle it.
     pub provider_picker: Option<ProviderPicker>,
     /// Provider add-flow form (C1) — sequential modal form; when Some, no other
@@ -946,6 +963,11 @@ impl Default for TuiState {
             palette_selected: None,
             provider: None,
             model: None,
+            endpoint: None,
+            protocol: String::new(),
+            credential_display: None,
+            credential_resolved: false,
+            context_suffix: String::new(),
             provider_picker: None,
             provider_add_form: None,
             model_switch_picker: None,
