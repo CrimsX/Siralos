@@ -32,6 +32,10 @@ pub enum WorkerCommand {
     SetModel(String),
     /// Apply a reloaded composition the same way.
     Reload,
+    /// List the provider's models. The fetch needs the endpoint and the
+    /// credential, so it happens where they live (decision 168 R2): a secret
+    /// never crosses to the frontend just so the frontend can fetch.
+    ModelsFetch,
     /// Stop: flush the recordings exactly once and exit the loop.
     Shutdown,
 }
@@ -51,6 +55,8 @@ pub enum WorkerEvent {
     Failed(String),
     /// The turn is over: nothing more arrives until the next command.
     TurnFinished,
+    /// The provider's model ids, answering `ModelsFetch`.
+    Models(Vec<String>),
     /// What the frontend header shows (C2 step 3). Sent once when the loop
     /// starts and again whenever the composition moves under it (`SetModel`,
     /// `Reload`), because only the session can derive it.
@@ -139,6 +145,9 @@ pub trait WorkerSession {
     /// runs HERE, with the session, because it reads state only the owner can
     /// see -- the context demand loop reads the session's own history.
     fn turn_settled(&mut self);
+    /// The provider's model ids (decision 168 R2). Fallible exactly where a
+    /// fetch is: unconfigured, unreachable, or a non-success status.
+    fn fetch_models(&mut self) -> Result<Vec<String>, String>;
     /// The header the frontend shows (C2 step 3). The status segment is derived
     /// from the composition and its context metrics, so the frontend cannot
     /// build it once the session lives here.
@@ -228,6 +237,14 @@ pub fn run_worker_loop<S: WorkerSession>(
                     }
                 }
             }
+            WorkerCommand::ModelsFetch => match session.fetch_models() {
+                Ok(models) => {
+                    let _ = events.send(WorkerEvent::Models(models));
+                }
+                Err(message) => {
+                    let _ = events.send(WorkerEvent::Failed(message));
+                }
+            },
             WorkerCommand::Reload => match session.reload() {
                 Ok(report) => {
                     let _ = events.send(WorkerEvent::Report(report));
@@ -434,6 +451,9 @@ pub fn apply_worker_event<W: std::io::Write>(
         // The header is frontend STATE, not transcript: the loop that
         // owns the header applies it, so nothing is written here.
         WorkerEvent::Ready(_) => {}
+        // Model ids are frontend state too: the picker owns them, and the
+        // transcript path that prints them does not run through a worker.
+        WorkerEvent::Models(_) => {}
         WorkerEvent::Session(event) => match event {
             ToolLoopEvent::TextDelta { text } => {
                 writer.write_all(sanitizer.push(&text).as_bytes())?;
@@ -853,6 +873,9 @@ mod loop_tests {
         }
         fn turn_settled(&mut self) {
             self.settled += 1;
+        }
+        fn fetch_models(&mut self) -> Result<Vec<String>, String> {
+            Ok(vec!["fake-model".to_owned()])
         }
         fn status(&self) -> SessionStatus {
             SessionStatus {

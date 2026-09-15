@@ -1750,6 +1750,17 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
         Ok(())
     }
 
+    fn fetch_models(&mut self) -> Result<Vec<String>, String> {
+        // Decision 168 R2: the endpoint and the credential stay here.
+        let Some(endpoint) = self.applied_endpoint.clone() else {
+            return Err("no provider configured".to_owned());
+        };
+        siralos_adapters::provider::generic::fetch_models(
+            &endpoint,
+            self.applied_credential.as_ref(),
+        )
+    }
+
     fn status(&self) -> crate::session_worker::SessionStatus {
         // The same recipe the TUI entry used before the session moved here: the
         // display name wins when the profile declares one, and the context
