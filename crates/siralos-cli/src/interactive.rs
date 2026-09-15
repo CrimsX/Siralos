@@ -4344,9 +4344,17 @@ pub fn run_interactive_tui_with_options(
     loop {
         let mut pending_submit: Option<String> = None;
         let mut should_exit_outer = false;
-        // Outer bounded idle poll (50ms) — single wait for idle redraw; inner drain is ZERO.
-        let has_event = crossterm::event::poll(crate::tui::TUI_IDLE_POLL)
-            .map_err(InteractiveError::Io)?;
+        // Outer bounded idle poll — single wait for idle redraw; inner drain is
+        // ZERO. The wait is the idle interval, EXCEPT while the reader is still
+        // owed text: a frame releases one character, so a backlog left over
+        // after the turn would otherwise drain at 20 characters a second.
+        let idle_poll = if tui_state.borrow().reveal_pending() {
+            crate::tui::REVEAL_CHAR_INTERVAL
+        } else {
+            crate::tui::TUI_IDLE_POLL
+        };
+        let has_event =
+            crossterm::event::poll(idle_poll).map_err(InteractiveError::Io)?;
         if has_event {
             // Drain all already-queued events with ZERO timeout (never waits).
             loop {
@@ -5617,6 +5625,30 @@ mod tests {
             "the NEXT provider request reads the reloaded model"
         );
         let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_idle_poll_keeps_the_character_cadence_while_text_is_owed() {
+        // A frame releases ONE character, so the IDLE path must not wait the
+        // 50 ms idle interval while a backlog exists: the leftover of a turn
+        // would drain at twenty characters a second. The live loop needs a
+        // terminal, so this is a source check -- the same idiom
+        // compose_session_before_guard_no_terminal_needed uses.
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("src/interactive.rs"),
+        )
+        .expect("read interactive.rs");
+        let poll = src
+            .find("let idle_poll = if tui_state.borrow().reveal_pending()")
+            .expect("the idle poll consults the reveal");
+        let after = &src[poll..];
+        let body = &after[..after.find(';').expect("a statement")];
+        assert!(
+            body.contains("REVEAL_CHAR_INTERVAL")
+                && body.contains("TUI_IDLE_POLL"),
+            "the idle wait is the character cadence while text is owed, the idle interval otherwise: {body}"
+        );
     }
 
     #[test]
