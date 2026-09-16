@@ -2914,6 +2914,32 @@ fn validate_credential_env_name_inline(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Monotonic sequence guaranteeing unique scratch names within this process.
+///
+/// The wall clock alone is not fine-grained enough on every platform: Windows
+/// timer granularity is coarse enough that two concurrent callers can compute
+/// the same nanosecond and therefore collide on the same scratch path. These
+/// scratch paths exist only to be verified and then renamed or removed, so a
+/// collision silently corrupts a verification rather than failing loudly.
+/// Uniqueness within the process comes from this counter; across processes
+/// from the process id.
+static SCRATCH_SEQUENCE: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// A unique scratch name of the form `<prefix>-<pid>-<nanos:x>-<sequence>`.
+fn unique_scratch_name(prefix: &str) -> String {
+    use std::sync::atomic::Ordering;
+    let nonce = {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default()
+    };
+    let sequence = SCRATCH_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!("{prefix}-{}-{nonce:x}-{sequence}", std::process::id())
+}
+
 /// Write the `[profile]` section atomically with format-preserving merge
 /// (C2) — the fifth atomic writer (per decision 114 Q4). The credential is
 /// stored verbatim as given (`env:NAME`, `key:VALUE`, or a bare legacy env
@@ -3166,17 +3192,10 @@ pub fn write_profile_config(
         return Err("siralos.toml exceeds the byte bound".to_owned());
     }
     // Atomic write: temp in same dir, lstat verify target, verify parse, rename.
-    let nonce = {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default()
-    };
-    let temp = workspace_root.join(format!(
-        "{}siralos-toml-{nonce:x}",
+    let temp = workspace_root.join(unique_scratch_name(&format!(
+        "{}siralos-toml",
         siralos_adapters::workspace::fs::MUTATION_TEMP_PREFIX
-    ));
+    )));
     std::fs::write(&temp, serialized.as_bytes()).map_err(|e| {
         let _ = std::fs::remove_file(&temp);
         e.to_string()
@@ -3204,15 +3223,8 @@ pub fn write_profile_config(
         "temporary siralos.toml is not valid UTF-8".to_owned()
     })?;
     {
-        let shim_nonce = {
-            use std::time::{SystemTime, UNIX_EPOCH};
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or_default()
-        };
         let shim_dir = std::env::temp_dir()
-            .join(format!("siralos-profile-verify-{shim_nonce:x}"));
+            .join(unique_scratch_name("siralos-profile-verify"));
         let shim_result = (|| -> Result<(), String> {
             std::fs::create_dir_all(&shim_dir)
                 .map_err(|e| format!("verify shim not writable: {e}"))?;
@@ -3463,17 +3475,10 @@ pub fn remove_profile_config(workspace_root: &Path) -> Result<(), String> {
     }
     // Atomic write: temp in same dir, lstat verify target, verify parse,
     // rename (the write path's pattern verbatim).
-    let nonce = {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default()
-    };
-    let temp = workspace_root.join(format!(
-        "{}siralos-toml-{nonce:x}",
+    let temp = workspace_root.join(unique_scratch_name(&format!(
+        "{}siralos-toml",
         siralos_adapters::workspace::fs::MUTATION_TEMP_PREFIX
-    ));
+    )));
     std::fs::write(&temp, serialized.as_bytes()).map_err(|e| {
         let _ = std::fs::remove_file(&temp);
         e.to_string()
@@ -3501,15 +3506,8 @@ pub fn remove_profile_config(workspace_root: &Path) -> Result<(), String> {
         "temporary siralos.toml is not valid UTF-8".to_owned()
     })?;
     {
-        let shim_nonce = {
-            use std::time::{SystemTime, UNIX_EPOCH};
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or_default()
-        };
         let shim_dir = std::env::temp_dir()
-            .join(format!("siralos-profile-verify-{shim_nonce:x}"));
+            .join(unique_scratch_name("siralos-profile-verify"));
         let shim_result = (|| -> Result<(), String> {
             std::fs::create_dir_all(&shim_dir)
                 .map_err(|e| format!("verify shim not writable: {e}"))?;
@@ -5991,6 +5989,44 @@ mod tests {
             );
             let _ = remove_dir_all(&dir);
         }
+    }
+
+    #[test]
+    fn scratch_names_are_unique_under_concurrency() {
+        // The repair for the parallel-test collision: a scratch name derived
+        // only from the clock is not unique when the platform timer is coarse,
+        // so the counter must carry uniqueness on its own. This tests the
+        // invariant, never a timing-dependent reproduction of the race.
+        use std::collections::HashSet;
+        use std::sync::{Arc, Mutex};
+
+        let sequential: HashSet<String> =
+            (0..64).map(|_| super::unique_scratch_name("probe")).collect();
+        assert_eq!(
+            sequential.len(),
+            64,
+            "sequential scratch names must all be distinct"
+        );
+
+        let seen = Arc::new(Mutex::new(HashSet::new()));
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let seen = Arc::clone(&seen);
+            handles.push(std::thread::spawn(move || {
+                for _ in 0..16 {
+                    let name = super::unique_scratch_name("probe");
+                    seen.lock().expect("scratch lock").insert(name);
+                }
+            }));
+        }
+        for handle in handles {
+            handle.join().expect("scratch thread");
+        }
+        assert_eq!(
+            seen.lock().expect("scratch lock").len(),
+            128,
+            "concurrent scratch names must all be distinct"
+        );
     }
 
     fn temporary_directory(label: &str) -> PathBuf {
