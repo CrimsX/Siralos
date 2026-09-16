@@ -333,16 +333,20 @@ pub fn render_records_json(report: &EvaluationReport) -> String {
 }
 
 /// What one prompt turn produced.
+///
+/// Shared with the headless frontend, which prints the same completion the
+/// interactive frontends display. The completion remains untrusted display
+/// data: it is never written into a record, a digest, or host evidence.
 #[derive(Debug, Default)]
-struct TurnOutcome {
+pub(crate) struct TurnOutcome {
     /// Completion text, kept for scoring only and never stored.
-    answer: String,
+    pub(crate) answer: String,
     /// Tool rounds observed in the turn.
-    tool_rounds: usize,
+    pub(crate) tool_rounds: usize,
     /// The turn was cancelled.
-    cancelled: bool,
+    pub(crate) cancelled: bool,
     /// A failure the turn reported, or one the runner detected.
-    failure: Option<String>,
+    pub(crate) failure: Option<String>,
 }
 
 /// Send one prompt and drain the turn to its end.
@@ -351,7 +355,7 @@ struct TurnOutcome {
 /// (a provider that never settles). Exceeding either cancels the turn and records
 /// a failure, so an evaluation can never hang the gate. The wall-time check
 /// happens between events, so one blocking provider call is not interrupted.
-fn drive_turn<S: WorkerSession>(
+pub(crate) fn drive_turn<S: WorkerSession>(
     session: &mut S,
     prompt: &str,
     timeout: Duration,
@@ -421,7 +425,7 @@ fn record_failure(outcome: &mut RunOutcome, detail: &str) {
 }
 
 /// Sanitize a failure summary and bound it to [`MAX_FAILURE_BYTES`].
-fn bounded_failure(detail: &str) -> String {
+pub(crate) fn bounded_failure(detail: &str) -> String {
     let safe = sanitize_for_display(detail);
     if safe.len() <= MAX_FAILURE_BYTES {
         return safe;
@@ -439,7 +443,7 @@ fn bounded_failure(detail: &str) -> String {
 }
 
 /// Escape the minimum JSON requires.
-fn json_string(value: &str) -> String {
+pub(crate) fn json_string(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('"');
     for character in value.chars() {
@@ -459,7 +463,7 @@ fn json_string(value: &str) -> String {
     out
 }
 
-fn json_optional_string(value: Option<&str>) -> String {
+pub(crate) fn json_optional_string(value: Option<&str>) -> String {
     match value {
         Some(value) => json_string(value),
         None => "null".to_owned(),

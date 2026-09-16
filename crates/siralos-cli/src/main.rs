@@ -45,6 +45,22 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Ok(Command::Headless(args)) => {
+            // One prompt, one turn, no interactive frontend (headless mode).
+            let mut stdout = std::io::stdout();
+            match siralos_cli::headless::run_headless(
+                args.prompt(),
+                args.json(),
+                args.workspace_root(),
+                &mut stdout,
+            ) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("siralos: {error}");
+                    ExitCode::from(1)
+                }
+            }
+        }
         Ok(Command::Version) => print_version(),
         Ok(Command::Help) => {
             print_usage();
@@ -84,11 +100,16 @@ fn print_usage() -> ExitCode {
          \n\
          USAGE:\n\
          \x20   siralos [--help | --version | --stdio]\n\
+         \x20   siralos --print <prompt> [--json] [--cwd <dir>]\n\
          \n\
          OPTIONS:\n\
          \x20   -h, --help      Print this usage information\n\
          \x20   -V, --version   Print the version\n\
          \x20       --stdio     Force the stdio frontend even when stdout is a TTY (default is TUI on TTY, stdio silently otherwise; blocking provider rounds freeze the redraw — documented T1 limitation)\n\
+         \x20   -p, --print <prompt>\n\
+         \x20                   Send one prompt, print the answer, and exit without an interactive frontend\n\
+         \x20       --json      With --print, emit one structured record instead of the answer text\n\
+         \x20       --cwd <dir> With --print, use <dir> as the workspace root (default: the working directory)\n\
          \n\
          With no arguments, start the interactive terminal session.\n\
          \n\
