@@ -59,8 +59,8 @@ transitions, artifact identity, capability projection, or mutation;
 | -------------------------------- | -------------------------------------- | -------------------- | -------- | --------------------------------------------------------- |
 | Version string parsing           | `crates/siralos-core/src/version.rs`   | user/host-controlled | MEDIUM   | typed parse, bounded components; fuzz + property coverage |
 | CLI argument parsing             | `crates/siralos-cli/src/lib.rs`        | user-controlled      | MEDIUM   | typed errors; fuzz coverage                               |
-| Differential corpus JSON         | `crates/siralos-cli/src/harness.rs`    | host-generated       | MEDIUM   | serde deserialization; fuzz coverage                      |
-| Cargo.toml version extraction    | `crates/siralos-cli/src/harness.rs`    | host-generated       | LOW      | toml crate parse                                          |
+| Differential corpus JSON         | `harness/src/harness.rs`               | host-generated       | MEDIUM   | serde deserialization; fuzz coverage                      |
+| Cargo.toml version extraction    | `harness/src/harness.rs`               | host-generated       | LOW      | toml crate parse                                          |
 | State-dir environment resolution | `crates/siralos-adapters/src/paths.rs` | user-controlled      | MEDIUM   | OsString semantics, no UTF-8 assumption                   |
 
 ## Fuzz/property priority

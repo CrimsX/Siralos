@@ -14,5 +14,7 @@ Rules:
 - An archived document never carries authority: it is history, not
   policy. The security contract, ENGINEERING.md, and accepted ADRs are
   the active sources.
-- There is no archived material at this time; this directory documents
-  the convention.
+- Archived here: the completed TypeScript-to-Rust migration record
+  (`RUST_MIGRATION.md`) and the TypeScript behavior-extraction record
+  (`R7_BEHAVIOR_EXTRACTION.md`). Both describe work that is finished, or whose
+  tree has been removed, so both are history rather than live documentation.

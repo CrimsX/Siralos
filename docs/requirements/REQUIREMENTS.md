@@ -46,7 +46,7 @@ test, prompt, or document is not sufficient by implication.
 - [Security](../../SECURITY.md) owns authority, trust, capability, sandbox, and
   fail-closed behavior.
 - [Roadmap](../../ROADMAP.md) and the
-  [Rust migration register](../development/RUST_MIGRATION.md) own milestone
+  [Rust migration register](../archive/RUST_MIGRATION.md) own milestone
   timing.
 - [ADR 0028](../adr/0028-canonical-artifact-identity-and-semantic-deltas.md),
   [ADR 0029](../adr/0029-deterministic-execution-and-reproducibility.md),

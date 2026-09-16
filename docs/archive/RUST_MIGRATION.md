@@ -13,7 +13,7 @@ source of truth at corpus v33 (decision 40, honest trade-off C7).
 Stable cross-project requirement identifiers are repository-owned in the
 [normative requirements register](../requirements/REQUIREMENTS.md). The
 [RFC ownership index](../architecture/RFC_INDEX.md) and
-[golden trace registry](GOLDEN_TRACES.md) preserve their decision and
+[golden trace registry](../development/GOLDEN_TRACES.md) preserve their decision and
 verification work items without manufacturing duplicate documents. Similar
 repository concepts never satisfy those identifiers by implication.
 
@@ -800,7 +800,7 @@ when Rust provides a simpler representation. Performance-sensitive code is
 measured before specialized optimization. Unsafe code, synchronization,
 dynamic dispatch, unnecessary allocation, and unnecessary async require
 concrete justification. The full standard is
-[RUST_STYLE.md](RUST_STYLE.md); do not create a separate optimization
+[RUST_STYLE.md](../development/RUST_STYLE.md); do not create a separate optimization
 milestone.
 
 ### Port review clause
@@ -826,7 +826,7 @@ Do not micro-optimize without measurement.
 
 Stage 4 begins only after R1-R11, the Stage 1-3 migration audit, R12's
 retirement/retention disposition, and
-[the Stage-4 entry gate](stage4-entry-gate.md) all pass.
+[the Stage-4 entry gate](../development/stage4-entry-gate.md) all pass.
 
 The first Stage 4 capability is generic **Controlled Runtime Execution**. It
 supervises a host-authorized process and produces structured runtime evidence;

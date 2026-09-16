@@ -4,6 +4,19 @@ These are the engineering standards for the Siralos repository. They apply from 
 
 ## Capability status conventions
 
+**Why these capabilities are closed (read this before citing a language limit).**
+
+The reason is a **ported-parity decision**, not a limitation of any implementation
+language. The Rust implementation was ported to byte-match a frozen TypeScript
+oracle that also lacked an identity-bound commit primitive, and the differential
+corpus **pins that outcome**:
+`tests/differential/corpus/workspace-apply.apply-unavailable.json` and
+`tests/differential/corpus/workspace-prepare.unavailable.json` are among the
+scenarios asserting a typed `unavailable`. Reopening any of these surfaces is
+therefore a deliberate, reviewed oracle amendment — never a code change alone.
+An earlier version of this document attributed the posture to the removed
+TypeScript runtime; that attribution was obsolete and has been corrected.
+
 This document distinguishes three states, consistently with `README.md`, `SECURITY.md`, and `ARCHITECTURE.md`:
 
 - **Surface implemented**: contracts, tools, commands, and tests exist.
@@ -42,16 +55,7 @@ CLI â”€â”€â”€â”€â”€â”€â”€â”€â”€â�
  â””â”€ Composition â”€â”€â”€â†’ Adapters â”€â”€â”€â†’ Core ports
 ```
 
-Core must not import the CLI, adapters, test utilities, or Node infrastructure modules. `npm run check:architecture` fails the build on violations; it is a developer guardrail that uses structural TypeScript parsing plus regex/text checks, not an OS security boundary.
-
-## Strict TypeScript
-
-- `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitOverride`, `noImplicitReturns`, `noFallthroughCasesInSwitch`, and `useUnknownInCatchVariables` are enabled in `tsconfig.base.json`.
-- Avoid `any`. Use `unknown` at untrusted boundaries.
-- Do not use unchecked type assertions to bypass design problems.
-- Exported APIs have explicit return types.
-- Type-only imports use `import type` (`verbatimModuleSyntax` is enforced).
-- The repository targets Node.js 24 and ESM; relative imports carry `.js` extensions.
+Core must not import the CLI, adapters, or test utilities. `npm run check:rust` fails the build on violations; it is a developer guardrail that uses structural Rust source parsing plus regex/text checks, not an OS security boundary.
 
 ## Runtime validation
 
@@ -76,7 +80,7 @@ These properties are established and tested; weakening any of them is an archite
 - **Safe failures**: unknown tools, invalid arguments, path escapes, binary files, oversized files, duplicate call ids, filesystem errors, sandbox denials, and backend unavailability produce typed failures rather than crashes. A nonzero command exit is a completed command result, never an infrastructure failure.
 - **Project configuration cannot broaden access**: sandbox configuration is user-level only (`~/.siralos/config.json`); an untrusted repository cannot enable network access, add writable roots, change backends, or disable environment filtering.
 - **Approval is separate from sandbox enforcement**: an approval means "apply this exact prepared mutation or run this exact prepared command once" â€” never unrestricted execution, never a session grant, never a sandbox expansion. Write tools and `process.run` are hidden from the provider when the capability policy denies the capability; under `develop-offline`, `workspace.write` and `process.execute` are `ask` in policy. At this stage neither mutations nor commands ever reach approval: every mutation entry point and both command runners fail closed as `unavailable` before any write, approval, or checkpoint, so no approval for mutations or commands is ever requested.
-- **Mutation conflict safety**: `workspace.read` returns complete-file SHA-256 hashes; edits and deletions require the exact expected hash; targets are revalidated immediately before mutation; stale or racing changes return `conflict` and never overwrite newer content. Replacement commits and rollbacks use an exclusive absence-preserving primitive (hard link, failing on `EEXIST`; a rename is never used to commit or restore), so a target appearing after the quarantine displacement is never overwritten and rollback conflicts return an explicit uncertain result preserving the quarantine. Creation verifies every parent component's identity immediately before the exclusive open and proves the created object's identity before writing any byte. **This design is not offered at this stage**: every mutation entry point fails closed as `unavailable` before any write, approval, or checkpoint, because Node offers no directory-relative (openat/renameat) primitive and a same-user process can swap a parent or target at any instruction boundary; the machinery above is tested internal code. Commands record the script SHA-256 before approval and revalidate it (plus the trusted executable identity and the full plan digest) before execution; any change is a `conflict`. No command executes at this stage: both the `node-script` and `npm-script` runners fail closed as unavailable under the pinned runtime â€” the pinned Node runtime cannot bind execution to the approved script bytes (the script can reach internal surfaces such as `process.binding` (e.g. `spawn_sync`) to spawn an unconstrained interpreter, and the staged private copy can be substituted by a same-user process in the verify-to-launch window), so every command request is refused with `unavailable` before any approval.
+- **Mutation conflict safety**: `workspace.read` returns complete-file SHA-256 hashes; edits and deletions require the exact expected hash; targets are revalidated immediately before mutation; stale or racing changes return `conflict` and never overwrite newer content. Replacement commits and rollbacks use an exclusive absence-preserving primitive (hard link, failing on `EEXIST`; a rename is never used to commit or restore), so a target appearing after the quarantine displacement is never overwritten and rollback conflicts return an explicit uncertain result preserving the quarantine. Creation verifies every parent component's identity immediately before the exclusive open and proves the created object's identity before writing any byte. **This design is not offered at this stage**: every mutation entry point fails closed as `unavailable` before any write, approval, or checkpoint, because the ported implementation has no directory-relative (openat/renameat) primitive and a same-user process can swap a parent or target at any instruction boundary; the machinery above is tested internal code. Commands record the script SHA-256 before approval and revalidate it (plus the trusted executable identity and the full plan digest) before execution; any change is a `conflict`. No command executes at this stage: both the `node-script` and `npm-script` runners fail closed as unavailable under the pinned runtime â€” the pinned Node runtime cannot bind execution to the approved script bytes (the script can reach internal surfaces such as `process.binding` (e.g. `spawn_sync`) to spawn an unconstrained interpreter, and the staged private copy can be substituted by a same-user process in the verify-to-launch window), so every command request is refused with `unavailable` before any approval.
 - **Complete previews before mutation**: every mutation produces a deterministic bounded unified diff shown before approval; truncated or oversized previews cannot be approved. The command-approval preview shows the complete npm script body (bounded at preparation, never truncated before approval), every argument boundary, and every execution boundary â€” no command reaches approval at this stage because both runners fail closed as unavailable, and no mutation reaches approval because every mutation entry point fails closed as `unavailable` before preparing anything.
 - **Workspace immutability verification for commands**: Git structured status is compared before and after execution; a detected workspace change marks a sandbox violation and disables further commands for the session (the OS sandbox remains the security boundary).
 - **Command serialization**: commands and approved file mutations share one in-process lock; a second command waits, and no mutation can begin while a command runs.
@@ -124,9 +128,16 @@ Major mismatch or an engine minor older than declared = error; same minor = comp
 
 ### Opt-in live conformance
 
-`npm run test:godot` runs live Godot probe conformance against a real engine on the host, but only when opted in: without `SIRALOS_TEST_GODOT="<absolute-path>"` the suite refuses to run or skips loudly â€” it never pretends a skipped or unavailable probe passed. **At this stage probing fails closed, so the suite reports UNAVAILABLE loudly and never passes, on any platform, with or without `SIRALOS_TEST_GODOT` set**; a skipped or unavailable result is never treated as a live security pass. The live suite never modifies the user-supplied engine: all timeout, cancellation, descendant-termination, stdin, and identity-invalidation probes run against disposable fixed fixtures. The live Git helper-confinement test proves clean-filter execution, repository-write denial, and network denial **only when it actually runs against a real enforcing sandbox and observes the denial** through the sandbox-private result channel: the filter connects to a controlled loopback endpoint proven reachable from an unsandboxed preflight client and kept listening through the run, and the denial is attributed to sandbox enforcement by that controlled comparison (bounded failure, never a connection or timeout, no server-side connection) â€” never by a socket error alone. A skipped or unavailable sandbox is reported as skipped, never as passed. `npm run test:sandbox` on this machine (Windows) skips loudly because the backend requires the one-time `npx sandbox-runtime windows-install` setup and cannot enforce the host-read allowlist; a skip is never treated as a pass. Rerun commands: `npm run test:sandbox` after the Windows setup completes; `SIRALOS_TEST_GODOT="<absolute-path>" npm run test:godot` (reports UNAVAILABLE until probing becomes available); `SIRALOS_TEST_GODOT="<absolute-path>" npm run test:godot-recovery` (verifies the fail-closed recovery behavior — capability unavailable with a precise reason, preparation refuses before approval, nothing created, nothing executed — and reports the live engine-isolation probe as skipped, never passed, while execution is unavailable).
-
-`SIRALOS_TEST_GODOT="<absolute-path>" npm run test:godot-diagnostics` verifies the fail-closed GDScript diagnostic behavior the same way: capability unavailable with a precise reason, preparation refuses before approval, nothing created, nothing executed, and the live engine-isolation probe reported skipped, never passed.
+The Godot live-conformance suites (`test:godot`, `test:godot-recovery`,
+`test:godot-diagnostics`, `test:godot-quality`) and the sandbox conformance
+suite (`test:sandbox`) belonged to the in-repository Godot domain and the Node
+sandbox backend. Both left this repository when the Godot domain was
+externalized (decisions 60–65) and the TypeScript tree was removed (decision
+40), so none of those npm scripts exist here. This repository's Godot coverage
+is the frozen differential corpus (`godot-*` subjects under
+`tests/differential/corpus/`), which asserts the fail-closed posture directly:
+every effectful Godot capability reports a typed `unavailable`, and no process
+is ever launched.
 
 ## Godot API knowledge and GDScript diagnostics pipeline
 
@@ -144,13 +155,13 @@ Major mismatch or an engine minor older than declared = error; same minor = comp
 
 ## GDScript development workflow
 
-> **Status note (fail-closed).** The GDScript development workflow is **implemented as contracts, change-set machinery, orchestration, and truthful reporting — with the change-set applier unavailable on every platform at this stage**. The applier's platform gate fails closed before any write, lock, approval, or checkpoint, because Node offers no directory-relative (openat/renameat) primitive; the workflow refuses before any approval for a mutation and no checkpoint is ever created (ADR 0012). The orchestration below is tested internal code exercised through injected in-memory file primitives, scripted language/parser services, and the real filesystem checkpoint store; it becomes operational only after identity-bound commit primitives exist.
+> **Status note (fail-closed).** The GDScript development workflow is **implemented as contracts, change-set machinery, orchestration, and truthful reporting — with the change-set applier unavailable on every platform at this stage**. The applier's platform gate fails closed before any write, lock, approval, or checkpoint, because the ported implementation has no directory-relative (openat/renameat) primitive; the workflow refuses before any approval for a mutation and no checkpoint is ever created (ADR 0012). The orchestration below is tested internal code exercised through injected in-memory file primitives, scripted language/parser services, and the real filesystem checkpoint store; it becomes operational only after identity-bound commit primitives exist.
 
 **Workflow pipeline:** `/develop <request>` prepares and one-time-approves a workflow start bound to the request text, the project authored-file fingerprint, the engine fingerprint, and the immutable limits (1 concurrent workflow, 16 files per change set, 512 KiB complete diff, 4 MiB resulting bytes, 3 repair proposals, 4 iterations, 30 s parser timeout, 30 s LSP startup, 2 min validation budget per iteration, 15 min total budget). The authorization covers only the read-only validation context — LSP recreation after approved edits, `--check-only` parsing, API lookup, workspace and Git inspection. The provider investigates with the read-only tools, then proposes an exact text change set (`workspace.apply_text_changeset`): bounded create/edit/delete on UTF-8 text files with exact current SHA-256 preconditions, complete deterministic diffs, and an immutable digest; each change set (including every repair) requires its own exact one-time approval. On apply: the language session is suspended (`closing_for_edit`; a failed suspension never applies), every precondition is revalidated, every affected file is checkpointed (with its exact pre-change bytes; an absence state for creates) before anything is written, files are applied sequentially with post-state hash verification under the mutation lock, changed `.gd` scripts run the fixed `--check-only` invocation sequentially, a fresh disposable mirror and language session are recreated (engine fingerprint unchanged, project delta exactly the approved change sets), LSP diagnostics settle deterministically (initial receipt, bounded quiet period, hard timeout), and bounded validation evidence is recorded (parser, LSP, Git status when available, workspace integrity with unexpected-change detection — unexpected external changes are reported truthfully, never reverted). A partial application failure triggers hash-gated recovery from the just-created checkpoints (`apply_failed_recovered` / `apply_failed_partial_recovery` / `apply_failed_uncertain`; never success after partial application). Validation errors enter the bounded repair loop (each repair approved separately; denial and cancellation preserve accepted changes). Validation infrastructure failures keep the approved source changes and end the workflow `validation_failed` — the source is never blamed for an infrastructure failure, and a skipped gate is never presented as success.
 
 ## Development quality gates and independent review
 
-> **Status note (fail-closed).** The quality stage (ADR 0013) lives inside the development workflow, whose change-set applier fails closed as unavailable on every platform; the stage, the reviewer plumbing, the validation executor, and the report machinery are tested internal code exercised through injected fakes, and in the shipped product no quality stage, review, or validation command runs. The opt-in `npm run test:godot-quality` conformance verifies this truthfully and always reports the live quality-stage isolation probe as skipped, never passed.
+> **Status note (fail-closed).** The quality stage (ADR 0013) lives inside the development workflow, whose change-set applier fails closed as unavailable on every platform; the stage, the reviewer plumbing, the validation executor, and the report machinery are tested internal code exercised through injected fakes, and in the shipped product no quality stage, review, or validation command runs. The Godot live-conformance suite — now part of the standalone plugin repository (decisions 60–65) — verified this truthfully and always reported the live quality-stage isolation probe as skipped, never passed.
 
 - **Deterministic gates are authoritative; the reviewer is a separate reasoning signal.** Parser checks, LSP diagnostics, hash verification, source-integrity checks, sandbox enforcement, and test exit codes are application-computed and can never be replaced or weakened by a reviewer. Gates are hard (block clean completion), soft (advisories), or informational; the classification is fixed, not provider-configurable. A required gate that could not run is `validation_incomplete`, never `passed`.
 - **Warning policy is conservative.** Warnings surfaced as errors by Godot or project policy are hard errors; normal new warnings are advisory; pre-existing warnings are never attributed to the change unless evidence shows the change caused them; attribution that cannot be proven is labelled uncertain. `@warning_ignore` is never inserted and project warning configuration is never modified.
@@ -248,8 +259,8 @@ A future `/evolve` workflow may not weaken engineering, architecture, validation
 4. **Behavior-changing agent-runtime modifications require behavior
    evidence.** Changes to the task runtime, completion gate, progress
    semantics, or the `/develop`-task integration must extend the
-   `tests/behavior/` fixtures (behaviors 1–15) rather than relying on unit
-   tests alone.
+   frozen differential corpus (`tests/differential/corpus/`) rather than
+   relying on unit tests alone.
 5. **Final-boundary effects are tested.** Behavior/security-sensitive
    changes are verified at the final observable boundary (task phase,
    activity log, workspace contents, checkpoint list), not only through an

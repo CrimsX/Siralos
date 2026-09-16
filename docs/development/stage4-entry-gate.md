@@ -1,6 +1,6 @@
 # Siralos Stage-4 entry gate
 
-Status: authoritative (pre-Stage-4 assurance, contract Part 27); the gate held — Stage 4 was subsequently realized in full and Verified at `9566eee` (decision 46).
+Status: authoritative (pre-Stage-4 assurance, contract Part 27); the gate held — Stage 4 was subsequently realized in full (verification record in ../../ROADMAP.md; decision 46).
 Stage 4 (Runtime and Visual QA) begins when and only when every
 criterion below holds. Status is host-observed evidence, never claims.
 This document is the written gate; it is re-evaluated at each
@@ -43,7 +43,7 @@ Reconfirmed by the architecture ratchets and this milestone's evidence:
 ## Current verdict
 
 ```text
-PRE-STAGE-4 ASSURANCE: PASSED (R12 retired, R1–R13 Verified at 4bef901, corpus v31)
+PRE-STAGE-4 ASSURANCE: PASSED (R12 retired, R1–R13 verified, corpus v31)
 ```
 
 All 17 criteria are **PASS** (or PASS-scoped) on worktree 4bef901. The Stage 1–3 migration audit (criterion 1) and H1/H2/ICM/H3 (criteria 3–6) are now PASS via R10a-c + R13. The gate is re-evaluated at each milestone; no additional hardening milestone is planned beyond the porting milestones now complete.

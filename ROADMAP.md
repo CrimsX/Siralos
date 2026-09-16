@@ -17,12 +17,35 @@ unsafe filesystem or process boundary intentionally fails closed.
 - **Intentionally unavailable** — the entry point returns `unavailable` before
   execution, approval, mutation, checkpoint creation, or cleanup.
 
+## Verification retraction — read this before trusting any CI claim
+
+**No CI workflow in this repository has ever executed.** From the Stage 7 Godot
+externalization until commit `60a56fa`, `siralos-godot` was a mandatory `../`
+path dependency of the product workspace, so a fresh checkout could not resolve
+its own Cargo workspace and **every** cargo-invoking CI step failed before doing
+any work. `60a56fa` removed that edge, and the pipeline was audited and repaired
+afterwards — but as of this file's last update, **no recorded run exists**.
+
+Therefore: any statement implying that CI is green, passing, or verified — in
+this repository's history, in a decision record, or in a commit message from
+before that repair — is **unverified**, whatever it says. Local gate runs are
+evidence for the machine that ran them, not for CI.
+
+Settling this requires a push and a recorded run outcome, failures included.
+Until that exists, treat CI status as unknown rather than as passed.
+
 ## Current position
 
 - Stage 1 has a broad implemented surface but is not operationally complete.
   Workspace mutation, undo, command execution, private run directories, and Git
-  inspection fail closed because Node does not provide the required
-  identity-bound directory-relative create/replace/delete/launch primitives.
+  inspection fail closed. The reason is a **ported-parity decision, not a
+  language limitation**: the Rust implementation was ported to byte-match a
+  frozen TypeScript oracle that also lacked an identity-bound commit primitive,
+  and the corpus pins that outcome
+  (`tests/differential/corpus/workspace-apply.apply-unavailable.json`,
+  `tests/differential/corpus/workspace-prepare.unavailable.json`). Reopening any
+  of these is a deliberate, reviewed oracle amendment. A footnote here once
+  blamed Node; that was true of the removed TypeScript tree and is obsolete.
 - Stage 2's Godot/GDScript contracts and orchestration are implemented, with
   static discovery and project inspection available. Engine execution,
   recovery mirrors, diagnostics, LSP startup, change application, validation,
@@ -361,7 +384,7 @@ platforms with digest-bound audits (217/217 applicable required parity on
 each) and truthful loud sandbox skips; all six Tier-1 findings are closed,
 with the macOS `SSH_AUTH_SOCK` finding recorded as an accepted deviation).
 The complete internal sequence is recorded
-in `docs/development/RUST_MIGRATION.md`.
+in `docs/archive/RUST_MIGRATION.md`.
 
 Stage 5 is Verified at `c2c30f0` — ten slices across decisions 47–56 (5.1 Profiles be030e3, 5.2 Profile Composition 4c562c8, 5.3 Context Controls ce3e7dc, 5.4 siralos.lock 0a6d592, 5.5 Plugin Selection 5e1b3e0, 5.6 Skills fcf61c5, 5.7 Session Plugin Activation Gate 926ac71, 5.8 Session Context Controls 6dc830e, 5.9 Session Lock Verification 6e38804, 5.10 Session Skill Consumption 579f1e9) with differential parity 299/299 at corpus v48/304, 65 expectation records, pinned v32 oracle untouched, zero spawn paths; decisions 47–57 annotated. Stage 6 is Verified at `e2c3540` — four slices across decisions 58–59 (6.1 Evaluation Corpus a79f613, 6.2 Workflow 0ba256f, 6.3 Proposal ddb18a4, 6.4 Packaging e2c3540) with differential parity 315/315 at corpus v52/320, 81 expectation records, pinned v32 oracle untouched, zero spawn paths; decisions 58–59 annotated and map’s Not-yet-specified fog is empty.
 
@@ -377,7 +400,7 @@ fail-closed posture is mechanically preserved) — the Godot runtime adapter
 specialization on that host
 boundary, visual evidence, controlled interaction, QA workflows, and
 run-profiling sessions. The Godot domain lives in the in-repo Plugin crate
-`crates/siralos-godot` (extraction landed per decision 37); `siralos-core`
+the external Godot plugin crate (extraction landed per decision 37); `siralos-core`
 stays domain-neutral.
 
 ## 4. Controlled execution
