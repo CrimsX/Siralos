@@ -826,7 +826,7 @@ Do not micro-optimize without measurement.
 
 Stage 4 begins only after R1-R11, the Stage 1-3 migration audit, R12's
 retirement/retention disposition, and
-[the Stage-4 entry gate](../development/stage4-entry-gate.md) all pass.
+[the Stage-4 entry gate](stage4-entry-gate.md) all pass.
 
 The first Stage 4 capability is generic **Controlled Runtime Execution**. It
 supervises a host-authorized process and produces structured runtime evidence;

@@ -1,9 +1,9 @@
 # Contributing to Siralos
 
-Siralos is in active development and an evidence-gated TypeScript-to-Rust
-migration. Focused issues and pull requests are welcome, but confirm substantial
-scope in a GitHub issue before investing in it; milestone order and security
-boundaries are deliberate.
+Siralos is in active development, and every change is expected to hold the
+repository's evidence gates. Focused issues and pull requests are welcome, but
+confirm substantial scope in a GitHub issue before investing in it; milestone
+order and security boundaries are deliberate.
 
 ## Start with repository context
 
@@ -11,8 +11,8 @@ boundaries are deliberate.
 2. Read the [project context](docs/development/PROJECT_CONTEXT.md).
 3. Follow the scoped `AGENTS.md` files, accepted ADRs, and the
    [Rust style guide](docs/development/RUST_STYLE.md) relevant to your change.
-4. Verify the current milestone from repository evidence. R3 is complete and
-   R4 is next; do not pull later migration or product work forward implicitly.
+4. Verify the current milestone from repository evidence before starting work;
+   do not pull later product work forward implicitly.
 
 ## Development setup
 
@@ -22,8 +22,9 @@ lockfiles.
 
 Keep changes cohesive and preserve the main boundaries:
 
-- TypeScript remains the behavioral reference until its evidence-backed R12
-  disposition.
+- The Rust implementation is the sole source of truth. The TypeScript
+  implementation is archived and retained only as digest-bound historical
+  evidence (decision 40); it never grants product authority.
 - Rust dependency direction is `siralos-cli -> siralos-adapters ->
 siralos-core`; core remains domain-neutral.
 - Missing security enforcement fails closed. Do not make an unavailable effect

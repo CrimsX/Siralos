@@ -16,8 +16,10 @@ Rules:
   the active sources.
 - Archived here: the completed TypeScript-to-Rust migration record
   (`RUST_MIGRATION.md`), the TypeScript behavior-extraction record
-  (`R7_BEHAVIOR_EXTRACTION.md`), and the TypeScript-era architecture document
+  (`R7_BEHAVIOR_EXTRACTION.md`), the TypeScript-era architecture document
   (`architecture-typescript-era.md`, replaced by [ARCHITECTURE.md](../../ARCHITECTURE.md)
-  when the live document was rewritten for the Rust-only tree). Each describes
-  work that is finished, or a tree that has been removed, so each is history
-  rather than live documentation.
+  when the live document was rewritten for the Rust-only tree), and the completed
+  pre-Stage-4 assurance gate
+  (`stage4-entry-gate.md`, whose 17 criteria were frozen evidence and held). Each
+  records work that is finished, or a tree that has been removed, so each is
+  history rather than live documentation.

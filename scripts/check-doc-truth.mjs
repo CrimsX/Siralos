@@ -9,9 +9,11 @@
  *   1. an inline-code repo-relative path token in a live document resolves to
  *      a tracked path;
  *   2. an `npm run <script>` cited in prose names a real package.json script;
- *   3. commit-SHA / "Verified" milestone claims appear only in the canonical
- *      status file (ROADMAP.md) — the repository restated them in five places,
- *      which is why they rotted;
+ *   3. milestone status appears only in the canonical status file (ROADMAP.md):
+ *      a 40-character commit SHA, a "Verified <sha>" claim, a corpus-version
+ *      token, a differential parity tally, or an R-milestone completion claim
+ *      outside that file is a violation — the repository restated them in five
+ *      places, which is why they rotted;
  *   4. no live document carries a single line above the readability bound.
  *
  * It refuses to check, by design: docs/wayfinder/** and docs/adr/** (a dated
@@ -33,6 +35,28 @@
  *      is unchecked until it lands.
  *   3. Rules 1 and 2 (path tokens, cited npm scripts) do scan fenced blocks —
  *      a dead path or a nonexistent script is wrong wherever it is written.
+ *   4. Rule 3 refuses STATUS CLAIMS, not provenance, and it under-refuses by
+ *      design. A bare migration label ("Stage 3R R6"), a bare tally with no
+ *      parity claim near it, and a short commit id cited as the provenance of a
+ *      historical artifact are all deliberately allowed: naming which migration
+ *      item introduced a subsystem asserts nothing about completion, and
+ *      refusing the labels would have cost thirteen edits across six documents —
+ *      including contract files — for no reduction in false statements. The
+ *      accepted cost is that gate wording carrying no token at all is invisible
+ *      here, exactly as prose truth always is. A refusal list for a live
+ *      document was considered and rejected for the same reason the archive
+ *      exists: an exemption that still reads as live documentation is a hiding
+ *      place.
+ *
+ *      One narrowing is deliberate and measured: a bare "Verified" beside an
+ *      `R<n>` id is NOT refused, only a roll-up ("all Verified") or a
+ *      completion word is. In this repository a bare "Verified" beside an id is
+ *      overwhelmingly evidence ATTRIBUTION — it names the milestone that
+ *      closed a row — and it appears that way in six live places, five of them
+ *      the evidence column of the normative requirement register. Refusing it
+ *      would delete traceability from a register rather than remove a false
+ *      statement, which is the same cost that ruled out refusing provenance
+ *      labels.
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
@@ -41,6 +65,28 @@ import { pathToFileURL } from "node:url";
 
 /** The one document allowed to carry milestone status and commit claims. */
 const CANONICAL_STATUS_FILE = "ROADMAP.md";
+
+/**
+ * Rule 3's status-claim patterns, as sources rather than literals so each use
+ * gets a fresh global regex.
+ *
+ * Each pattern is anchored on a milestone token (a corpus version, a parity
+ * fraction, an `R<n>` item) rather than on status vocabulary alone, because a
+ * bare "complete" or "verified" is ordinary English in a repository that also
+ * describes capabilities. Provenance labels are deliberately absent; see
+ * boundary 4 in the header.
+ */
+const STATUS_CLAIM_PATTERNS = [
+  ["corpus-version claim", "\\bcorpus[ -]?v(?:ersion)?\\s*\\d+"],
+  [
+    "differential parity tally",
+    "\\d+\\s*\\/\\s*\\d+[^.\\n]{0,40}\\bparity\\b|\\bparity\\b[^.\\n]{0,40}\\d+\\s*\\/\\s*\\d+",
+  ],
+  [
+    "milestone completion claim",
+    "\\bR\\d+(?:\\.\\d+)?\\b[^.\\n]{0,40}\\b(?:is complete|complete|completed|done|passed|all [Vv]erified)\\b|\\bR\\d+(?:\\.\\d+)?\\s+COMPLETE\\b",
+  ],
+];
 
 /** Directories whose documents are records, not live documentation. */
 const REFUSED_PREFIXES = [
@@ -212,6 +258,13 @@ export function runCheck(root) {
         errors.push(
           `${path}:${lineAt(text, match.index ?? 0)}: milestone verification claim outside ${CANONICAL_STATUS_FILE}`,
         );
+      }
+      for (const [label, source] of STATUS_CLAIM_PATTERNS) {
+        for (const match of prose.matchAll(new RegExp(source, "g"))) {
+          errors.push(
+            `${path}:${lineAt(text, match.index ?? 0)}: ${label} "${match[0].trim()}" outside ${CANONICAL_STATUS_FILE}`,
+          );
+        }
       }
     }
 

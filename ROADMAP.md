@@ -390,8 +390,8 @@ Stage 5 is Verified at `c2c30f0` — ten slices across decisions 47–56 (5.1 Pr
 
 ### Stage 4 — Controlled execution (realized)
 
-Stage 4 is **complete and Verified** at `9566eee`. The `stage4-entry-gate.md`
-17/17 PASS re-evaluation held (R12 retired); the entry sequence froze seven
+Stage 4 is **complete and Verified** at `9566eee`. The
+`docs/archive/stage4-entry-gate.md` 17/17 PASS re-evaluation held (R12 retired); the entry sequence froze seven
 steps (decision 08) and every step is implemented, entry-reviewed, and
 evidence-backed: generic Controlled Runtime Execution — sandboxed, bounded
 process supervision under Siralos authority that produces structured runtime

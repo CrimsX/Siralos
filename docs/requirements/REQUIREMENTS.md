@@ -67,9 +67,9 @@ test, prompt, or document is not sufficient by implication.
 ## Reconciliation (2026-09-12)
 
 A read-only sweep of every Markdown file (ticket 131) found this register's status
-and evidence columns describing a repository that no longer exists: rows waiting on
-R4/R10/R11/R12 (all Verified), and rows whose reason cited the TypeScript reference
-that decision 40 removed. Every status and evidence cell was reconciled against the
+and evidence columns describing a repository that no longer exists: rows waiting on milestones
+that have since closed, and rows whose reason cited the TypeScript reference that
+decision 40 removed. Every status and evidence cell was reconciled against the
 Verified record; **the requirement text is normative and unchanged**.
 
 Two outcomes are now distinguished explicitly: **VERIFIED** (the evidence names the

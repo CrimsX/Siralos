@@ -105,7 +105,7 @@ layout, and the typed unavailable Git inspection boundary. The differential
 corpus gained 23 scenarios across the `workspace-read`, `workspace-list`,
 `workspace-search`, `workspace-revision`, `workspace-prepare`,
 `checkpoint`, and `git-inspection` subjects; all required applicable
-scenarios match (ADR 0033 gate, corpus version 7, 47 scenario files). R4
+scenarios match (ADR 0033 gate). R4
 hardening corrected the bounded exact reads on both implementations so a
 short read is never treated as EOF, a partial prefix can never become
 authoritative source identity, file-size boundaries are explicit, and
@@ -134,8 +134,7 @@ annotations, `export` interpretation) anywhere in
 `siralos-core::language`; the GDScript scanner and summary remain the
 TypeScript reference for R8/R9. The differential corpus gained 16
 scenarios across the `language-diagnostics`, `language-structure`, and
-`language-definition` subjects (corpus version 9, 63 scenario files)
-with language-neutral structure fixtures; all required applicable
+`language-definition` subjects with language-neutral structure fixtures; all required applicable
 scenarios match on both implementations. R5 ports no Godot/GDScript
 parsing (the GDScript scanner remains the TypeScript reference for
 R8/R9), no LSP transport, no process execution, no provider tool
@@ -199,8 +198,8 @@ bounded tool-result detach boundary; `siralos-adapters::provider` owns
 the deterministic fake provider (id `deterministic-fake`, echo,
 16-code-point chunking, generic list/read/search proposals) and the
 strict bounded-turn collector. The differential corpus gained the
-`provider-turn` subject with 18 required scenarios (corpus version 12,
-104 scenario files); all required applicable scenarios match and the
+`provider-turn` subject with 18 required scenarios; all required applicable
+scenarios match and the
 complete local repository gate passes (verification record in [ROADMAP.md](../../ROADMAP.md)). Cancellation
 authority is
 Host-owned: providers receive only a read-only `CancellationSignal`
@@ -222,7 +221,7 @@ sidecar without changing serde_json canonicalization);
 `siralos-adapters::tool` owns the generic read-only `workspace.list` /
 `workspace.read` / `workspace.search` Tool adapters over the R4
 primitives. The differential corpus gained the `tool-loop` subject with
-16 required scenarios (corpus version 13, 120 scenario files), including
+16 required scenarios, including
 the authorization, displayInput UTF-16, and Tool-result status matrices;
 all required applicable scenarios match. The complete local repository
 gate passes (verification record in [ROADMAP.md](../../ROADMAP.md)). R7.2

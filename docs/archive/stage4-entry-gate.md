@@ -1,10 +1,14 @@
 # Siralos Stage-4 entry gate
 
-Status: authoritative (pre-Stage-4 assurance, contract Part 27); the gate held — Stage 4 was subsequently realized in full (verification record in ../../ROADMAP.md; decision 46).
-Stage 4 (Runtime and Visual QA) begins when and only when every
-criterion below holds. Status is host-observed evidence, never claims.
-This document is the written gate; it is re-evaluated at each
-milestone.
+Status: **historical record**, archived. This was the authoritative pre-Stage-4
+assurance gate (contract Part 27) and it held: Stage 4 was subsequently realized in
+full (verification record in [ROADMAP.md](../../ROADMAP.md); decision 46). It is kept
+because it records a completed gate and its evidence; it grants nothing and is no
+longer live guidance.
+This was the written gate for Stage 4 (Runtime and Visual QA): Stage 4 began when
+and only when every criterion below held, and status was host-observed evidence,
+never claims. The gate was re-evaluated at each milestone until it passed; the
+criteria and their recorded statuses are preserved here as that evidence.
 
 | #   | Criterion                                                                   | Current status             | Owner / note                                                                                                                                                                                                                                                                                                            |
 | --- | --------------------------------------------------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
