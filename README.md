@@ -7,69 +7,39 @@ Profiles define how the model works. Context shows what Siralos gives it. The
 Host controls what it can do.
 
 _Probabilistic reasoning. Deterministic execution._ The host places host-owned
-validation, policy, evidence, and controlled effects around probabilistic
-model reasoning, and stays small by moving sophistication into declarative
+validation, policy, evidence, and controlled effects around probabilistic model
+reasoning, and stays small by moving sophistication into declarative
 configuration, Skills, and explicitly installed Plugins
 ([ADR 0036](docs/adr/0036-lean-product-composition-and-extension-model.md)).
 
 [![Rust CI](https://github.com/CrimsX/Siralos/actions/workflows/rust.yml/badge.svg)](https://github.com/CrimsX/Siralos/actions/workflows/rust.yml)
 [![CodeQL](https://github.com/CrimsX/Siralos/actions/workflows/codeql.yml/badge.svg)](https://github.com/CrimsX/Siralos/actions/workflows/codeql.yml)
 
-> **Status: active development / Rust migration.** The TypeScript implementation is **archived** at `5da5cde` (freeze v32, 234/234, pinned). Rust is the **sole source of truth**, migrated under differential verification. Stage 3R R4 —
-> Generic Workspace / Project Foundation — is complete (bounded reads,
-> listing, search, revisions, prepared-effect contracts, checkpoint
-> inspection/reconciliation, and the typed unavailable Git disposition at
-> differential parity), **R5 — Generic Language Intelligence** is
-> complete (one-based positions/ranges, bounded sanitized diagnostics
-> with deterministic ordering and explicit truncation, generic
-> symbol/definition/reference models, the language-neutral structural
-> representation with the deterministic advisory summary formatter,
-> typed validation results, revision binding, and the generic
-> language-service URI mapping at differential parity), and **R6 —
-> Minimal Domain Capability Architecture and Synthetic Conformance
-> Domain** is complete (the domain-neutral lifecycle/capability
-> semantics in `siralos-core::domain`, the production Component Model /
-> WIT boundary in `siralos-adapters::domain` with exact-byte package
-> identity, fail-closed ABI versioning, resource bounds, trap
-> containment, and host-mediated effects, and the deterministic
-> product-neutral synthetic conformance Domain proving the boundary);
-> **R7 — Provider, Tool-Loop, Projection, Configuration, and CLI
-> Parity** is active: R7A behavior extraction and provider protocol
-> remediation are complete, and **R7.1 — Provider contract +
-> deterministic fake provider + bounded single model turn parity** is
-> complete (corpus version 13, 120 scenario files, 18 `provider-turn`
-> scenarios at differential parity); **R7.2 � Application Tool Loop
-> parity** is complete (16 `tool-loop` scenarios at differential parity,
-> including the authorization, displayInput UTF-16, and Tool-result
-> status matrices); **R7.3 — Projection parity** contract frozen and
-> reconciled with locally pinned terminal-marker precedence; independent
-> review has returned **PASS** — implementation is complete and evidence-backed
-> (13 projection/application integration tests plus 11 required
-> `context-projection` scenarios); **R7.4 — Configuration parity** is
-> complete and evidence-backed (2 required
-> `user-config` scenarios, corpus version 15, 133 scenario files); **R7.5 —
-> `/context` and `/tools` CLI rendering** — complete and evidence-backed (deterministic real-session rendering over the
-> existing projection and Tool authority seams; 51 focused Rust CLI tests (10 sanitize) plus TypeScript oracle coverage; advisory P2 closed); R7 complete. **R8 — Optional Godot Stage-2 parity** (discovery/profiling, recovery contracts, API knowledge, check-only diagnostics, bounded LSP, read-only scene/resource intelligence) is complete and evidence-backed: corpus version 16, 155 scenario files, all five frozen `godot-*` differential subjects at required parity (150/150 applicable required scenarios), fail-closed posture mechanically preserved; R8 complete. **R9 — Optional Godot Stage-3 parity** (review context & impact intelligence, prepare-only mutation contracts, deterministic `/develop` core) is complete and evidence-backed: corpus version 17, 167 scenario files, all three frozen subjects at required parity (162/162 applicable required scenarios); apply/checkpoints stay typed `unavailable`; R9 complete. **R10 — H1/H2/ICM/H3 runtime-readiness parity** is complete and evidence-backed as one milestone with three entry-reviewed sub-slices: corpus version 18 (`siralos_core::identity` + `siralos_core::determinism`), version 19 (`siralos_core::context`), and version 20 (210 scenario files, 205/205 applicable required scenarios) for `siralos_core::runtime`; no real process is ever launched; R10 complete (verification record in [ROADMAP.md](ROADMAP.md)).
+> **Siralos is pre-1.0 and under active development**, so the surface is still
+> moving. Milestone status, verification records, and the current frontier live in
+> [ROADMAP.md](ROADMAP.md). This page describes what the product is and how to run
+> it.
 
-## Status vocabulary
+## Contents
 
-- **CURRENT** — implemented and verified in the repository today
-  (the TypeScript behavioral reference, the Rust candidate foundation, and
-  their verified surfaces).
-- **TARGET** — committed product direction for a future stage
-  (Profiles, portable locking, Context controls, Skills, Plugins, Tools,
-  Views, Domains, Runs, Evolve). Target items are documented as direction;
-  none are described as shipped until implemented.
-- **FUTURE / NOT DUE** — deliberately not committed (general Hooks,
-  built-in multi-agent frameworks, TaskGraph, generic workflow engines,
-  plugin marketplaces, automatic acquisition, and similar). These may be
-  reconsidered only from concrete demand and evidence
-  ([ADR 0036](docs/adr/0036-lean-product-composition-and-extension-model.md)).
+- [What Siralos is](#what-siralos-is)
+- [What Siralos is not](#what-siralos-is-not)
+- [Status vocabulary](#status-vocabulary)
+- [Requirements](#requirements)
+- [Quickstart](#quickstart)
+- [Configure a profile](#configure-a-profile)
+- [Run it](#run-it)
+- [Optional Godot support](#optional-godot-support)
+- [Architecture](#architecture)
+- [Verification](#verification)
+- [Documentation](#documentation)
+- [Security](#security)
+- [License](#license)
 
-## Overview
+## What Siralos is
 
-Models can reason and propose, but they do not own Siralos state or authority.
-The host controls the path from proposal to evidence:
+A model can reason and propose. It does not own Siralos state or authority. The
+host owns the path from proposal to evidence:
 
 ```text
 model proposal
@@ -83,84 +53,177 @@ controlled effect
 verification and evidence
 ```
 
-The core is provider-neutral and domain-neutral. Optional domains add
-specialized intelligence without gaining host capabilities. Godot Engine is
-the first and currently only optional domain being developed for Siralos.
+The core is provider-neutral and domain-neutral, and optional domains add
+specialized intelligence without gaining host capabilities. Godot Engine is the
+first and currently only optional domain.
 
-## Why Siralos?
+What that buys you:
 
 - Deterministic Host decisions around probabilistic reasoning
 - Inspectable, provenance-bearing model Context
 - Explicit capability and fail-closed authority boundaries
 - Revision-bound, verifiable effects
-- Portable declarative configuration as the future composition model
-  (TARGET, not shipped)
 - Evidence, replay, and differential verification
-- Optional capability-scoped specialization rather than core feature growth
+- Optional, capability-scoped specialization instead of core feature growth
 
-The detailed ownership model and invariants live in
-[ARCHITECTURE.md](ARCHITECTURE.md) and [SECURITY.md](SECURITY.md). The lean
-product, composition, and extension model is frozen in
-[ADR 0036](docs/adr/0036-lean-product-composition-and-extension-model.md).
+## What Siralos is not
 
-## Current capabilities
+- **Not an agent framework.** No multi-agent machinery, no TaskGraph, no generic
+  workflow engine, no plugin marketplace, no automatic acquisition, and no
+  general Hooks. These are deliberately not committed, and may be reconsidered
+  only from concrete demand and evidence
+  ([ADR 0036](docs/adr/0036-lean-product-composition-and-extension-model.md)).
+- **Not a state owner.** Task state is host-owned; model completion is a request
+  the host evaluates against its own acceptance evidence.
+- **Not a security boundary by itself.** The architecture checks in this
+  repository are developer guardrails, not an OS boundary. The enforceable
+  boundary is the sandbox backend described in [SECURITY.md](SECURITY.md).
+- **Not a Godot tool.** Godot is one optional domain, installed explicitly.
+  Nothing is enabled merely because `project.godot` exists.
+- **Not a credential store.** Credentials are resolved from the environment when
+  a provider is called, and are never written to configuration, context, or logs.
 
-### Available now
+## Status vocabulary
 
-- An interactive TypeScript CLI with a deterministic, offline fake provider
-- Bounded read-only workspace listing, reading, searching, and structural reads
-- Host-owned task state, acceptance evidence, context projection, and read-only
-  planning
-- Project instructions, knowledge, local references, self-reference, and
-  capability diagnostics
-- Static Godot project, scene, and resource intelligence without opening or
-  executing a project
-- The R2 differential harness: versioned fixtures, bounded TypeScript and Rust
-  runners, semantic comparison, replay checks, and machine-readable parity
-  evidence
+- **CURRENT** — implemented and verified in the repository today.
+- **TARGET** — committed product direction for a future stage (Views where
+  justified, additional Domains). A target item is described as direction, never
+  as shipped.
+- **FUTURE / NOT DUE** — deliberately not committed, and reconsidered only from
+  concrete demand and evidence.
 
-### In migration (CURRENT)
+## Requirements
 
-- The Rust successor covers the Stage 3R foundation, the R2 harness, the
-  R3 domain-neutral host-owned task kernel (contracts, task state,
-  evidence, acceptance, completion, activity, progress), the R4
-  generic workspace/project foundation (workspace identity and path
-  safety, bounded exact reads, deterministic listing and search, the
-  revision registry, prepared-effect contracts, checkpoint model and
-  inspection/reconciliation, and the typed unavailable Git disposition),
-  and the R5 generic language-intelligence foundation (one-based source
-  positions/ranges, bounded sanitized diagnostics with deterministic
-  ordering and explicit truncation, generic symbol/definition/reference
-  models, the language-neutral structural representation with the
-  deterministic advisory summary formatter, typed validation results,
-  R4 revision binding, and the generic language-service URI mapping)
-  at differential parity with the TypeScript reference
-- Workspace mutation, undo, Git inspection, development commands, and dynamic
-  Godot execution remain intentionally unavailable where the current host
-  cannot mechanically enforce the required identity guarantees
+- Rust, pinned by `rust-toolchain.toml`
+- Node.js 24 and npm 11.13.0 (`.nvmrc`) for the repository quality gate
+- Git
+- On Windows, a modern MinGW-w64 toolchain on `PATH` for the pinned
+  `x86_64-pc-windows-gnu` Rust host, including GNU `dlltool` and `as`
+  ([Rust platform requirements](https://doc.rust-lang.org/rustc/platform-support/windows-gnu.html))
 
-### Target concepts and current status
+## Quickstart
 
-- Profiles, portable `siralos.toml`/`siralos.lock` semantics, Context
-  controls (Live / Pinned / Frozen), Skills, Plugins, the generic
-  Controlled Runtime surfaces, and the bounded `/evolve` workflow are
-  implemented and Verified (Stages 4–6, decisions 41–59); Views where
-  justified and additional Domains remain targets in their owning stages
-  (ADR 0036)
-- Real provider integrations are **Verified** per decisions 66–71
-  (user-directed 2026-08-31): `ProfileRecord`
-  provider/model/credential/endpoint, env-only `HostCredential`,
-  `reqwest` blocking OpenAI/Anthropic adapters plus the all-purpose
-  `GenericProvider` with provider-neutral placeholder defaults, replay
-  recording via the determinism ports with typed availability, and the
-  recorded secret-hygiene sweep
+```bash
+git clone https://github.com/CrimsX/Siralos.git siralos
+cd siralos
+npm ci
+cargo run --locked --bin siralos -- --version
+```
 
-Unavailable effects return typed failures before execution, approval,
-checkpoint creation, or cleanup. See the [roadmap](ROADMAP.md) for exact status.
+`--help` lists the whole command surface:
+
+```bash
+cargo run --locked --bin siralos -- --help
+```
+
+### An offline first turn
+
+Siralos ships a deterministic fake provider, so a first turn needs no credential
+and no network. Create a workspace directory with a profile in it:
+
+```bash
+mkdir demo
+```
+
+```toml
+# demo/siralos.toml
+[profile]
+name = "offline-demo"
+provider = "deterministic-fake"
+model = "echo"
+```
+
+and run one turn headlessly against it:
+
+```bash
+cargo run --locked --bin siralos -- --cwd demo --print "hello" --json
+```
+
+`--print` answers one prompt without any interactive frontend, `--json` emits
+one structured record instead of the answer text, and `--cwd` chooses the
+workspace root (the default is the working directory).
+
+### The interactive frontend
+
+```bash
+npm run siralos            # debug build
+npm run siralos:release    # release build
+```
+
+The terminal frontend reveals text one character per painted frame, so the build
+sets its ceiling: an unoptimized debug build sustains roughly 650 characters a
+second and a release build roughly 2800 (measured; decision 173). Use the release
+path when a fast model should be tracked exactly.
+
+## Configure a profile
+
+A profile is the composition unit: declarative, versioned, and **narrowing-only**
+— it may restrict what the host permits, never widen it. It lives in
+`siralos.toml` at the workspace root. The file is git-ignored by default, because
+it is where provider details belong.
+
+```toml
+[profile]
+name = "openrouter-default"
+provider = "openrouter"                  # any OpenAI-compatible endpoint
+model = "cohere/north-mini-code:free"
+endpoint = "https://openrouter.ai/api/v1"
+credential = "env:OPENROUTER_API_KEY"    # resolved from the environment at use time
+context = "live"                         # live | pinned | frozen
+skills = []                              # declarative guidance by name, e.g. ["my-skill"]
+plugins = []                             # installed plugin ids to activate
+model_display_name = "OpenRouter"
+
+[profile.permissions]
+"workspace.read" = "allow"               # allow | ask | deny
+"workspace.write" = "deny"
+"command.run" = "deny"
+```
+
+Every field is validated by the composition parser: an unknown key, a permission
+rule that is not `allow`/`ask`/`deny`, a malformed capability id, or a malformed
+credential reference leaves the profile unapplied rather than half-applied.
+
+Credential references come in two forms:
+
+- `env:NAME` (recommended) — resolved from the environment when the provider is
+  called, held in memory for that call only, and redacted in every log and report;
+- `key:VALUE` — a literal token. It works, but it puts the secret in a file;
+  prefer the environment.
+
+## Run it
+
+| Command                                                  | What it does                           |
+| -------------------------------------------------------- | -------------------------------------- |
+| `npm run siralos`                                        | interactive frontend, debug build      |
+| `npm run siralos:release`                                | interactive frontend, release build    |
+| `cargo run --locked --bin siralos -- --print "<prompt>"` | one headless turn                      |
+| `... --print "<prompt>" --json`                          | the same turn as one structured record |
+| `... --print "<prompt>" --cwd <dir>`                     | run against another workspace root     |
+| `... --stdio`                                            | interactive stdio frontend             |
+
+Effects that cannot be enforced are reported as a typed `unavailable` before
+execution, approval, checkpoint creation, or cleanup — never after. The closed
+surfaces are listed in [ARCHITECTURE.md](ARCHITECTURE.md) and
+[SECURITY.md](SECURITY.md).
+
+## Optional Godot support
+
+Godot Engine is Siralos's first optional specialization. The domain package lives
+in the standalone plugin repository
+[github.com/CrimsX/siralos-godot](https://github.com/CrimsX/siralos-godot) and
+depends on the core only. It can statically inspect Godot projects, scenes, and
+resources without executing project code. Dynamic engine probes and project
+execution stay fail-closed: they report `unavailable` and launch nothing.
+
+Siralos does not install Godot, silently enable a domain, or acquire a domain
+merely because `project.godot` exists. The domain package and the Godot Engine
+installation are separate, explicit concerns.
 
 ## Architecture
 
-The target conceptual ownership model (ADR 0036) is:
+The product ownership model ([ADR 0036](docs/adr/0036-lean-product-composition-and-extension-model.md))
+is:
 
 ```text
 User Configuration
@@ -173,192 +236,91 @@ Optional Plugins
 ```
 
 - **User Configuration** — Profile, Context, Skills
-- **Siralos Host** — State, Revision, Capability, Tools, Effects, Evidence;
-  the small privileged, non-replaceable kernel
+- **Siralos Host** — State, Revision, Capability, Tools, Effects, Evidence; the
+  small privileged, non-replaceable kernel
 - **Optional Plugins** — Tools, future Views, optional Domains
 
-This is a product ownership model, not an implementation-layer dependency
-diagram; dependency details live in [ARCHITECTURE.md](ARCHITECTURE.md).
-Orchestration is not a foundational Host layer — higher-level schedulers may
-consume Runs later without defining Run semantics.
-
-### Current implementation
-
-The live repository is **Rust-only**. The TypeScript historical oracle is **archived** at `5da5cde` (freeze v32, 234/234, pinned at `tests/differential/evidence/typescript-freeze-v32/`; audit `v31 e24f4bb` retained as historical) and retained only as digest-bound evidence:
+The implementation is a three-crate Rust workspace with one direction of
+dependency:
 
 ```text
-TypeScript historical oracle (archived at 5da5cde, v32 234/234, pinned; prior v31 e24f4bb retained)
-  apps/cli → packages/adapters → packages/core — removed from live tree; historical replay requires worktree at freeze SHA
-
-Rust successor — sole source of truth (live)
-  siralos-cli → siralos-adapters → siralos-core
-  siralos-godot → siralos-core (standalone plugin repo, pinned path dep)
-  (siralos-godot was externalized to github.com/CrimsX/siralos-godot at
-   1bf2ca3 per decisions 60–65; the monorepo is a 3-member workspace with
-   `siralos-godot = { path = "../siralos-godot" }`; siralos-core stays
-   domain-neutral)
+siralos-cli → siralos-adapters → siralos-core
+siralos-godot → siralos-core            (standalone plugin repository)
 ```
 
-The core owns domain-neutral policy and contracts. `siralos-godot` (standalone
-repo, pinned path dep) owns the Godot domain surfaces (moved per decisions 37
-and 60–65); adapters own infrastructure and the provider HTTP adapters. The
-CLI is the composition and terminal boundary. The historical TypeScript oracle is retained by SHA as pinned digest-bound evidence; the differential harness runs in **pinned mode** (historical replay requires worktree at freeze SHA); it never grants product authority.
+`siralos-core` is domain-neutral and depends on no workspace crate.
+`siralos-adapters` may depend only on `siralos-core`. `siralos-cli` composes them
+and owns the terminal boundary. Orchestration is not a foundational Host layer.
 
-See the [architecture index](docs/architecture/README.md),
-[ADR 0032](docs/adr/0032-rust-migration-and-siralos-rename.md),
-[ADR 0033](docs/adr/0033-differential-behavioral-harness.md), and
-[ADR 0036](docs/adr/0036-lean-product-composition-and-extension-model.md).
+Dependency details live in [ARCHITECTURE.md](ARCHITECTURE.md), and
+[docs/architecture/README.md](docs/architecture/README.md) maps subsystems to code.
 
-## Getting started
+## Verification
 
-### Prerequisites
-
-- Node.js 24 (`.nvmrc`; CI uses 24.17.0)
-- npm 11.13.0
-- Rust 1.97.1 through `rust-toolchain.toml`
-- On Windows, a modern MinGW-w64 toolchain on `PATH` for the pinned
-  `x86_64-pc-windows-gnu` Rust host, including GNU `dlltool` and `as`
-  ([Rust platform requirements](https://doc.rust-lang.org/rustc/platform-support/windows-gnu.html))
-- Git
-
-### Bootstrap
-
-```bash
-git clone https://github.com/CrimsX/Siralos.git siralos
-cd siralos
-npm ci
-```
-
-For development or a new coding-agent session, read [AGENTS.md](AGENTS.md) and
-the [project context](docs/development/PROJECT_CONTEXT.md) before selecting
-milestone work. No separate conversational handoff is required.
-
-### Run
-
-Build and inspect the Rust CLI (sole implementation):
-
-```bash
-cargo build --locked
-cargo run --locked --bin siralos -- --version
-cargo run --locked --bin siralos -- --help
-```
-
-The interactive TUI reveals text one character per painted frame, so the build
-sets its ceiling: an unoptimized `cargo run` sustains ~650 characters a second
-and a release build ~2800 (measured; decision 173). Use the release path when a
-fast model should be tracked exactly:
-
-```bash
-npm run siralos:release
-```
-
-### Verify
-
-Run the standard local repository quality gate:
+The repository ships one quality gate:
 
 ```bash
 npm run check
 ```
 
-This covers formatting, linting, documentation links, project-context, identity and public-hygiene ratchets, Rust architecture, R2 differential parity (pinned v33), Rust formatting, Clippy with warnings denied, and Rust tests.
+It covers formatting, linting, documentation links, documentation truth,
+project-context, the identity and public-hygiene ratchets, Rust architecture, the
+differential behavioral harness, Rust formatting, Clippy with warnings denied, and
+the Rust test suites.
 
-### Compare models (owner-run)
+The differential behavioral harness
+([ADR 0033](docs/adr/0033-differential-behavioral-harness.md)) is the mechanism
+behind behavioral claims: a scenario corpus is run against a pinned oracle and the
+Rust candidate, and typed canonical outcome records are compared. Corpus and
+scenario digests are checked in, and the harness is pinned so results are
+reproducible.
 
-Run one fixed, digest-bound task set through more than one configured provider/model and
-print one INFORMATIONAL comparison — evidence only, never a gate:
-
-```bash
-npm run evaluate -- --run first=<workspace-a> --run second=<workspace-b> --out eval.json
-```
-
-Each `--run <label>=<dir>` composes a session for that workspace's own `siralos.toml`, so
-the provider, model and credential are the profile's. This spends the profiles' real
-provider budget, so it is never part of `npm run check`; the offline proof of the same
-machinery (the deterministic fake plus two recorded replay models) runs in the gate as a
-lib test (decision 179).
-
-Run only the authoritative R2 parity decision:
+Run only the parity decision:
 
 ```bash
 npm run check:differential
 ```
 
-## Optional Godot support
+### Compare models (owner-run)
 
-Godot Engine is Siralos's first optional specialization. The TypeScript
-reference can statically inspect Godot projects, scenes, and resources without
-executing project code. Dynamic engine probes and project execution remain
-fail-closed where their security properties cannot be enforced.
+Run one fixed, digest-bound task set through more than one configured
+provider/model and print one INFORMATIONAL comparison — evidence only, never a
+gate:
 
-The Rust Godot domain package lives in the standalone plugin repository `https://github.com/CrimsX/siralos-godot` (72 tests,
-`siralos-godot → siralos-core` only) — the 6+3 R8/R9 surfaces moved there from
-`siralos-core/src/godot` (deleted, domain-neutral again) per decision 37.
-Siralos does not install Godot, silently enable a domain, or acquire a domain
-merely because `project.godot` exists. The domain package and the Godot Engine
-installation are separate, explicit concerns.
+```bash
+npm run evaluate -- --run first=<workspace-a> --run second=<workspace-b> --out eval.json
+```
 
-## Development status
-
-- Public product stages 1–3 have a broad TypeScript reference surface; effectful
-  capabilities retain truthful availability reporting
-- Stage 3R R5 — Generic Language Intelligence — is complete (one-based
-  positions/ranges, bounded sanitized diagnostics, generic
-  symbol/definition/reference models, the language-neutral structural
-  representation, typed validation results, revision binding, and the
-  generic language-service URI mapping — at differential parity)
-- Stage 3R R6 — Minimal Domain Capability Architecture and Synthetic
-  Conformance Domain — is complete (the domain-neutral
-  lifecycle/capability semantics in `siralos-core::domain`, the
-  production Component Model / WIT boundary in
-  `siralos-adapters::domain`, prepared activations bound to the
-  validated lifecycle generation with typed stale-commit rejection,
-  exact three-dimensional activation identity (id, digest, and ABI
-  against the installed package), final grants authorized by the
-  commit-time Host authority (prepared activations never carry
-  authority across policy contexts), and the deterministic
-  product-neutral synthetic conformance Domain proving the boundary —
-  at differential parity)
-- **Current status:** milestone verification records, the verified commits, and
-  the current frontier live in [ROADMAP.md](ROADMAP.md), the canonical status
-  source. This file does not restate them.
-
-The [Rust migration register](docs/archive/RUST_MIGRATION.md) is the
-authoritative R1–R12 sequence. The [Stage 4 entry gate](docs/development/stage4-entry-gate.md)
-records what remains before runtime and visual QA work can start.
+Each `--run <label>=<dir>` composes a session for that workspace's own
+`siralos.toml`, so the provider, model, and credential are the profile's. This
+spends the profiles' real provider budget, so it is never part of `npm run check`.
 
 ## Documentation
 
-- [Project context](docs/development/PROJECT_CONTEXT.md) — complete public-safe
-  development bootstrap and current implementation reality
-- [Architecture](ARCHITECTURE.md) — ownership, dependency direction, and system
-  design
-- [Architecture index](docs/architecture/README.md) — subsystem-to-code and ADR
-  map
-- [Security model](SECURITY.md) — threat model, fail-closed boundaries, and
-  platform caveats
-- [Roadmap](ROADMAP.md) — public stages and current capability status
-- [Engineering guide](ENGINEERING.md) — implementation rules and validation
-  conventions
-- [Rust migration](docs/archive/RUST_MIGRATION.md) — Stage 3R sequence and
-  porting gate
-- [Rust style guide](docs/development/RUST_STYLE.md) — authoritative Rust
-  engineering standard
-- [Normative requirements](docs/requirements/REQUIREMENTS.md) — CORE, HAR, and
-  anti-pattern registers with current evidence status
-- [RFC ownership](docs/architecture/RFC_INDEX.md) and
-  [golden traces](docs/development/GOLDEN_TRACES.md) — decision and verification
-  work-item registries
-- [Contributing](CONTRIBUTING.md) — development setup, checks, scope, and review
-  expectations
-- [Architecture decisions](docs/adr/) — accepted and historical ADRs
+| Document                                                                   | Owns                                            |
+| -------------------------------------------------------------------------- | ----------------------------------------------- |
+| [ROADMAP.md](ROADMAP.md)                                                   | milestone status — the canonical status source  |
+| [ARCHITECTURE.md](ARCHITECTURE.md)                                         | dependency ownership                            |
+| [SECURITY.md](SECURITY.md)                                                 | the security contract                           |
+| [ENGINEERING.md](ENGINEERING.md)                                           | implementation rules and validation conventions |
+| [CONTRIBUTING.md](CONTRIBUTING.md)                                         | development setup, checks, scope, and review    |
+| [docs/development/PROJECT_CONTEXT.md](docs/development/PROJECT_CONTEXT.md) | development bootstrap                           |
+| [docs/architecture/README.md](docs/architecture/README.md)                 | subsystem-to-code and ADR map                   |
+| [docs/adr/](docs/adr/)                                                     | the decision history                            |
+| [docs/requirements/REQUIREMENTS.md](docs/requirements/REQUIREMENTS.md)     | normative requirement registers                 |
+| [docs/development/RUST_STYLE.md](docs/development/RUST_STYLE.md)           | the authoritative Rust style guide              |
+| [docs/archive/](docs/archive/)                                             | historical records, never guidance              |
+
+For development work or a new coding-agent session, read [AGENTS.md](AGENTS.md)
+and the [project context](docs/development/PROJECT_CONTEXT.md) first.
 
 ## Security
 
 The model cannot grant itself authority. Effects are host-controlled, approvals
 bind only to exact prepared operations, and missing enforcement fails closed.
-Repository content, provider output, and tool output are untrusted data—not
+Repository content, provider output, and tool output are untrusted data, not
 policy. Read [SECURITY.md](SECURITY.md) before changing an authority or process
-boundary or reporting a vulnerability.
+boundary, or before reporting a vulnerability.
 
 ## License
 
