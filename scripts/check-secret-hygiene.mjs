@@ -1,12 +1,20 @@
 /**
- * Mechanical secret-hygiene gate for decision 68 section 4.
+ * Mechanical secret-hygiene gate (decision 68 section 4; standing guardrail
+ * per decision 76).
  *
- * The check fails if a credential-shaped value appears in portable config
- * surfaces or as a repo-wide secret pattern. Diagnostics contain only
- * path, line, and pattern name — never the matched text.
+ * The check fails if a credential-shaped value appears anywhere in the
+ * workspace: portable config surfaces, repository files, and files git
+ * ignores. It covers secrets **at rest**, not only secrets that could be
+ * published. Skipping git-ignored paths (decisions 143/144, superseded here)
+ * left the single place a credential is most likely to sit entirely
+ * unscanned — the workspace-root `siralos.toml` passed this gate while
+ * holding a live provider key.
+ *
+ * Exemptions are explicit and named in EXEMPT_PATHS below. There is no
+ * blanket skip. Diagnostics contain only path, line, and pattern name —
+ * never the matched text.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { spawnSync } from "node:child_process";
 import { basename, join, relative, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -32,6 +40,26 @@ const REPO_WIDE_PATTERNS = [
   { name: "openai-project-key-shape", regex: /sk-(proj|live|svcacct)-[A-Za-z0-9_-]{20,}/g },
   { name: "aws-access-key-shape", regex: /AKIA[0-9A-Z]{16}/g },
 ];
+
+/**
+ * Paths deliberately exempt from scanning, each with the reason it is exempt.
+ *
+ * Listed explicitly so that an exemption is a visible, reviewable decision in
+ * a diff — never an invisible blanket skip over every git-ignored path.
+ * Add an entry only after the gate has failed on that path, and only with the
+ * reason it must hold a credential-shaped value.
+ */
+const EXEMPT_PATHS = new Map([
+  [
+    "siralos.toml",
+    "Workspace-root profile: the operator's own provider credential lives here " +
+      'at rest, stored verbatim as "key:..." by decision 137 (which supersedes ' +
+      "the env:-only rule of decisions 67-C2/68 and is a documented exception to " +
+      "ADR 0036 section 10). Git-ignored at .gitignore:34, so it is never " +
+      "committed; exempt by that explicit decision, not because git ignores it. " +
+      "The lockfile is deliberately NOT exempt — it must never hold a credential.",
+  ],
+]);
 
 function lineAt(text, offset) {
   let line = 1;
@@ -71,56 +99,14 @@ function collectFiles(root) {
   return files;
 }
 
-/**
- * Resolve the git-ignored subset of the given root-relative paths with one
- * batched `git check-ignore --stdin` call, so git itself owns ignore
- * matching. A path a normal `git add` cannot publish must not fail this
- * publication guardrail; tracked files and untracked-but-not-ignored files
- * are never in the returned set and stay scanned.
- *
- * Fail closed: when git is unavailable or the workspace is not a repository
- * (launch failure or any exit other than 0/1), return an empty set so every
- * file is scanned as before — never fail open.
- */
-function collectIgnoredPaths(root, relativePaths) {
-  if (relativePaths.length === 0) {
-    return new Set();
-  }
-  let result;
-  try {
-    result = spawnSync("git", ["check-ignore", "-z", "--stdin"], {
-      cwd: root,
-      input: `${relativePaths.join("\0")}\0`,
-      encoding: null,
-      maxBuffer: 16 * 1024 * 1024,
-      shell: false,
-      windowsHide: true,
-    });
-  } catch {
-    return new Set();
-  }
-  if (result.error !== undefined || (result.status !== 0 && result.status !== 1)) {
-    return new Set();
-  }
-  const ignored = new Set();
-  for (const ignoredPath of result.stdout.toString("utf8").split("\0")) {
-    if (ignoredPath.length > 0) {
-      ignored.add(ignoredPath);
-    }
-  }
-  return ignored;
-}
-
 export function runCheck(root) {
   const violations = [];
   const files = collectFiles(root);
   const relativeByFile = new Map(
     files.map((fullPath) => [fullPath, relative(root, fullPath).split(sep).join("/")]),
   );
-  const ignored = collectIgnoredPaths(root, [...relativeByFile.values()]);
-
   for (const fullPath of files) {
-    if (ignored.has(relativeByFile.get(fullPath))) {
+    if (EXEMPT_PATHS.has(relativeByFile.get(fullPath))) {
       continue;
     }
     let stat;
@@ -201,7 +187,7 @@ function main() {
     process.exit(1);
   }
   console.log(
-    "Secret-hygiene check passed: no credential-shaped values in portable or tracked surfaces.",
+    "Secret-hygiene check passed: no credential-shaped values in any scanned surface, including files git ignores.",
   );
 }
 

@@ -219,8 +219,14 @@ explicitly — never hidden.
 
 ## 10. No secrets in portable config
 
-Never store secrets directly in `siralos.toml` or `siralos.lock`.
-Use references, conceptually:
+**Portability attaches to content, not to a filename.** `siralos.toml` is a
+human-authored _portable_ declaration file (section 8), and this repository
+also composes one per differential scenario and per evaluation workspace. A
+`siralos.toml` that holds a verbatim credential is by construction
+**non-portable** and must never be committed, copied into a release archive,
+or exported.
+
+Portable configuration therefore carries credential _references_ only:
 
 ```toml
 credential = "env:OPENAI_API_KEY"
@@ -228,6 +234,19 @@ credential = "env:OPENAI_API_KEY"
 
 or an equivalent future credential-reference mechanism. The lockfile
 must never contain credential values.
+
+**Documented exception (decision 137).** The workspace-root profile may
+store a credential verbatim as `key:<value>`. Decision 137 supersedes the
+env-only rule of decisions 67-C2/68 for that one file and is an explicit
+exception to this section. The workspace-root `siralos.toml` is git-ignored
+(`.gitignore:34`) precisely so that such a credential cannot be committed.
+
+**Residual, recorded rather than hidden.** A verbatim credential is plaintext
+at rest. The secret-hygiene gate scans it like any other file and exempts the
+workspace-root `siralos.toml` **by name and with its reason** in
+`EXEMPT_PATHS` (`scripts/check-secret-hygiene.mjs`) — a visible, reviewable
+decision rather than a blanket skip. The lockfile is **not** exempt and never
+may be.
 
 ## 11. Lockfile semantics
 
