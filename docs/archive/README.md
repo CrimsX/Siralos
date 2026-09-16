@@ -15,6 +15,9 @@ Rules:
   policy. The security contract, ENGINEERING.md, and accepted ADRs are
   the active sources.
 - Archived here: the completed TypeScript-to-Rust migration record
-  (`RUST_MIGRATION.md`) and the TypeScript behavior-extraction record
-  (`R7_BEHAVIOR_EXTRACTION.md`). Both describe work that is finished, or whose
-  tree has been removed, so both are history rather than live documentation.
+  (`RUST_MIGRATION.md`), the TypeScript behavior-extraction record
+  (`R7_BEHAVIOR_EXTRACTION.md`), and the TypeScript-era architecture document
+  (`architecture-typescript-era.md`, replaced by [ARCHITECTURE.md](../../ARCHITECTURE.md)
+  when the live document was rewritten for the Rust-only tree). Each describes
+  work that is finished, or a tree that has been removed, so each is history
+  rather than live documentation.
