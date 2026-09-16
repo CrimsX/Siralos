@@ -160,8 +160,13 @@ export async function runDifferential({ corpusDir, root, outDir, pinnedOracle, e
         "build",
         "--quiet",
         "--locked",
-        "--features",
-        "differential-harness",
+        // The harness lives in its own excluded workspace; build it by
+        // manifest path and keep its artifacts in the shared target dir so
+        // runnerExecutable() above still finds the binary.
+        "--manifest-path",
+        "harness/Cargo.toml",
+        "--target-dir",
+        "target",
         "--bin",
         "siralos-harness",
       ],

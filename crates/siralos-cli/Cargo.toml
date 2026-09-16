@@ -6,41 +6,16 @@ edition.workspace = true
 rust-version.workspace = true
 publish = false
 
-[features]
-default = []
-differential-harness = [
-    "dep:serde",
-    "dep:serde_json",
-    "dep:sha2",
-    "dep:toml",
-    "siralos-adapters/differential-harness",
-]
-
 [dependencies]
 siralos-core = { workspace = true }
 siralos-adapters = { workspace = true }
-siralos-godot = { workspace = true }
 crossterm = { workspace = true }
 ratatui = { workspace = true }
 time = { workspace = true }
 toml_edit = { workspace = true }
-# Harness tooling (differential behavioral harness, ADR 0033): canonical
-# JSON corpus/records (serde/serde_json), scenario hashing (sha2), and
-# Cargo.toml version extraction (toml). The standard library has no
-# JSON/TOML parser or SHA-256.
-serde = { version = "1", features = ["derive"], optional = true }
-serde_json = { version = "1", optional = true }
-sha2 = { version = "0.11", optional = true }
-toml = { version = "1.1", optional = true }
-
 [[bin]]
 name = "siralos"
 path = "src/main.rs"
-
-[[bin]]
-name = "siralos-harness"
-path = "src/bin/siralos-harness.rs"
-required-features = ["differential-harness"]
 
 [dev-dependencies]
 # Test-only JSON fixtures (`serde_json::json!` in `output.rs`/`tui.rs`

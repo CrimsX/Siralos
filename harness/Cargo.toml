@@ -1,0 +1,43 @@
+[package]
+name = "siralos-harness"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+description = "Differential behavioral harness for Siralos (ADR 0033) — dev-only, excluded from the product workspace"
+
+# This crate is intentionally NOT a workspace member. It is the only
+# component that depends on the external Godot plugin crate, and the
+# product workspace must stay buildable without it. The root workspace
+# `exclude`s this directory.
+[workspace]
+
+# Workspace lint inheritance cannot cross workspaces, so the product's
+# lint policy is restated here rather than dropped.
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+
+[dependencies]
+siralos-core = { path = "../crates/siralos-core" }
+siralos-adapters = { path = "../crates/siralos-adapters", features = ["differential-harness"] }
+siralos-cli = { path = "../crates/siralos-cli" }
+siralos-godot = { path = "../../siralos-godot" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+toml = "1.1"
+# Used by the pinned TUI render-model snapshots (tui-render scenarios).
+ratatui = { version = "=0.30.2" }
+time = { version = "0.3", features = ["local-offset", "formatting"] }
+
+[[bin]]
+name = "siralos-harness"
+path = "src/bin/siralos-harness.rs"

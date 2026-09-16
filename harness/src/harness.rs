@@ -5358,13 +5358,13 @@ fn user_config_record(input: &Value) -> Result<Value, HarnessError> {
         let result = match setup {
             Ok(()) => {
                 let diagnostics =
-                    crate::configuration::diagnose_user_configuration(Some(
-                        &path,
-                    ))
+                    siralos_cli::configuration::diagnose_user_configuration(
+                        Some(&path),
+                    )
                     .map_err(|error| HarnessError::input(error.to_string()))?;
-                match crate::configuration::load_user_configuration(Some(
-                    &path,
-                )) {
+                match siralos_cli::configuration::load_user_configuration(
+                    Some(&path),
+                ) {
                     Ok(composed) => json!({
                         "status": "ok",
                         "config": user_config_value(&composed.config),
@@ -10479,12 +10479,12 @@ fn tui_render_record(
     scenario_id: &str,
     input: &Value,
 ) -> Result<Value, HarnessError> {
-    use crate::tui::{
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use siralos_cli::tui::{
         ApprovalModal, ContextPaneData, ToolActivityEntry, TuiState, draw,
         draw_with_pane,
     };
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
     use siralos_core::context_metrics::{
         ContextMetrics, DemotionKindCounts, TickRecord, TierCounts,
     };
@@ -10656,15 +10656,16 @@ fn tui_render_record(
 
     let mut state = TuiState::new();
     // H2: banner + greeting at session start (TUI-only). The pinned fixtures carry them.
-    crate::tui::push_banner_and_greeting(&mut state);
+    siralos_cli::tui::push_banner_and_greeting(&mut state);
     // I4/H4: fixed fixture timestamps for deterministic frames (banner stays unstamped).
-    let transcript_entries: Vec<crate::tui::TranscriptEntry> = transcript
-        .iter()
-        .map(|text| crate::tui::TranscriptEntry {
-            text: text.clone(),
-            timestamp: Some(FIXTURE_TIMESTAMP.to_owned()),
-        })
-        .collect();
+    let transcript_entries: Vec<siralos_cli::tui::TranscriptEntry> =
+        transcript
+            .iter()
+            .map(|text| siralos_cli::tui::TranscriptEntry {
+                text: text.clone(),
+                timestamp: Some(FIXTURE_TIMESTAMP.to_owned()),
+            })
+            .collect();
     // Append scenario transcript after the banner.
     for entry in transcript_entries {
         state.transcript.push(entry.clone());
@@ -19452,7 +19453,7 @@ mod tests {
 
     impl TempCorpus {
         fn copy() -> Self {
-            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
             let source = root.join("tests/differential/corpus");
             let destination = std::env::temp_dir().join(format!(
                 "siralos-rust-corpus-{}-{}",
@@ -19565,7 +19566,7 @@ mod tests {
 
     #[test]
     fn strict_loader_accepts_the_checked_in_digest_bound_corpus() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let loaded = load_corpus(
             &root.join("tests/differential/corpus"),
             platform_name(),
@@ -19923,7 +19924,7 @@ mod tests {
 
     #[test]
     fn workspace_version_matches_the_workspace_manifest() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         assert_eq!(
             cargo_workspace_version(&root).expect("workspace version"),
             "0.0.0"

@@ -20,7 +20,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use siralos_cli::harness;
+use siralos_harness::harness;
 
 fn usage() -> ExitCode {
     eprintln!(

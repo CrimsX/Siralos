@@ -57,7 +57,10 @@ const UNSAFE_PATTERN = /\bunsafe\s+(fn|impl|trait|extern|\{)/;
 const ALLOWED_DEPENDENCIES = new Map([
   ["siralos-core", new Set()],
   ["siralos-adapters", new Set(["siralos-core"])],
-  ["siralos-cli", new Set(["siralos-core", "siralos-adapters", "siralos-godot"])],
+  // siralos-godot is deliberately NOT allowed for siralos-cli: the product
+  // workspace must never depend on the external Godot plugin crate, or a bare
+  // `git clone` stops building. Only the excluded harness workspace may use it.
+  ["siralos-cli", new Set(["siralos-core", "siralos-adapters"])],
 ]);
 
 /** List Rust source files beneath `directory` (absolute paths). */

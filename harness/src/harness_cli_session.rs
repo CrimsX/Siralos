@@ -11,11 +11,11 @@ use serde_json::{Value, json};
 use siralos_core::commands::COMMAND_CATALOG;
 
 use crate::harness::HarnessError;
-use crate::sanitize::TerminalSanitizer;
 use siralos_adapters::provider::DeterministicFakeProvider;
 use siralos_adapters::tool::{
     WorkspaceListTool, WorkspaceReadTool, WorkspaceSearchTool,
 };
+use siralos_cli::sanitize::TerminalSanitizer;
 use siralos_core::projection::{
     ProjectionService,
     capacity::ContextCapacity,
@@ -544,7 +544,8 @@ fn drain_application_to_capture(
                 if !tail.is_empty() {
                     capture.write(&tail);
                 }
-                let safe = crate::sanitize::sanitize_for_display(&message);
+                let safe =
+                    siralos_cli::sanitize::sanitize_for_display(&message);
                 capture.write(&format!("Response failed: {safe}\n"));
             }
             siralos_core::tool::ToolLoopEvent::ToolFailed {
@@ -554,7 +555,8 @@ fn drain_application_to_capture(
                 if !tail.is_empty() {
                     capture.write(&tail);
                 }
-                let safe = crate::sanitize::sanitize_for_display(&message);
+                let safe =
+                    siralos_cli::sanitize::sanitize_for_display(&message);
                 capture.write(&format!("Tool failed: {safe}\n"));
             }
             _ => {}

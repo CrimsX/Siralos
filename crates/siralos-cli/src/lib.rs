@@ -6,10 +6,11 @@
 //! handing presentation to the CLI-owned interactive session. The
 //! projection and permission semantics remain in `siralos-core`.
 //!
-//! With the internal `differential-harness` feature enabled, the ADR 0033
-//! candidate runner lives in the `harness` module and is exercised by the
-//! `siralos-harness` binary. Neither surface is part of the default product
-//! build.
+//! The ADR 0033 differential harness is **not** part of this crate: it
+//! lives in the excluded `harness/` workspace, which is also the only
+//! component that depends on the external Godot plugin crate. This crate
+//! has no feature flags and no external domain dependency, so a bare
+//! `git clone` builds the product without a sibling checkout.
 
 pub mod configuration;
 pub mod evaluation;
@@ -18,13 +19,6 @@ pub mod output;
 pub mod sanitize;
 pub mod session_worker;
 pub mod tui;
-
-#[cfg(feature = "differential-harness")]
-pub mod harness;
-#[cfg(feature = "differential-harness")]
-pub mod harness_cli_session;
-#[cfg(feature = "differential-harness")]
-pub mod harness_r134;
 
 use std::ffi::OsString;
 

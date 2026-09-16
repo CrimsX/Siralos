@@ -5,9 +5,15 @@ members = [
     "crates/siralos-adapters",
     "crates/siralos-cli",
 ]
-# The fuzz crate is nightly-only and must never enter the stable
-# quality gate (docs/development/SUPPLY_CHAIN.md toolchain policy).
-exclude = ["fuzz"]
+# Excluded from the product workspace:
+#   fuzz    — nightly-only; must never enter the stable quality gate
+#             (docs/development/SUPPLY_CHAIN.md toolchain policy).
+#   harness — dev-only differential harness (ADR 0033). It is the only
+#             component that depends on the external Godot plugin crate,
+#             so excluding it keeps a bare `git clone` buildable.
+# Exclusion is the only Cargo boundary at which a manifest stops being
+# read — an optional dependency would still be resolved.
+exclude = ["fuzz", "harness"]
 
 [workspace.package]
 version = "0.0.0"
@@ -28,7 +34,6 @@ todo = "deny"
 [workspace.dependencies]
 siralos-core = { path = "crates/siralos-core", version = "0.0.0" }
 siralos-adapters = { path = "crates/siralos-adapters", version = "0.0.0" }
-siralos-godot = { path = "../siralos-godot", version = "0.0.0" }
 crossterm = { version = "=0.29.0" }
 ratatui = { version = "=0.30.2" }
 time = { version = "0.3", features = ["local-offset", "formatting"] }

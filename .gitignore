@@ -15,6 +15,11 @@ Thumbs.db
 .vs/
 .reasonix/
 /target/
+# The differential harness is its own excluded workspace, so it gets its own
+# target dir. The root-anchored /target/ above does not match it — and the
+# differential audit walks untracked files, so an unignored build tree makes
+# the audit fail its byte bound.
+/harness/target/
 /tests/differential/out/
 /reports/
 /audit/
@@ -29,3 +34,6 @@ Thumbs.db
 /siralos.toml
 /siralos.lock
 /.siralos/
+
+# Planning scaffolding for the 1.0 work (deleted at handoff).
+/.plan/
