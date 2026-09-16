@@ -32,6 +32,14 @@ env:
   # repository before any differential step. The plugin is public, so this
   # needs no token and no secret. W1.6 replaces this with a cargo git-rev pin
   # (decision 62); until then this constant is the single source of the pin.
+  #
+  # This is the revision the local evidence was produced against: the plugin's
+  # HEAD, working tree clean. docs/AGENTS.md still record the older 1bf2ca3
+  # pin; 1bf2ca3 is an ancestor of this revision whose only difference is a
+  # formatting-only commit, so the two are behaviourally identical. The stale
+  # reference is owned by W1.6/W2.x and must be reconciled there — do not
+  # "correct" this constant to match the stale documents, because this is the
+  # revision the parity evidence actually ran against.
   SIRALOS_GODOT_SHA: c8777b1bc5abc214e5092a489aef62ad1f0b9b41
 
 jobs:
