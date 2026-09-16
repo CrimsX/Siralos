@@ -21,7 +21,7 @@
  *   and an explicit rust-toolchain.toml.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 
 /** The only crates allowed in the workspace. */
@@ -178,6 +178,55 @@ export function runChecks(root) {
   );
   if (!excludeLines.includes("fuzz")) {
     errors.push("Cargo.toml: the nightly-only fuzz crate must be excluded from the workspace");
+  }
+
+  // The differential harness is a separate, excluded workspace. It is the one
+  // component allowed to depend on the external Godot plugin, so it must stay
+  // out of the product workspace — and because it is outside, this check is
+  // the only place its manifest and sources are inspected at all.
+  if (!excludeLines.includes("harness")) {
+    errors.push("Cargo.toml: the differential harness must be excluded from the workspace");
+  }
+  const harnessCargo = join(root, "harness", "Cargo.toml");
+  if (!existsSync(harnessCargo)) {
+    errors.push("harness/Cargo.toml: missing excluded harness workspace");
+  } else {
+    const harnessText = readFileSync(harnessCargo, "utf8");
+    if (!/^\[workspace\]\s*$/m.test(harnessText)) {
+      errors.push("harness: the harness must declare its own [workspace]");
+    }
+    if (!/^\s*publish\s*=\s*false\s*$/m.test(harnessText)) {
+      errors.push("harness: private crates must set publish = false");
+    }
+    if (!/unsafe_code\s*=\s*"forbid"/.test(harnessText)) {
+      errors.push("harness: the product lint policy must be restated (unsafe_code = forbid)");
+    }
+    if (!/missing_docs\s*=\s*"deny"/.test(harnessText)) {
+      errors.push("harness: the product lint policy must be restated (missing_docs = deny)");
+    }
+    const allowedHarnessDependencies = new Set([
+      "siralos-core",
+      "siralos-adapters",
+      "siralos-cli",
+      "siralos-godot",
+      "serde",
+      "serde_json",
+      "sha2",
+      "toml",
+      "ratatui",
+      "time",
+    ]);
+    for (const dependency of collectWorkspaceDependencies(harnessText)) {
+      if (!allowedHarnessDependencies.has(dependency)) {
+        errors.push(`harness: unexpected dependency ${dependency}`);
+      }
+    }
+    // The unsafe backstop cannot see the harness from the product workspace.
+    for (const file of listRustSources(join(root, "harness", "src"))) {
+      if (UNSAFE_PATTERN.test(readFileSync(file, "utf8"))) {
+        errors.push(`${relative(root, file)}: forbidden unsafe form`);
+      }
+    }
   }
   if (memberLines.length === 0) {
     errors.push("Cargo.toml: workspace members must be declared explicitly");

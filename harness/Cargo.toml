@@ -10,6 +10,12 @@ description = "Differential behavioral harness for Siralos (ADR 0033) — dev-on
 # component that depends on the external Godot plugin crate, and the
 # product workspace must stay buildable without it. The root workspace
 # `exclude`s this directory.
+#
+# Because it is a separate workspace it has its own committed
+# `harness/Cargo.lock`. That lockfile must move in lockstep with the
+# product `Cargo.lock` whenever a shared dependency changes — CI enforces
+# it mechanically, because every harness cargo invocation runs with
+# `--locked`, so a stale lock fails the gate rather than drifting quietly.
 [workspace]
 
 # Workspace lint inheritance cannot cross workspaces, so the product's

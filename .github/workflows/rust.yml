@@ -26,6 +26,13 @@ env:
   CARGO_TERM_COLOR: always
   NODE_VERSION: 24.17.0
   NPM_VERSION: 11.13.0
+  # Pinned revision of the external Godot plugin. The differential harness
+  # (`harness/`) is the only component that depends on it, and it resolves it
+  # from `../siralos-godot`, so CI must check that revision out beside the
+  # repository before any differential step. The plugin is public, so this
+  # needs no token and no secret. W1.6 replaces this with a cargo git-rev pin
+  # (decision 62); until then this constant is the single source of the pin.
+  SIRALOS_GODOT_SHA: c8777b1bc5abc214e5092a489aef62ad1f0b9b41
 
 jobs:
   gate:
@@ -59,6 +66,15 @@ jobs:
         run: |
           node -e "const { execFileSync } = require('node:child_process'); const expectedNode = 'v' + process.env.NODE_VERSION; if (process.version !== expectedNode) throw new Error('expected Node ' + expectedNode + ', got ' + process.version); const npm = execFileSync('npm', ['--version'], { encoding: 'utf8' }).trim(); if (npm !== process.env.NPM_VERSION) throw new Error('expected npm ' + process.env.NPM_VERSION + ', got ' + npm);"
 
+      # The acceptance criterion for the workspace layout: a bare checkout
+      # with no Godot plugin beside it must RESOLVE. This runs before the
+      # cargo cache is restored so a warm cache cannot mask a broken resolve,
+      # and `--no-deps` neither compiles nor touches the network.
+      - name: Resolve workspace from a clean clone (no Godot sibling)
+        run: |
+          test ! -e ../siralos-godot
+          cargo metadata --no-deps --locked > /dev/null
+
       # Reconstructible cargo artifacts only: registry, git checkouts,
       # and the workspace target directory. Keyed on OS, toolchain, and
       # Cargo.lock; correctness never depends on a cache hit.
@@ -91,9 +107,12 @@ jobs:
       - name: Public-hygiene ratchet
         run: npm run check:public
 
-      # --all-features includes the internal differential-harness tooling
-      # feature. The default `siralos` product binary remains lean and is
-      # exercised separately below without that feature.
+      - name: Secret-hygiene ratchet
+        run: npm run check:secrets
+
+      # The product workspace has no feature flags: the differential harness
+      # moved to its own excluded workspace (`harness/`) and is compiled,
+      # linted and tested by dedicated steps below.
       - name: Format check
         run: cargo fmt --all --check
 
@@ -105,6 +124,18 @@ jobs:
 
       - name: Documentation (warnings denied)
         run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
+
+      # The harness is a separate, excluded workspace, so no `--workspace`
+      # command above can see it. Compile, lint and test it explicitly, into
+      # the shared target directory.
+      - name: Harness format check
+        run: cargo fmt --manifest-path harness/Cargo.toml --all --check
+
+      - name: Harness clippy (warnings denied)
+        run: cargo clippy --manifest-path harness/Cargo.toml --target-dir target --all-targets --locked -- -D warnings
+
+      - name: Harness test (locked)
+        run: cargo test --manifest-path harness/Cargo.toml --target-dir target --all-targets --locked
 
       - name: Test (locked, all targets, all features)
         run: cargo test --workspace --all-targets --all-features --locked
@@ -129,10 +160,38 @@ jobs:
       - name: Dependency policy (cargo deny)
         run: cargo deny --locked check
 
+      # The harness workspace is excluded from the product graph, so the
+      # `cargo deny` above never sees it. Check it separately.
+      - name: Dependency policy (cargo deny, harness workspace)
+        run: cargo deny --manifest-path harness/Cargo.toml --locked check
+
+      # The differential harness builds the external plugin crate from
+      # `../siralos-godot`, so CI checks out the pinned revision beside the
+      # repository. Public repository: no token, no secret.
+      - name: Check out the pinned Godot plugin (differential dependency)
+        run: |
+          git clone --quiet https://github.com/CrimsX/siralos-godot ../siralos-godot
+          git -C ../siralos-godot checkout --quiet "${SIRALOS_GODOT_SHA}"
+
+      - name: Verify the plugin checkout is present
+        run: |
+          test -d ../siralos-godot
+          test -f ../siralos-godot/Cargo.toml
+
       # The migration's audit remediation gate (ADR 0033): pinned oracle vs
-      # candidate canonical records; POSIX scenarios execute here.
-      - name: Differential harness (pinned, v33)
-        run: npm run check:differential
+      # candidate canonical records; POSIX scenarios execute here. The corpus
+      # version is echoed at run time rather than hardcoded in this label —
+      # a hardcoded number rots (this step still said "v33" at corpus v82).
+      - name: Differential harness (pinned oracle)
+        run: |
+          node -e "const m=require('./tests/differential/corpus/manifest.json'); if(!(m.corpusVersion>0)) throw new Error('corpus version missing'); console.log('differential corpus version', m.corpusVersion);"
+          npm run check:differential
+
+      # A green differential run proves nothing if it executed no scenarios.
+      # Assert the audit is real before any later step trusts this job.
+      - name: Assert the differential audit is real (non-zero coverage)
+        run: |
+          node -e "const a=require('./tests/differential/out/audit.json'); if(!(a.applicableScenarios>0)) throw new Error('differential audit covered zero applicable scenarios'); if(!(a.requiredScenarios>0)) throw new Error('differential audit required zero scenarios'); if(a.parityHeld!==true) throw new Error('differential parity not held'); console.log('differential covered', a.applicableScenarios, 'applicable of', a.requiredScenarios, 'required scenarios');"
 
       # Synthetic conformance-domain freshness (ADR 0034): the checked-in
       # component fixtures must be rebuildable from the pinned WIT and
@@ -228,17 +287,48 @@ jobs:
       - name: Test (locked, all targets, all features)
         run: cargo test --workspace --all-targets --all-features --locked
 
+      # The harness is excluded from the product workspace; cover it per OS so
+      # Windows-only harness breakage cannot escape a Linux-only gate.
+      - name: Harness clippy (warnings denied)
+        run: cargo clippy --manifest-path harness/Cargo.toml --target-dir target --all-targets --locked -- -D warnings
+
+      - name: Harness test (locked)
+        run: cargo test --manifest-path harness/Cargo.toml --target-dir target --all-targets --locked
+
       - name: CLI identity and help (default features)
         run: |
           cargo run --locked --bin siralos -- --version
           cargo run --locked --bin siralos -- --help
 
+      # The harness builds the external plugin crate from `../siralos-godot`.
+      - name: Check out the pinned Godot plugin (differential dependency)
+        shell: bash
+        run: |
+          git clone --quiet https://github.com/CrimsX/siralos-godot ../siralos-godot
+          git -C ../siralos-godot checkout --quiet "${SIRALOS_GODOT_SHA}"
+
+      - name: Verify the plugin checkout is present
+        shell: bash
+        run: |
+          test -d ../siralos-godot
+          test -f ../siralos-godot/Cargo.toml
+
       # The differential harness runs the platform's own state-dir
       # scenarios (Windows scenarios on windows-latest; POSIX scenarios
       # on macos-latest), exercising the home-resolution contract on
-      # every supported OS. Pinned oracle is used (no TS tree).
-      - name: Differential harness (pinned, v33)
-        run: npm run check:differential
+      # every supported OS. Pinned oracle is used (no TS tree). The corpus
+      # version is echoed at run time rather than hardcoded in this label.
+      - name: Differential harness (pinned oracle)
+        shell: bash
+        run: |
+          node -e "const m=require('./tests/differential/corpus/manifest.json'); if(!(m.corpusVersion>0)) throw new Error('corpus version missing'); console.log('differential corpus version', m.corpusVersion);"
+          npm run check:differential
+
+      # A green differential run proves nothing if it executed no scenarios.
+      - name: Assert the differential audit is real (non-zero coverage)
+        shell: bash
+        run: |
+          node -e "const a=require('./tests/differential/out/audit.json'); if(!(a.applicableScenarios>0)) throw new Error('differential audit covered zero applicable scenarios'); if(!(a.requiredScenarios>0)) throw new Error('differential audit required zero scenarios'); if(a.parityHeld!==true) throw new Error('differential parity not held'); console.log('differential covered', a.applicableScenarios, 'applicable of', a.requiredScenarios, 'required scenarios');"
 
       - name: Upload differential evidence (${{ matrix.os }})
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
