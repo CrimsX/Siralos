@@ -483,12 +483,10 @@ mechanism exists for the version identity when it moves).
 
 ## 10. The 1.0 alignment work — state, blockers, and what remains
 
-An owner-commissioned alignment audit of this harness, run as a three-seat review
-(the owner, a DeepSeek agent, GLM 5.3 Flash, and Muse Spark 1.3 — see "How this
-work is reviewed" below), produced a work breakdown that is being executed step by
-step. This section is the durable record: the working ledger is
-`.plan/STATUS.md` and the review trail `.plan/reviews/`, both local and
-gitignored, so anything a later session needs must appear here or in a commit.
+An owner-commissioned alignment audit of this harness produced a work breakdown
+that is being executed step by step. This section is the durable record; the
+working ledger in `.plan/STATUS.md` is local, gitignored scaffolding, so anything a
+later session needs must appear here or in a commit.
 
 ### Shipped
 
@@ -508,7 +506,7 @@ gitignored, so anything a later session needs must appear here or in a commit.
 | `cf3e7df` `5c4e654` `2df3c89` `6a44f93` `382f6fc` | Block C1 — the command table stops claiming to be the product's vocabulary; four inert `.reasonix` references dropped; the `sha2` product ratchet and the zero-scenario subject assertion; `docs/development/REACHABILITY.md` plus `npm run check:reachability` |
 | `a649ae9`                                         | Block C2 (first slice) — one atomic staged replacement, `crates/siralos-adapters/src/atomic.rs`, behind all six production writers                                                                                                                              |
 
-### Remaining, in the order the reviewing seats fixed
+### Remaining
 
 1. **W5.3 — lock honesty.** `crates/siralos-adapters/src/lockfile.rs` verifies a
    lock in production but its writer has no production caller. Either wire it and
@@ -529,9 +527,10 @@ gitignored, so anything a later session needs must appear here or in a commit.
 
 ### Owner decisions pending
 
-- **The hardlink-target refusal in `atomic.rs`.** The reviewing seats deadlocked:
-  one ruled adopt (Unix-only, disclosed), the other defer as a new observable
-  refusal with no corpus coverage. Not implemented; roughly ten lines plus a test.
+- **The hardlink-target refusal in `atomic.rs`.** Two options were weighed: refuse a
+  target with more than one hard link (Unix-only, and disclosed as a behaviour
+  change), or leave replacement as it is. Not implemented; roughly ten lines plus a
+  test.
 - **W2.5's AGENTS.md roll-call.** The plan recorded a "seat roll-call" to be moved
   into `docs/development/PROJECT_CONTEXT.md`; it exists in neither that file nor
   `AGENTS.md` today, and the 32k-character line it was meant to fix is absent
@@ -540,7 +539,6 @@ gitignored, so anything a later session needs must appear here or in a commit.
 
 ### Deliberately not in 1.0
 
-- **W6.1, the built-in clock** (`[profile.clock]`) — owner-deferred.
 - **W4.2 option C** — deleting the 51-entry core command table and re-recording
   `cli-session-set` against the real CLI vocabulary. It is a corpus amendment with
   its own gate; the coverage guard added in C1 now makes it safe to attempt.
@@ -556,20 +554,6 @@ is 2.0, semver-major, with live approvals and the replacement of the eighteen
 `unavailable` corpus scenarios, each a reviewed oracle amendment. Until then the
 model-facing surface is exactly three read-only tools and the closed effects stay
 closed.
-
-### How this work is reviewed
-
-Every workstream took a **design review before any edit** and a **diff-and-evidence
-review after it**, by two read-only seats (GLM 5.3 Flash and Muse Spark 1.3) whose
-agreement, plus the owner's approval, is what authorises a commit; a disagreement
-unresolved after two rounds escalates to the owner as an explicit either/or rather
-than being decided silently. The seats read the repository directly and rule in
-writing; prompts and verdicts are under `.plan/prompts/` and `.plan/reviews/`.
-Seat access, recorded because it changed mid-work: the OpenCode Zen free tier began
-refusing non-OpenCode clients on 2026-09-17, and the Muse seat now runs on
-OpenRouter as `meta/muse-spark-1.3-contributor`, with GLM on
-`z-ai/glm-5.3-flash`. The vendor plugin `dsh-opencode-go` was installed, found to
-target a newer harness than the published one, and uninstalled.
 
 ### Verification state
 
