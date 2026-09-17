@@ -480,3 +480,102 @@ The differential reference set is a frozen oracle of 239 records plus 118
 candidate-authored expectation records for scenarios introduced after the freeze,
 plus any record retired through the reviewed supersession list (none today; the
 mechanism exists for the version identity when it moves).
+
+## 10. The 1.0 alignment work — state, blockers, and what remains
+
+An owner-commissioned alignment audit of this harness, run as a three-seat review
+(the owner, a DeepSeek agent, GLM 5.3 Flash, and Muse Spark 1.3 — see "How this
+work is reviewed" below), produced a work breakdown that is being executed step by
+step. This section is the durable record: the working ledger is
+`.plan/STATUS.md` and the review trail `.plan/reviews/`, both local and
+gitignored, so anything a later session needs must appear here or in a commit.
+
+### Shipped
+
+| Commits                                           | What landed                                                                                                                                                                                                                                                     |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `60a56fa`                                         | Step 1 — the differential harness extracted into its own excluded workspace, so a bare `git clone` of the product builds                                                                                                                                        |
+| `04cdcf0` `5f6a069` `fdf6cb3`                     | Step 2 — CI honesty: the clean-clone resolution guard, the annotation of the pinned plugin revision, and the profile-config scratch-path race that failed a gate run once in six                                                                                |
+| `d7e1a82`                                         | Step 3 — the secret-hygiene gate scans git-ignored files; ADR 0036 §10 reconciled                                                                                                                                                                               |
+| `c52ca9d`                                         | Step 4 — headless mode, `siralos --print <prompt> [--json] [--cwd <dir>]`                                                                                                                                                                                       |
+| `a24695f`                                         | Step 5 — documentation truth: `scripts/check-doc-truth.mjs`, the retraction ledger, 20 obsolete Node-rationale sites replaced with the ported-parity reason and its corpus pins                                                                                 |
+| `2c884d4`                                         | Workstream 1 — `ARCHITECTURE.md` archived (112,644 bytes, digest captured before the move) and rewritten for the live tree                                                                                                                                      |
+| `eb95bc5` `b241c69`                               | Workstream 2 — `README.md` rewritten as a user-facing front door; rule 3 of `check:docs-truth` extended to refuse milestone status outside this file; the completed Stage-4 gate archived                                                                       |
+| `e3d83fc` `0eaa83e`                               | W3.1a — digest-bound supersession list, with a self-digest, a per-entry disclosure in the audit, and eight adversarial lists refused with named codes                                                                                                           |
+| `49a0be1`                                         | The last false claims the removed TypeScript tree left in `ENGINEERING.md` and `README.md`, plus two stale CI labels                                                                                                                                            |
+| `9e5fb6b`                                         | W3.2 — `docs/development/STABILITY.md` and `CHANGELOG.md`; the release blockers recorded in §9                                                                                                                                                                  |
+| `fa68d0a` `d6e5140`                               | W3.3b/W3.3a — the clean-clone release smoke test and the tag-triggered release workflow                                                                                                                                                                         |
+| `cf3e7df` `5c4e654` `2df3c89` `6a44f93` `382f6fc` | Block C1 — the command table stops claiming to be the product's vocabulary; four inert `.reasonix` references dropped; the `sha2` product ratchet and the zero-scenario subject assertion; `docs/development/REACHABILITY.md` plus `npm run check:reachability` |
+| `a649ae9`                                         | Block C2 (first slice) — one atomic staged replacement, `crates/siralos-adapters/src/atomic.rs`, behind all six production writers                                                                                                                              |
+
+### Remaining, in the order the reviewing seats fixed
+
+1. **W5.3 — lock honesty.** `crates/siralos-adapters/src/lockfile.rs` verifies a
+   lock in production but its writer has no production caller. Either wire it and
+   widen the payload to the identity classes ADR 0036 §11 lists, or record that
+   Siralos never writes a lockfile and say so in the docs.
+2. **W5.2 — `/cost`.** Reconciles to the accounting inputs on a fixture; the
+   command does not exist today.
+3. **W4.5 — provider-client consolidation.** The OpenAI, Anthropic, and generic HTTP
+   paths behind a recorded-pair equivalence harness including error paths,
+   explicitly not grep-equivalence.
+
+### Blocked
+
+- **The version identity (§9)** — the external plugin's `version = "0.0.0"`
+  requirement. A prepared patch is verified locally and re-applies unchanged.
+- **Publishing anything** — no license file exists, and the release workflow refuses
+  to publish without one.
+
+### Owner decisions pending
+
+- **The hardlink-target refusal in `atomic.rs`.** The reviewing seats deadlocked:
+  one ruled adopt (Unix-only, disclosed), the other defer as a new observable
+  refusal with no corpus coverage. Not implemented; roughly ten lines plus a test.
+- **W2.5's AGENTS.md roll-call.** The plan recorded a "seat roll-call" to be moved
+  into `docs/development/PROJECT_CONTEXT.md`; it exists in neither that file nor
+  `AGENTS.md` today, and the 32k-character line it was meant to fix is absent
+  (longest line 1,246). Not claimed as done.
+- **A push**, so CI stops being `unknown`. No workflow has ever executed.
+
+### Deliberately not in 1.0
+
+- **W6.1, the built-in clock** (`[profile.clock]`) — owner-deferred.
+- **W4.2 option C** — deleting the 51-entry core command table and re-recording
+  `cli-session-set` against the real CLI vocabulary. It is a corpus amendment with
+  its own gate; the coverage guard added in C1 now makes it safe to attempt.
+- **W1.6b, the Plugin/Domain terminology rename** — listed in the plan, never
+  scheduled by an owner-approved step.
+- Windows junction and case-variant tests for `atomic.rs`; the differential runner
+  swallowing its build stderr; `harness/Cargo.lock` tracking the product lock.
+
+### Post-1.0 by the plan
+
+Governed workspace **mutation** — letting the model create or edit files at all —
+is 2.0, semver-major, with live approvals and the replacement of the eighteen
+`unavailable` corpus scenarios, each a reviewed oracle amendment. Until then the
+model-facing surface is exactly three read-only tools and the closed effects stay
+closed.
+
+### How this work is reviewed
+
+Every workstream took a **design review before any edit** and a **diff-and-evidence
+review after it**, by two read-only seats (GLM 5.3 Flash and Muse Spark 1.3) whose
+agreement, plus the owner's approval, is what authorises a commit; a disagreement
+unresolved after two rounds escalates to the owner as an explicit either/or rather
+than being decided silently. The seats read the repository directly and rule in
+writing; prompts and verdicts are under `.plan/prompts/` and `.plan/reviews/`.
+Seat access, recorded because it changed mid-work: the OpenCode Zen free tier began
+refusing non-OpenCode clients on 2026-09-17, and the Muse seat now runs on
+OpenRouter as `meta/muse-spark-1.3-contributor`, with GLM on
+`z-ai/glm-5.3-flash`. The vendor plugin `dsh-opencode-go` was installed, found to
+target a newer harness than the published one, and uninstalled.
+
+### Verification state
+
+`npm run check` is green at `a649ae9`: differential parity at 352/352 applicable
+required scenarios with four explicit platform skips, the eight adversarial
+supersession lists refused with their named codes, the reachability ratchet holding
+over 79 of 184 product modules, and clippy, tests, and every documentation gate
+clean. CI remains `unknown` — see the retraction at the top of this file — and the
+release workflow has never executed.

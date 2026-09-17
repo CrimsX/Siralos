@@ -9,6 +9,13 @@
    [ADR 0036](docs/adr/0036-lean-product-composition-and-extension-model.md)
    (the lean product, composition, and extension model).
 4. Verify current milestone status from repository evidence before claiming completion.
+   For the in-flight 1.0 alignment work, that evidence is `ROADMAP.md` §10: it
+   records what shipped, what remains in the order the reviewing seats fixed, what
+   is blocked outside this repository, and which decisions are still the owner's.
+   If `.plan/STATUS.md` exists in the working tree it carries the same ledger in
+   more detail, with the review prompts under `.plan/prompts/` and the verdicts
+   under `.plan/reviews/`; that directory is gitignored scaffolding deleted at
+   handoff, so no durable claim may live only there.
 
 **Standing rule: self-loop on every prompt** — every prompt (human or follow-up, Wayfinder or direct implementation) must invoke the `self-loop` skill and follow its `references/verification-protocol.md` ledger (criterion → evidence → pass/fail/unknown → challenge lenses → repair), even when another skill says one ticket per session. Skill load is per-prompt; loop budget is one coherent pass + up to two repairs unless the prompt explicitly changes budget. Also see `docs/wayfinder/siralos-roadmap.md:Notes` for the Wayfinder-persistent form of this rule.
 
