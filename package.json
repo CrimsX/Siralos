@@ -20,6 +20,7 @@
     "check:rust": "node scripts/check-rust-architecture.mjs",
     "check:differential": "node tests/differential/run-differential.mjs --corpus tests/differential/corpus --root . --out-dir tests/differential/out",
     "check:supersessions": "node tests/differential/check-supersessions.mjs",
+    "smoke:release": "node scripts/release-smoke-test.mjs",
     "check:rust-format": "cargo fmt --all --check && cargo fmt --manifest-path harness/Cargo.toml --all --check",
     "check:rust-clippy": "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings && cargo clippy --manifest-path harness/Cargo.toml --target-dir target --all-targets --locked -- -D warnings",
     "test:rust": "cargo test --workspace --all-targets --all-features --locked && cargo test --manifest-path harness/Cargo.toml --target-dir target --all-targets --locked",
