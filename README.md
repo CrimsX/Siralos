@@ -300,19 +300,21 @@ spends the profiles' real provider budget, so it is never part of `npm run check
 
 ## Documentation
 
-| Document                                                                   | Owns                                            |
-| -------------------------------------------------------------------------- | ----------------------------------------------- |
-| [ROADMAP.md](ROADMAP.md)                                                   | milestone status — the canonical status source  |
-| [ARCHITECTURE.md](ARCHITECTURE.md)                                         | dependency ownership                            |
-| [SECURITY.md](SECURITY.md)                                                 | the security contract                           |
-| [ENGINEERING.md](ENGINEERING.md)                                           | implementation rules and validation conventions |
-| [CONTRIBUTING.md](CONTRIBUTING.md)                                         | development setup, checks, scope, and review    |
-| [docs/development/PROJECT_CONTEXT.md](docs/development/PROJECT_CONTEXT.md) | development bootstrap                           |
-| [docs/architecture/README.md](docs/architecture/README.md)                 | subsystem-to-code and ADR map                   |
-| [docs/adr/](docs/adr/)                                                     | the decision history                            |
-| [docs/requirements/REQUIREMENTS.md](docs/requirements/REQUIREMENTS.md)     | normative requirement registers                 |
-| [docs/development/RUST_STYLE.md](docs/development/RUST_STYLE.md)           | the authoritative Rust style guide              |
-| [docs/archive/](docs/archive/)                                             | historical records, never guidance              |
+| Document                                                                   | Owns                                                  |
+| -------------------------------------------------------------------------- | ----------------------------------------------------- |
+| [ROADMAP.md](ROADMAP.md)                                                   | milestone status — the canonical status source        |
+| [ARCHITECTURE.md](ARCHITECTURE.md)                                         | dependency ownership                                  |
+| [SECURITY.md](SECURITY.md)                                                 | the security contract                                 |
+| [ENGINEERING.md](ENGINEERING.md)                                           | implementation rules and validation conventions       |
+| [CHANGELOG.md](CHANGELOG.md)                                               | what changed, and what a 1.x release does not promise |
+| [docs/development/STABILITY.md](docs/development/STABILITY.md)             | the frozen 1.x surfaces                               |
+| [CONTRIBUTING.md](CONTRIBUTING.md)                                         | development setup, checks, scope, and review          |
+| [docs/development/PROJECT_CONTEXT.md](docs/development/PROJECT_CONTEXT.md) | development bootstrap                                 |
+| [docs/architecture/README.md](docs/architecture/README.md)                 | subsystem-to-code and ADR map                         |
+| [docs/adr/](docs/adr/)                                                     | the decision history                                  |
+| [docs/requirements/REQUIREMENTS.md](docs/requirements/REQUIREMENTS.md)     | normative requirement registers                       |
+| [docs/development/RUST_STYLE.md](docs/development/RUST_STYLE.md)           | the authoritative Rust style guide                    |
+| [docs/archive/](docs/archive/)                                             | historical records, never guidance                    |
 
 For development work or a new coding-agent session, read [AGENTS.md](AGENTS.md)
 and the [project context](docs/development/PROJECT_CONTEXT.md) first.

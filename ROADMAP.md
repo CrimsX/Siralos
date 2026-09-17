@@ -450,3 +450,33 @@ Status: complete per decisions 60–65 — the plugin is fully self-contained at
 Real Model/Provider (lean vision, ADR 0036): declarative provider/model/credential/endpoint in ProfileRecord with env-only credentials, Host-mediated bounded HTTP adapters, an all-purpose generic provider with provider-neutral placeholder defaults, and determinism-port replay recording of provider responses.
 
 Status: complete and **Verified** per decisions 66–71 — ProfileRecord fields + siralos.toml parsing (67 C1), env-only HostCredential (68), the registry with typed OpenAI/Anthropic adapters and the all-purpose GenericProvider, bounded 1 MiB sanitized HTTP adapters (2d6f5d9-era hardening), replay recording with typed Recorded/Unavailable availability and the recorded 68 §4 secret-hygiene sweep (70), the hermetic provider-generic subject at corpus v53/321 files (316/316 applicable required, 82 expectation records, pinned v32 oracle untouched), and the fresh full-gate run in the roll-up (71); zero spawn paths.
+
+## 9. Release readiness (1.0)
+
+Two things stand between this tree and a published 1.0 release. Both are recorded
+here rather than implied, and neither is a coding task inside this repository.
+
+- **The version identity is blocked outside this repository.** The workspace is
+  versioned `0.0.0`. Moving it to `1.0.0` stops the external Godot plugin
+  (`siralos-godot`) from resolving: that project declares
+  `siralos-core = { path = …, version = "0.0.0" }`, and a caret requirement on
+  `0.0.0` admits exactly `0.0.0`. The plugin is an independent repository with its
+  own maintainers, so the workspace version stays behind its pin. The change is
+  prepared and verified locally — removing the `version` key from that path
+  dependency is enough — and deliberately not applied from here.
+- **No license has been published.** Until one is chosen, every artifact is
+  "all rights reserved"; the release workflow therefore refuses to publish while
+  no license file exists. The tag-triggered workflow has also never executed, so
+  the `unknown` CI status recorded at the top of this file applies to it exactly
+  as it does to the existing workflows.
+
+What does exist today: the release workflow (tag-triggered, digest-bearing,
+publication authority isolated from ordinary validation jobs), the clean-clone
+smoke test it runs before publishing anything, the
+[stability contract](docs/development/STABILITY.md) for the 1.x line, and the
+[changelog](CHANGELOG.md).
+
+The differential reference set is a frozen oracle of 239 records plus 118
+candidate-authored expectation records for scenarios introduced after the freeze,
+plus any record retired through the reviewed supersession list (none today; the
+mechanism exists for the version identity when it moves).
