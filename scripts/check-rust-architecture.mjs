@@ -299,6 +299,15 @@ export function runChecks(root) {
     if (crate === "siralos-core" && dependencies.length > 0) {
       errors.push("siralos-core: the domain-neutral core must have no workspace dependencies");
     }
+    // The hashing crate is a harness-only dependency. The product hashes through
+    // `siralos_core::identity`, so a product manifest that reaches for `sha2`
+    // directly would create a second digest source — the same class of duplicate
+    // authority the one-owner rules forbid elsewhere.
+    if (collectWorkspaceDependencies(cargoText).includes("sha2")) {
+      errors.push(
+        `${crate}: the product workspace must not depend on sha2 directly; hash through siralos_core::identity (only harness/Cargo.toml may use it)`,
+      );
+    }
   }
 
   // The CLI binary identity.

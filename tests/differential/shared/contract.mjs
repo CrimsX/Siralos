@@ -1450,6 +1450,19 @@ export function loadValidatedCorpus(corpusDir, platform) {
       applicable: scenario.platforms.includes("*") || scenario.platforms.includes(platform),
     });
   }
+  // Every declared subject must still be exercised by at least one scenario.
+  // Deleting a subject's last scenario — which a corpus amendment can do without
+  // touching this file — would otherwise reduce what the gate proves while every
+  // remaining check stays green.
+  const exercisedSubjects = new Set(scenarios.map((scenario) => scenario.subject));
+  const unexercisedSubjects = [...ALLOWED_SUBJECTS]
+    .filter((subject) => !exercisedSubjects.has(subject))
+    .sort();
+  if (unexercisedSubjects.length > 0) {
+    throw new Error(
+      `corpus declares ${unexercisedSubjects.length} subject(s) with no scenario: ${unexercisedSubjects.join(", ")}`,
+    );
+  }
   return {
     manifest,
     scenarios,
