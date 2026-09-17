@@ -104,7 +104,6 @@ impl SessionProvider {
     /// observable proof that the live value changed (production display
     /// reads the holders updated in the same breath by
     /// `apply_model_switch`).
-    #[allow(dead_code)]
     #[must_use]
     fn live_model(&self) -> Option<String> {
         match self {
@@ -127,7 +126,7 @@ impl SessionProvider {
     /// The endpoint base the NEXT provider request will use (`None` when the
     /// provider is not endpoint-configurable or has none set). Read by the
     /// reload tests as the observable proof that the live value changed.
-    #[allow(dead_code)]
+    #[cfg(test)]
     #[must_use]
     fn live_endpoint(&self) -> Option<String> {
         match self {
@@ -149,7 +148,7 @@ impl SessionProvider {
 
     /// The protocol the NEXT provider request will use (`None` when the
     /// provider does not resolve its path from a protocol).
-    #[allow(dead_code)]
+    #[cfg(test)]
     #[must_use]
     fn live_protocol(&self) -> Option<siralos_core::composition::Protocol> {
         match self {
@@ -172,7 +171,7 @@ impl SessionProvider {
 
     /// The credential the NEXT provider request will use, when the
     /// provider exposes it. Redacted by construction.
-    #[allow(dead_code)]
+    #[cfg(test)]
     #[must_use]
     fn live_credential(&self) -> Option<HostCredential> {
         match self {
