@@ -260,6 +260,8 @@ export function runCompare({
   sourceIdentity = null,
   expectationScenarioIds = null,
   expectationRecordsSha256 = null,
+  supersededDisclosure = null,
+  supersessionsSha256 = null,
 }) {
   if (platform !== "windows" && platform !== "posix") {
     throw new Error(`unsupported comparison platform ${JSON.stringify(platform)}`);
@@ -390,6 +392,20 @@ export function runCompare({
       expectationScenarioIds === null
         ? null
         : { scenarios: expectationScenarioIds, recordsSha256: expectationRecordsSha256 },
+    // Digest-bound supersessions retire a frozen oracle record and replace it.
+    // The audit prints each one in full — the retired value, the replacement
+    // value, both record digests, the reason, the corpus version it was made
+    // in, and the digest of the list itself — so a supersession can never be
+    // silent, and a reader can re-derive it from the frozen evidence.
+    supersessionCoverage:
+      supersededDisclosure === null
+        ? null
+        : {
+            scenarios: supersededDisclosure.map((entry) => entry.scenarioId).sort(),
+            count: supersededDisclosure.length,
+            recordsSha256: supersessionsSha256,
+          },
+    superseded: supersededDisclosure ?? [],
     perSubject: perSubjectCoverage(scenarios, statuses),
     scenarios: statuses,
     parity: parity.sort(),

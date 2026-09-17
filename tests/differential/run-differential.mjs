@@ -7,7 +7,7 @@ import { canonicalizeJson, sha256Hex } from "./shared/canonical.mjs";
 import { CorpusIntegrityError, loadValidatedCorpus } from "./shared/contract.mjs";
 import { canonicalRecordDocument, parseCanonicalRecordDocument } from "./shared/protocol.mjs";
 import { RUNNER_PROCESS_LIMITS, superviseRunner } from "./shared/runner-process.mjs";
-import { collectSourceIdentity, runCompare } from "./compare.mjs";
+import { collectSourceIdentity, runCompare, validateRecord } from "./compare.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -123,8 +123,214 @@ function loadExpectations(path, outDir) {
   }
 }
 
+/**
+ * Load and validate the digest-bound supersession list.
+ *
+ * A supersession retires one FROZEN oracle record and replaces it with a
+ * candidate-authored record, for the one case a frozen reference cannot express:
+ * a value that legitimately changed with the product (the release version).
+ * It removes nothing from `oracle.json` — the frozen evidence keeps the value it
+ * recorded — and every refusal below is a hard stop (exit 2), so a supersession
+ * can never half-apply:
+ *
+ *   - the document must carry exactly the declared keys and schema version;
+ *   - a superseded id must exist in the corpus AND in the pinned oracle;
+ *   - `oracleRecordSha256` must match the frozen record it claims to retire, so
+ *     the list cannot silently outlive the evidence it was written against;
+ *   - the replacement must be a valid record for that scenario, must keep the
+ *     same outcome class (no UNSUPPORTED -> COMPLETED laundering), and must
+ *     actually differ from the record it replaces;
+ *   - `supersededIn` must equal the corpus version in force;
+ *   - an id may be superseded once, and never also covered by a post-freeze
+ *     expectation.
+ */
+function loadSupersessions(path, outDir, scenarios, oracleRecords, corpusVersion) {
+  const fail = (code, scenarioId, message) => {
+    writeFailure(outDir, {
+      schemaVersion: 1,
+      parityHeld: false,
+      runnerFailure: {
+        implementation: "reference",
+        scenarioId,
+        outcome: "HARNESS_ERROR",
+        category: "PINNED_ORACLE_FAILURE",
+        code,
+        message,
+      },
+    });
+    const error = new Error(message);
+    error.exitCode = 2;
+    throw error;
+  };
+  const documentKeys = ["schemaVersion", "corpusVersion", "supersessions"];
+  const entryKeys = [
+    "scenarioId",
+    "reason",
+    "supersededIn",
+    "decision",
+    "oracleRecordSha256",
+    "record",
+  ];
+  let document;
+  try {
+    document = JSON.parse(readFileSync(resolve(path), "utf8"));
+  } catch (error) {
+    fail(
+      "SUPERSESSIONS_READ_FAILURE",
+      "<supersessions>",
+      `supersessions could not be read: ${error instanceof Error ? error.message : error}`,
+    );
+  }
+  if (document === null || typeof document !== "object" || Array.isArray(document)) {
+    fail("SUPERSESSIONS_MALFORMED", "<supersessions>", "supersessions must be a JSON object");
+  }
+  const actualKeys = Object.keys(document).sort();
+  if (actualKeys.join(",") !== [...documentKeys].sort().join(",")) {
+    fail(
+      "SUPERSESSIONS_MALFORMED",
+      "<supersessions>",
+      `supersessions must carry exactly ${documentKeys.join(", ")}; found ${actualKeys.join(", ")}`,
+    );
+  }
+  if (document.schemaVersion !== 1) {
+    fail(
+      "SUPERSESSIONS_MALFORMED",
+      "<supersessions>",
+      `unsupported supersessions schemaVersion ${JSON.stringify(document.schemaVersion)}`,
+    );
+  }
+  if (document.corpusVersion !== corpusVersion) {
+    fail(
+      "SUPERSESSIONS_CORPUS_MISMATCH",
+      "<supersessions>",
+      `supersessions declare corpus version ${JSON.stringify(document.corpusVersion)} but the corpus is v${corpusVersion}`,
+    );
+  }
+  if (!Array.isArray(document.supersessions) || document.supersessions.length > 64) {
+    fail(
+      "SUPERSESSIONS_MALFORMED",
+      "<supersessions>",
+      "supersessions must be an array of at most 64 entries",
+    );
+  }
+  const scenarioById = new Map(scenarios.map((scenario) => [scenario.id, scenario]));
+  const oracleById = new Map(oracleRecords.map((record) => [record.scenarioId, record]));
+  const byId = new Map();
+  for (const entry of document.supersessions) {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      fail("SUPERSESSIONS_MALFORMED", "<supersessions>", "each supersession must be an object");
+    }
+    const keys = Object.keys(entry).sort();
+    if (keys.join(",") !== [...entryKeys].sort().join(",")) {
+      fail(
+        "SUPERSESSIONS_MALFORMED",
+        typeof entry.scenarioId === "string" ? entry.scenarioId : "<supersessions>",
+        `each supersession must carry exactly ${entryKeys.join(", ")}; found ${keys.join(", ")}`,
+      );
+    }
+    const { scenarioId } = entry;
+    if (typeof scenarioId !== "string" || scenarioId.length === 0) {
+      fail("SUPERSESSIONS_MALFORMED", "<supersessions>", "a supersession needs a scenario id");
+    }
+    if (byId.has(scenarioId)) {
+      fail(
+        "SUPERSESSIONS_DUPLICATE",
+        scenarioId,
+        `scenario ${scenarioId} is superseded more than once`,
+      );
+    }
+    const scenario = scenarioById.get(scenarioId);
+    if (scenario === undefined) {
+      fail(
+        "SUPERSESSIONS_UNKNOWN_SCENARIO",
+        scenarioId,
+        `supersession names scenario ${scenarioId}, which the corpus does not define`,
+      );
+    }
+    const oracleRecord = oracleById.get(scenarioId);
+    if (oracleRecord === undefined) {
+      fail(
+        "SUPERSESSIONS_UNKNOWN_SCENARIO",
+        scenarioId,
+        `supersession names scenario ${scenarioId}, which the pinned oracle does not cover`,
+      );
+    }
+    for (const field of ["reason", "decision"]) {
+      if (typeof entry[field] !== "string" || entry[field].trim().length === 0) {
+        fail(
+          "SUPERSESSIONS_MALFORMED",
+          scenarioId,
+          `supersession ${scenarioId} needs a non-empty ${field}`,
+        );
+      }
+      if (entry[field].length > 512) {
+        fail(
+          "SUPERSESSIONS_MALFORMED",
+          scenarioId,
+          `supersession ${scenarioId} ${field} exceeds 512 characters`,
+        );
+      }
+    }
+    if (entry.supersededIn !== corpusVersion) {
+      fail(
+        "SUPERSESSIONS_CORPUS_MISMATCH",
+        scenarioId,
+        `supersession ${scenarioId} is stamped for corpus version ${JSON.stringify(entry.supersededIn)}, not v${corpusVersion}`,
+      );
+    }
+    const frozenSha256 = sha256Hex(canonicalRecordDocument([oracleRecord]));
+    if (entry.oracleRecordSha256 !== frozenSha256) {
+      fail(
+        "SUPERSESSIONS_ORACLE_MISMATCH",
+        scenarioId,
+        `supersession ${scenarioId} claims to retire oracle record ${JSON.stringify(entry.oracleRecordSha256)} but the pinned oracle record hashes to ${frozenSha256}`,
+      );
+    }
+    let replacement;
+    try {
+      replacement = validateRecord(entry.record, "supersession", scenario);
+    } catch (error) {
+      fail(
+        "SUPERSESSIONS_MALFORMED",
+        scenarioId,
+        `supersession ${scenarioId} carries an invalid replacement record: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+    if (replacement.scenarioId !== scenarioId) {
+      fail(
+        "SUPERSESSIONS_MALFORMED",
+        scenarioId,
+        `supersession ${scenarioId} carries a replacement for ${replacement.scenarioId}`,
+      );
+    }
+    if (replacement.outcome !== oracleRecord.outcome) {
+      fail(
+        "SUPERSESSIONS_CLASS_CHANGE",
+        scenarioId,
+        `supersession ${scenarioId} changes the outcome class from ${oracleRecord.outcome} to ${replacement.outcome}`,
+      );
+    }
+    if (canonicalizeJson(replacement) === canonicalizeJson(oracleRecord)) {
+      fail(
+        "SUPERSESSIONS_NO_CHANGE",
+        scenarioId,
+        `supersession ${scenarioId} replaces a record with an identical one`,
+      );
+    }
+    byId.set(scenarioId, { entry, oracleRecord, record: replacement });
+  }
+  return { byId };
+}
+
 /** Execute candidate runner; oracle is either live (historical replay) or pinned. */
-export async function runDifferential({ corpusDir, root, outDir, pinnedOracle, expectationsPath }) {
+export async function runDifferential({
+  corpusDir,
+  root,
+  outDir,
+  pinnedOracle,
+  expectationsPath,
+  supersessionsPath,
+}) {
   const absoluteRoot = resolve(root);
   const absoluteCorpus = resolve(corpusDir);
   const absoluteOut = resolve(outDir);
@@ -184,15 +390,33 @@ export async function runDifferential({ corpusDir, root, outDir, pinnedOracle, e
     let oracleRecords;
     let expectationScenarioIds = null;
     let expectationRecordsSha256 = null;
+    let supersededDisclosure = null;
+    let supersessionsSha256 = null;
     if (pinnedOracle !== undefined) {
-      oracleRecords = loadPinnedOracle(pinnedOracle, absoluteOut);
-      const pinnedIds = new Set(oracleRecords.map((r) => r.scenarioId));
+      const frozenOracleRecords = loadPinnedOracle(pinnedOracle, absoluteOut);
+      const pinnedIds = new Set(frozenOracleRecords.map((r) => r.scenarioId));
       let expectationRecords = [];
       if (expectationsPath !== undefined) {
         expectationRecords = loadExpectations(expectationsPath, absoluteOut);
         expectationRecordsSha256 = sha256Hex(readFileSync(resolve(expectationsPath)));
       }
       const expectationIds = new Set(expectationRecords.map((r) => r.scenarioId));
+      let supersessions = { byId: new Map() };
+      if (supersessionsPath !== undefined && existsSync(resolve(supersessionsPath))) {
+        supersessions = loadSupersessions(
+          supersessionsPath,
+          absoluteOut,
+          scenarios,
+          frozenOracleRecords,
+          manifest.corpusVersion,
+        );
+        supersessionsSha256 = sha256Hex(readFileSync(resolve(supersessionsPath)));
+      }
+      // A supersession may only retire a record the pinned oracle holds, and the
+      // oracle and post-freeze expectation sets are refused an overlap just
+      // below, so the two candidate-authored sources can never claim one
+      // scenario — no extra overlap guard is needed, and none is written.
+      const supersededIds = new Set(supersessions.byId.keys());
       const overlapping = [...pinnedIds].filter((id) => expectationIds.has(id));
       const uncovered = scenarios.filter(
         (scenario) => !pinnedIds.has(scenario.id) && !expectationIds.has(scenario.id),
@@ -218,11 +442,32 @@ export async function runDifferential({ corpusDir, root, outDir, pinnedOracle, e
         e.exitCode = 2;
         throw e;
       }
-      // Reference records in exact corpus order: frozen oracle records plus
-      // digest-bound post-freeze expectation records. The audit discloses
-      // which scenarios rely on candidate-authored expectations.
+      // Reference records in exact corpus order: frozen oracle records, minus any
+      // record a supersession retires, plus digest-bound post-freeze expectation
+      // records and the superseding replacements. The audit discloses which
+      // scenarios rely on candidate-authored expectations AND which retire a
+      // frozen record, with the value, the reason, and both digests.
+      const retainedOracleRecords = frozenOracleRecords.filter(
+        (record) => !supersededIds.has(record.scenarioId),
+      );
+      const replacementRecords = [...supersessions.byId.values()].map(({ record }) => record);
       const recordsById = new Map(
-        [...oracleRecords, ...expectationRecords].map((record) => [record.scenarioId, record]),
+        [...retainedOracleRecords, ...expectationRecords, ...replacementRecords].map((record) => [
+          record.scenarioId,
+          record,
+        ]),
+      );
+      supersededDisclosure = [...supersessions.byId.values()].map(
+        ({ entry, oracleRecord, record }) => ({
+          scenarioId: entry.scenarioId,
+          supersededIn: entry.supersededIn,
+          decision: entry.decision,
+          reason: entry.reason,
+          oracleRecordSha256: entry.oracleRecordSha256,
+          replacementRecordSha256: sha256Hex(canonicalRecordDocument([record])),
+          oracleValue: oracleRecord,
+          replacementValue: record,
+        }),
       );
       oracleRecords = scenarios.map((scenario) => {
         const record = recordsById.get(scenario.id);
@@ -315,6 +560,8 @@ export async function runDifferential({ corpusDir, root, outDir, pinnedOracle, e
       sourceIdentity,
       expectationScenarioIds,
       expectationRecordsSha256,
+      supersededDisclosure,
+      supersessionsSha256,
     });
     writeFileSync(auditPath, `${canonicalizeJson(audit)}\n`, "utf8");
     if (!audit.parityHeld) {
@@ -334,9 +581,10 @@ async function main() {
   const outDir = optionValue(process.argv, "--out-dir");
   const pinnedOracle = optionValue(process.argv, "--pinned-oracle");
   const expectationsArg = optionValue(process.argv, "--expectations");
+  const supersessionsArg = optionValue(process.argv, "--supersessions");
   if (corpusDir === undefined || root === undefined || outDir === undefined) {
     console.error(
-      "usage: run-differential.mjs --corpus <dir> --root <repo> --out-dir <directory> [--pinned-oracle <file>] [--expectations <file>]",
+      "usage: run-differential.mjs --corpus <dir> --root <repo> --out-dir <directory> [--pinned-oracle <file>] [--expectations <file>] [--supersessions <file>]",
     );
     process.exit(2);
   }
@@ -360,6 +608,16 @@ async function main() {
       effectiveExpectations = defaultExpectations;
     }
   }
+  let effectiveSupersessions = supersessionsArg;
+  if (effectiveSupersessions === undefined) {
+    const defaultSupersessions = resolve(
+      root,
+      "tests/differential/evidence/post-freeze/supersessions.json",
+    );
+    if (existsSync(defaultSupersessions)) {
+      effectiveSupersessions = defaultSupersessions;
+    }
+  }
   try {
     const audit = await runDifferential({
       corpusDir,
@@ -367,10 +625,18 @@ async function main() {
       outDir,
       pinnedOracle: effectivePinned,
       expectationsPath: effectiveExpectations,
+      supersessionsPath: effectiveSupersessions,
     });
     console.log(
       `Differential audit: parity held (${audit.matchedRequiredScenarios}/${audit.requiredApplicableScenarios} applicable required scenarios; ${audit.skipped.length} explicit platform skips; ${audit.informationalDeviations.length} accepted informational deviations).`,
     );
+    if (audit.superseded.length > 0) {
+      console.log(
+        `(superseded reference records: ${audit.superseded.length} — ${audit.superseded
+          .map((entry) => `${entry.scenarioId} [${entry.decision}]`)
+          .join(", ")})`,
+      );
+    }
     if (effectivePinned !== undefined) {
       console.log(`(pinned oracle: ${effectivePinned})`);
     }

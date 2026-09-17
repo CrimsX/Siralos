@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "corpusVersion": 82,
+  "supersessions": [
+    {
+      "scenarioId": "version.identity",
+      "reason": "negative-evidence fixture",
+      "supersededIn": 82,
+      "decision": "W3.1",
+      "oracleRecordSha256": "9e01915d839379a2f65a36d4d9be097222dda507a8a5ec542860810c4173d957",
+      "record": {
+        "outcome": "UNSUPPORTED",
+        "error": {
+          "category": "PLATFORM_NOT_APPLICABLE"
+        },
+        "scenarioId": "version.identity",
+        "subject": "version-identity"
+      }
+    }
+  ]
+}
