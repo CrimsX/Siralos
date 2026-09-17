@@ -187,7 +187,8 @@ One concrete responsibility per module. Names state the responsibility (`parse-i
 
 ## No circular dependencies
 
-Module-level circular imports are prohibited. Workspace dependency cycles are detected by the architecture check and by TypeScript project references.
+Module-level circular imports are prohibited. Workspace dependency cycles are
+detected by the architecture check (`npm run check:rust`).
 
 ## No unnecessary abstractions
 
@@ -200,7 +201,9 @@ Tests exercise public behaviour through public APIs: the application API, the pr
 ## Formatting and linting
 
 - Prettier for formatting (`npm run format`, `npm run format:check`).
-- ESLint with type-aware `typescript-eslint` rules for linting (`npm run lint`).
+- ESLint over the JavaScript surface with `@eslint/js` recommended rules
+  (`npm run lint`, `eslint.config.mjs`); the TypeScript tree is gone (decision 40),
+  so no TypeScript-specific rules apply.
 - Stylistic ESLint rules that duplicate or conflict with Prettier are not added.
 - `npm run check` runs all non-mutating validation and never rewrites files.
 
@@ -218,8 +221,9 @@ pointer, not a duplicate:
   pinned toolchain are required, and `npm run check:rust` enforces crate
   shape, dependency direction, binary identity, and core domain
   neutrality.
-- The TypeScript implementation is the behavioral reference; Rust
-  migrations preserve behavior while deliberately improving structure.
+- Rust is the sole source of truth; behavior changes are checked against the
+  pinned differential corpus (`npm run check:differential`), and the archived
+  TypeScript implementation is evidence rather than a reference to port from.
 
 ## Simplicity over speculative flexibility
 

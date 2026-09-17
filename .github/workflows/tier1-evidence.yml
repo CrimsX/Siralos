@@ -2,7 +2,7 @@ name: Siralos Tier-1 evidence
 
 # R11 promotion evidence generation ([R11 Entry Review] §3): one
 # dispatch-only run per Tier-1 platform produces the digest-bound
-# differential audit (pinned oracle v33, post-TS-archive) using the exact
+# differential audit (pinned freeze-v32 oracle, post-TS-archive) using the exact
 # repository invocation. Outputs are uploaded as artifacts
 # whose names drop directly into tests/differential/evidence/r11/
 # (see that directory's EVIDENCE.md). This workflow never publishes,
@@ -73,7 +73,7 @@ jobs:
       - name: Build differential harness candidate
         run: cargo build --locked -p siralos-cli --bin siralos-harness --features differential-harness
 
-      - name: Differential harness (digest-bound audit, pinned v33)
+      - name: Differential harness (digest-bound audit, pinned freeze-v32 oracle)
         id: diff
         run: npm run check:differential
 

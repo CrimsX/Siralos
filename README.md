@@ -78,6 +78,9 @@ What that buys you:
 - **Not a security boundary by itself.** The architecture checks in this
   repository are developer guardrails, not an OS boundary. The enforceable
   boundary is the sandbox backend described in [SECURITY.md](SECURITY.md).
+- **Not a desktop application.** Siralos 1.0 ships a terminal frontend and a
+  headless mode; a desktop UI is not part of 1.0, though it is not ruled out for
+  later.
 - **Not a Godot tool.** Godot is one optional domain, installed explicitly.
   Nothing is enabled merely because `project.godot` exists.
 - **Not a credential store.** Credentials are resolved from the environment when
