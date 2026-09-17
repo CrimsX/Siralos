@@ -579,28 +579,23 @@ impl CheckpointStore {
                 checkpoint.id
             )));
         }
-        let temporary_path =
-            directory.join(format!("metadata.json.tmp-{}", checkpoint.id));
-        std::fs::write(&temporary_path, serialized).map_err(|error| {
+        let staged = crate::atomic::stage_atomic(
+            &directory,
+            "metadata.json",
+            "metadata.json.tmp",
+            serialized.as_bytes(),
+            Some(0o600),
+        )
+        .map_err(|error| {
             CheckpointStoreError::WriteFailed(format!(
                 "Checkpoint metadata cannot be staged: {error}"
             ))
         })?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(
-                &temporary_path,
-                std::fs::Permissions::from_mode(0o600),
-            );
-        }
-        std::fs::rename(&temporary_path, directory.join("metadata.json"))
-            .map_err(|error| {
-                let _ = std::fs::remove_file(&temporary_path);
-                CheckpointStoreError::WriteFailed(format!(
-                    "Checkpoint metadata cannot be committed: {error}"
-                ))
-            })?;
+        staged.commit().map_err(|error| {
+            CheckpointStoreError::WriteFailed(format!(
+                "Checkpoint metadata cannot be committed: {error}"
+            ))
+        })?;
         Ok(())
     }
 

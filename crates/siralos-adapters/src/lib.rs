@@ -9,6 +9,7 @@
 //! Adapters may depend on core; core must never depend on adapters
 //! (enforced by `npm run check:rust`).
 
+pub mod atomic;
 pub mod config;
 pub mod context_scan;
 pub mod context_session;

@@ -563,60 +563,44 @@ fn read_record_text(path: &Path) -> Result<Option<String>, PluginFailure> {
 
 /// Write the plugin record document atomically.
 ///
-/// The document is written to a unique temporary file in the workspace
-/// root, lstat-verified as a regular file, then renamed over
-/// `siralos.toml`. The target is never opened for write: a symlink at
-/// the target path is replaced (not followed) by the rename, and a
-/// pre-rename lstat check refuses symlink/special targets before the
-/// swap. Any failure removes the temporary file.
+/// The document is staged with [`crate::atomic::stage_atomic`] and swapped in
+/// with [`crate::atomic::StagedWrite::commit`]. The target is never opened for
+/// write: the commit refuses a symlink or special-file target before the swap, so
+/// such a target is refused rather than followed or replaced. Any failure removes
+/// the staged file.
 fn write_record_document(
     root: &Path,
     document: &toml::Table,
 ) -> Result<(), PluginFailure> {
-    let path = root.join(SIRALOS_TOML_FILE_NAME);
     let serialized = toml::to_string(document)
         .map_err(|error| PluginFailure::RecordIo(error.to_string()))?;
-    let nonce = record_write_nonce();
-    let temporary =
-        root.join(format!("{MUTATION_TEMP_PREFIX}siralos-toml-{nonce}"));
-    std::fs::write(&temporary, serialized).map_err(|error| {
-        let _ = std::fs::remove_file(&temporary);
-        PluginFailure::RecordIo(error.to_string())
+    let staged = crate::atomic::stage_atomic(
+        root,
+        SIRALOS_TOML_FILE_NAME,
+        &format!("{MUTATION_TEMP_PREFIX}siralos-toml"),
+        serialized.as_bytes(),
+        None,
+    )
+    .map_err(|error| match error {
+        crate::atomic::AtomicWriteFailure::Staged { source, .. } => {
+            PluginFailure::RecordIo(source.to_string())
+        }
+        other => PluginFailure::RecordIo(other.to_string()),
     })?;
-    let target_metadata = match std::fs::symlink_metadata(&path) {
-        Ok(metadata) => {
-            if metadata.file_type().is_symlink() || !metadata.is_file() {
-                let _ = std::fs::remove_file(&temporary);
-                return Err(PluginFailure::RecordConflict(
-                    "siralos.toml must be a regular file; refusing symlink or special file"
-                        .to_owned(),
-                ));
-            }
-            Some(metadata)
+    staged.commit().map_err(|error| match error {
+        crate::atomic::AtomicWriteFailure::TargetIsNotARegularFile { .. } => {
+            PluginFailure::RecordConflict(
+                "siralos.toml must be a regular file; refusing symlink or special file"
+                    .to_owned(),
+            )
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => {
-            let _ = std::fs::remove_file(&temporary);
-            return Err(PluginFailure::RecordIo(error.to_string()));
+        crate::atomic::AtomicWriteFailure::TargetUnreadable { source, .. }
+        | crate::atomic::AtomicWriteFailure::ReplaceFailed { source, .. } => {
+            PluginFailure::RecordIo(source.to_string())
         }
-    };
-    let rename_result = std::fs::rename(&temporary, &path);
-    if let Err(error) = rename_result {
-        let _ = std::fs::remove_file(&temporary);
-        return Err(PluginFailure::RecordIo(error.to_string()));
-    }
-    let _ = target_metadata;
+        other => PluginFailure::RecordIo(other.to_string()),
+    })?;
     Ok(())
-}
-
-/// Unique suffix for temporary record files.
-fn record_write_nonce() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-    format!("{stamp:x}")
 }
 
 /// Merge one plugin record into the workspace `siralos.toml`,

@@ -1,12 +1,11 @@
 //! The workspace `siralos.lock` adapter (Stage 5.4, decision 50).
 //!
-//! Owns load/write/verify over the machine-generated lock artifact. The
-//! write follows the one established atomic pattern (decision 38/39
-//! plugin records): a unique temporary file, an lstat-verified
-//! regular-file check on the target (symlinks are replaced by the
-//! rename, never followed), and cleanup on any failure. Loading
-//! re-derives the lock digest from the parsed identities, so a hand-
-//! edited or corrupt lock is typed invalid rather than trusted.
+//! Owns load/write/verify over the machine-generated lock artifact. The write
+//! stages the bytes with [`crate::atomic::stage_atomic`] and swaps them with
+//! [`crate::atomic::StagedWrite::commit`], which owns the exclusive temporary
+//! file, the regular-file check on the target, and the cleanup on any failure.
+//! Loading re-derives the lock digest from the parsed identities, so a
+//! hand-edited or corrupt lock is typed invalid rather than trusted.
 
 use std::path::Path;
 
@@ -189,7 +188,6 @@ pub fn write_workspace_lock(
     root: &Path,
     lock: &WorkspaceLock,
 ) -> Result<(), LockFailure> {
-    let path = root.join(lock_file_name());
     let mut document = toml::map::Map::new();
     document.insert(
         "lockDigest".to_owned(),
@@ -226,50 +224,33 @@ pub fn write_workspace_lock(
     }
     let serialized = toml::to_string(&toml::Value::Table(document))
         .map_err(|error| failure(error.to_string()))?;
-    let nonce = write_nonce();
-    let temporary =
-        root.join(format!("{MUTATION_TEMP_PREFIX}siralos-lock-{nonce}"));
-    std::fs::write(&temporary, &serialized).map_err(|error| {
-        let _ = std::fs::remove_file(&temporary);
-        failure(format!("siralos.lock could not be staged: {error}"))
+    let staged = crate::atomic::stage_atomic(
+        root,
+        lock_file_name(),
+        &format!("{MUTATION_TEMP_PREFIX}siralos-lock"),
+        serialized.as_bytes(),
+        None,
+    )
+    .map_err(|error| match error {
+        crate::atomic::AtomicWriteFailure::Staged { source, .. } => {
+            failure(format!("siralos.lock could not be staged: {source}"))
+        }
+        other => failure(other.to_string()),
     })?;
-    let target_metadata = match std::fs::symlink_metadata(&path) {
-        Ok(metadata) => {
-            if metadata.file_type().is_symlink() || !metadata.is_file() {
-                let _ = std::fs::remove_file(&temporary);
-                return Err(failure(
-                    "siralos.lock must be a regular file; refusing symlink or special file"
-                        .to_owned(),
-                ));
-            }
-            Some(metadata)
+    staged.commit().map_err(|error| match error {
+        crate::atomic::AtomicWriteFailure::TargetIsNotARegularFile { .. } => failure(
+            "siralos.lock must be a regular file; refusing symlink or special file"
+                .to_owned(),
+        ),
+        crate::atomic::AtomicWriteFailure::TargetUnreadable { source, .. } => {
+            failure(format!("siralos.lock is unreadable: {source}"))
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => {
-            let _ = std::fs::remove_file(&temporary);
-            return Err(failure(format!(
-                "siralos.lock is unreadable: {error}"
-            )));
+        crate::atomic::AtomicWriteFailure::ReplaceFailed { source, .. } => {
+            failure(format!("siralos.lock could not be replaced: {source}"))
         }
-    };
-    let rename_result = std::fs::rename(&temporary, &path);
-    if let Err(error) = rename_result {
-        let _ = std::fs::remove_file(&temporary);
-        return Err(failure(format!(
-            "siralos.lock could not be replaced: {error}"
-        )));
-    }
-    let _ = target_metadata;
+        other => failure(other.to_string()),
+    })?;
     Ok(())
-}
-
-fn write_nonce() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default()
-        .to_string()
 }
 
 /// Verify the on-disk lock against a recomputed one.

@@ -3191,37 +3191,29 @@ pub fn write_profile_config(
     {
         return Err("siralos.toml exceeds the byte bound".to_owned());
     }
-    // Atomic write: temp in same dir, lstat verify target, verify parse, rename.
-    let temp = workspace_root.join(unique_scratch_name(&format!(
-        "{}siralos-toml",
-        siralos_adapters::workspace::fs::MUTATION_TEMP_PREFIX
-    )));
-    std::fs::write(&temp, serialized.as_bytes()).map_err(|e| {
-        let _ = std::fs::remove_file(&temp);
-        e.to_string()
-    })?;
-    // Verify temp is regular file (not symlink).
-    if let Ok(meta) = std::fs::symlink_metadata(&temp) {
-        if meta.file_type().is_symlink() || !meta.is_file() {
-            let _ = std::fs::remove_file(&temp);
-            return Err(
-                "temporary siralos.toml must be a regular file".to_owned()
-            );
-        }
-    }
+    // Stage through the shared atomic writer: an exclusive temporary file in the
+    // target's own directory, RAII cleanup on every failure, and a commit that
+    // refuses a symlinked or special-file target.
+    let staged = siralos_adapters::atomic::stage_atomic(
+        workspace_root,
+        siralos_adapters::domain::manifest::SIRALOS_TOML_FILE_NAME,
+        &format!(
+            "{}siralos-toml",
+            siralos_adapters::workspace::fs::MUTATION_TEMP_PREFIX
+        ),
+        serialized.as_bytes(),
+        None,
+    )
+    .map_err(|e| e.to_string())?;
     // Verify written bytes parse and the profile APPLIES (not
     // Invalid/Absent) — via `load_workspace_profile`, the exact loader the
     // session uses at startup (spec C2). The temp lives in the workspace
     // root, so copy it into a temp-dir shim as `siralos.toml` and run the
     // loader there: the written config MUST APPLY there too.
-    let verify_bytes = std::fs::read(&temp).map_err(|e| {
-        let _ = std::fs::remove_file(&temp);
-        e.to_string()
-    })?;
-    let verify_text = String::from_utf8(verify_bytes).map_err(|_| {
-        let _ = std::fs::remove_file(&temp);
-        "temporary siralos.toml is not valid UTF-8".to_owned()
-    })?;
+    let verify_bytes =
+        std::fs::read(staged.path()).map_err(|e| e.to_string())?;
+    let verify_text = String::from_utf8(verify_bytes)
+        .map_err(|_| "temporary siralos.toml is not valid UTF-8".to_owned())?;
     {
         let shim_dir = std::env::temp_dir()
             .join(unique_scratch_name("siralos-profile-verify"));
@@ -3266,28 +3258,25 @@ pub fn write_profile_config(
             }
         })();
         let _ = std::fs::remove_dir_all(&shim_dir);
-        if let Err(err) = shim_result {
-            let _ = std::fs::remove_file(&temp);
-            return Err(err);
-        }
+        shim_result?;
     }
-    // Refuse symlinked/non-regular target before rename (manifest pattern).
-    if let Ok(meta) = std::fs::symlink_metadata(&path) {
-        if meta.file_type().is_symlink() || !meta.is_file() {
-            let _ = std::fs::remove_file(&temp);
-            return Err("siralos.toml must be a regular file; refusing symlink or special file".to_owned());
+    staged.commit().map_err(|error| match error {
+        siralos_adapters::atomic::AtomicWriteFailure::TargetIsNotARegularFile {
+            ..
+        } => "siralos.toml must be a regular file; refusing symlink or special file"
+            .to_owned(),
+        siralos_adapters::atomic::AtomicWriteFailure::TargetUnreadable {
+            source,
+            ..
         }
-    } else if let Err(e) = std::fs::symlink_metadata(&path) {
-        if e.kind() != std::io::ErrorKind::NotFound {
-            let _ = std::fs::remove_file(&temp);
-            return Err(e.to_string());
+        | siralos_adapters::atomic::AtomicWriteFailure::ReplaceFailed {
+            source,
+            ..
         }
-    }
-    if let Err(e) = std::fs::rename(&temp, &path) {
-        let _ = std::fs::remove_file(&temp);
-        return Err(e.to_string());
-    }
-    let _ = std::fs::remove_file(&temp);
+        | siralos_adapters::atomic::AtomicWriteFailure::Staged { source, .. } => {
+            source.to_string()
+        }
+    })?;
     Ok(())
 }
 
@@ -3473,38 +3462,27 @@ pub fn remove_profile_config(workspace_root: &Path) -> Result<(), String> {
     {
         return Err("siralos.toml exceeds the byte bound".to_owned());
     }
-    // Atomic write: temp in same dir, lstat verify target, verify parse,
-    // rename (the write path's pattern verbatim).
-    let temp = workspace_root.join(unique_scratch_name(&format!(
-        "{}siralos-toml",
-        siralos_adapters::workspace::fs::MUTATION_TEMP_PREFIX
-    )));
-    std::fs::write(&temp, serialized.as_bytes()).map_err(|e| {
-        let _ = std::fs::remove_file(&temp);
-        e.to_string()
-    })?;
-    // Verify temp is regular file (not symlink).
-    if let Ok(meta) = std::fs::symlink_metadata(&temp) {
-        if meta.file_type().is_symlink() || !meta.is_file() {
-            let _ = std::fs::remove_file(&temp);
-            return Err(
-                "temporary siralos.toml must be a regular file".to_owned()
-            );
-        }
-    }
+    // The write path's staging verbatim, through the shared atomic writer.
+    let staged = siralos_adapters::atomic::stage_atomic(
+        workspace_root,
+        siralos_adapters::domain::manifest::SIRALOS_TOML_FILE_NAME,
+        &format!(
+            "{}siralos-toml",
+            siralos_adapters::workspace::fs::MUTATION_TEMP_PREFIX
+        ),
+        serialized.as_bytes(),
+        None,
+    )
+    .map_err(|e| e.to_string())?;
     // Verify written bytes parse and the profile is GONE — via
     // `load_workspace_profile`, the exact loader the session uses at
     // startup. The temp lives in the workspace root, so copy it into a
     // temp-dir shim as `siralos.toml` and run the loader there: the
     // remaining config MUST parse with no profile.
-    let verify_bytes = std::fs::read(&temp).map_err(|e| {
-        let _ = std::fs::remove_file(&temp);
-        e.to_string()
-    })?;
-    let verify_text = String::from_utf8(verify_bytes).map_err(|_| {
-        let _ = std::fs::remove_file(&temp);
-        "temporary siralos.toml is not valid UTF-8".to_owned()
-    })?;
+    let verify_bytes =
+        std::fs::read(staged.path()).map_err(|e| e.to_string())?;
+    let verify_text = String::from_utf8(verify_bytes)
+        .map_err(|_| "temporary siralos.toml is not valid UTF-8".to_owned())?;
     {
         let shim_dir = std::env::temp_dir()
             .join(unique_scratch_name("siralos-profile-verify"));
@@ -3536,28 +3514,25 @@ pub fn remove_profile_config(workspace_root: &Path) -> Result<(), String> {
             }
         })();
         let _ = std::fs::remove_dir_all(&shim_dir);
-        if let Err(err) = shim_result {
-            let _ = std::fs::remove_file(&temp);
-            return Err(err);
-        }
+        shim_result?;
     }
-    // Refuse symlinked/non-regular target before rename (manifest pattern).
-    if let Ok(meta) = std::fs::symlink_metadata(&path) {
-        if meta.file_type().is_symlink() || !meta.is_file() {
-            let _ = std::fs::remove_file(&temp);
-            return Err("siralos.toml must be a regular file; refusing symlink or special file".to_owned());
+    staged.commit().map_err(|error| match error {
+        siralos_adapters::atomic::AtomicWriteFailure::TargetIsNotARegularFile {
+            ..
+        } => "siralos.toml must be a regular file; refusing symlink or special file"
+            .to_owned(),
+        siralos_adapters::atomic::AtomicWriteFailure::TargetUnreadable {
+            source,
+            ..
         }
-    } else if let Err(e) = std::fs::symlink_metadata(&path) {
-        if e.kind() != std::io::ErrorKind::NotFound {
-            let _ = std::fs::remove_file(&temp);
-            return Err(e.to_string());
+        | siralos_adapters::atomic::AtomicWriteFailure::ReplaceFailed {
+            source,
+            ..
         }
-    }
-    if let Err(e) = std::fs::rename(&temp, &path) {
-        let _ = std::fs::remove_file(&temp);
-        return Err(e.to_string());
-    }
-    let _ = std::fs::remove_file(&temp);
+        | siralos_adapters::atomic::AtomicWriteFailure::Staged { source, .. } => {
+            source.to_string()
+        }
+    })?;
     Ok(())
 }
 

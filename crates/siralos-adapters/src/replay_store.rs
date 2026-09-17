@@ -426,40 +426,44 @@ pub fn write_replay_store(
         std::fs::create_dir_all(parent)
             .map_err(|e| ReplayStoreWriteError::Io(e.to_string()))?;
     }
-    let nonce = write_nonce();
-    let temporary =
-        parent.join(format!("{MUTATION_TEMP_PREFIX}replay-store-{nonce}"));
-    std::fs::write(&temporary, &serialized).map_err(|e| {
-        let _ = std::fs::remove_file(&temporary);
-        ReplayStoreWriteError::Io(format!("store could not be staged: {e}"))
+    let file_name =
+        path.file_name().and_then(|name| name.to_str()).ok_or_else(|| {
+            ReplayStoreWriteError::Io("store path has no file name".to_owned())
+        })?;
+    let staged = crate::atomic::stage_atomic(
+        parent,
+        file_name,
+        &format!("{MUTATION_TEMP_PREFIX}replay-store"),
+        serialized.as_bytes(),
+        None,
+    )
+    .map_err(|error| match error {
+        crate::atomic::AtomicWriteFailure::Staged { source, .. } => {
+            ReplayStoreWriteError::Io(format!(
+                "store could not be staged: {source}"
+            ))
+        }
+        other => ReplayStoreWriteError::Io(other.to_string()),
     })?;
-
-    // lstat-verified target check; symlink at target is replaced by rename, never followed.
-    match std::fs::symlink_metadata(path) {
-        Ok(metadata) => {
-            if metadata.file_type().is_symlink() || !metadata.is_file() {
-                let _ = std::fs::remove_file(&temporary);
-                return Err(ReplayStoreWriteError::Io(
-                    "store must be a regular file; refusing symlink or special file"
-                        .to_owned(),
-                ));
-            }
+    staged.commit().map_err(|error| match error {
+        crate::atomic::AtomicWriteFailure::TargetIsNotARegularFile {
+            ..
+        } => ReplayStoreWriteError::Io(
+            "store must be a regular file; refusing symlink or special file"
+                .to_owned(),
+        ),
+        crate::atomic::AtomicWriteFailure::TargetUnreadable {
+            source, ..
+        } => {
+            ReplayStoreWriteError::Io(format!("store is unreadable: {source}"))
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            let _ = std::fs::remove_file(&temporary);
-            return Err(ReplayStoreWriteError::Io(format!(
-                "store is unreadable: {error}"
-            )));
-        }
-    }
-
-    if let Err(error) = std::fs::rename(&temporary, path) {
-        let _ = std::fs::remove_file(&temporary);
-        return Err(ReplayStoreWriteError::Io(format!(
-            "store could not be replaced: {error}"
-        )));
-    }
+        crate::atomic::AtomicWriteFailure::ReplaceFailed {
+            source, ..
+        } => ReplayStoreWriteError::Io(format!(
+            "store could not be replaced: {source}"
+        )),
+        other => ReplayStoreWriteError::Io(other.to_string()),
+    })?;
 
     Ok(kept.len())
 }
@@ -706,15 +710,6 @@ pub fn load_replay_store(
     }
 
     Ok(ReplayStore { recordings })
-}
-
-fn write_nonce() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default()
-        .to_string()
 }
 
 #[cfg(test)]
