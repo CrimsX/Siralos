@@ -1,0 +1,122 @@
+name: Siralos release
+
+# The publication path, and the only workflow class with publication authority.
+# It runs on a version tag or on an explicit dispatch, never on a branch push and
+# never on a pull request.
+#
+# WHAT THIS WORKFLOW DOES NOT CLAIM, stated in the file so it cannot drift:
+#   - it has never executed. The repository records its CI status as `unknown`
+#     (ROADMAP.md §9), and no local dry run may be reported as a real one;
+#   - it emits no SBOM and no provenance attestation;
+#   - it makes no reproducible or byte-identical-binary claim.
+# What it does publish is the binary and its SHA-256 digest, beside the smoke
+# transcript that had to pass before publication.
+#
+# It also does not restate the validation verdict: `rust.yml` owns the quality
+# gate, and this workflow neither replaces it nor summarizes it.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run the whole release path but publish nothing"
+        type: boolean
+        default: true
+
+# Least privilege at the workflow level; the single job narrows to the one write
+# scope publication needs.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: Release artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    steps:
+      # actions/checkout v7.0.1 (GitHub-owned, immutable SHA pin). Full history
+      # so the tag is present; credentials are not persisted — publication uses
+      # the job token explicitly, not Git credentials.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Refuse before spending anything: with no license file every artifact is
+      # "all rights reserved", so distributing one would be wrong regardless of
+      # how well it builds.
+      - name: Refuse to release without a license
+        run: |
+          if [ ! -f LICENSE ] && [ ! -f LICENSE.md ]; then
+            echo "::error::no license file in the repository; refusing to build a release artifact"
+            exit 1
+          fi
+
+      # rust-toolchain.toml is the single source of truth for the channel and its
+      # components; `rustup show` installs them.
+      - name: Install Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Resolve and check the release version
+        id: version
+        run: |
+          manifest="$(sed -n '/\[workspace.package\]/,/^\[/p' Cargo.toml | sed -n 's/^version *= *"\(.*\)"/\1/p' | head -n1)"
+          if [ -z "$manifest" ]; then
+            echo "::error::Cargo.toml declares no [workspace.package] version"
+            exit 1
+          fi
+          echo "manifest=$manifest" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            if [ "${GITHUB_REF_NAME}" != "v$manifest" ]; then
+              echo "::error::tag ${GITHUB_REF_NAME} does not match the workspace version v$manifest"
+              exit 1
+            fi
+            echo "Publishing tag ${GITHUB_REF_NAME}."
+          else
+            echo "Dispatch run: nothing will be published."
+          fi
+
+      # The artifact has to be buildable and runnable from a clean clone with no
+      # Godot sibling beside it, report the manifest version, answer one
+      # no-config headless turn, and open and exit a session. This runs BEFORE
+      # publication, on the same revision that would be published.
+      - name: Clean-clone smoke test
+        run: |
+          node scripts/release-smoke-test.mjs \
+            --expected-version "${{ steps.version.outputs.manifest }}" \
+            --log smoke.log
+
+      - name: Build the release binary
+        run: cargo build --release --locked --bin siralos
+
+      - name: Digest the artifact
+        run: |
+          cd target/release
+          sha256sum siralos > "siralos-${{ steps.version.outputs.manifest }}-linux-${{ runner.arch }}.sha256"
+          cat "siralos-${{ steps.version.outputs.manifest }}-linux-${{ runner.arch }}.sha256"
+
+      # Publication requires a tag ref AND a non-dry run, so a dispatch can never
+      # publish even when its input says dry_run: false — only the tag event can.
+      - name: Publish the release
+        if: github.ref_type == 'tag' && inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp "target/release/siralos" "siralos-${{ steps.version.outputs.manifest }}-linux-${{ runner.arch }}"
+          gh release create "${GITHUB_REF_NAME}" \
+            --verify-tag \
+            --title "Siralos ${GITHUB_REF_NAME}" \
+            --notes-file CHANGELOG.md \
+            "siralos-${{ steps.version.outputs.manifest }}-linux-${{ runner.arch }}" \
+            "target/release/siralos-${{ steps.version.outputs.manifest }}-linux-${{ runner.arch }}.sha256" \
+            smoke.log
