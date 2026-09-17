@@ -1,8 +1,15 @@
-//! Authoritative slash-command catalog surface (Stage 3R R13.1).
+//! Frozen replay vocabulary for the `command-catalog` and `cli-session`
+//! differential subjects (Stage 3R R13.1).
 //!
-//! Mirrors the TypeScript reference catalog: host-owned, immutable, in
-//! registration order, with a content-bound revision digest. Providers
-//! and projects can never register commands.
+//! This table mirrors the TypeScript reference catalog so the harness can
+//! reproduce two oracle-bound scenarios. **It is not the product's command
+//! vocabulary.** The interactive frontend dispatches the slash commands it
+//! documents in `siralos-cli`; no product crate reads this module, and nothing
+//! here reaches a user. It is retained because deleting it would delete the
+//! coverage of those two subjects, it is catalogued as harness-only in
+//! `docs/development/REACHABILITY.md`, and it stays immutable in registration
+//! order with a content-bound revision digest so the pinned records remain
+//! reproducible.
 
 use crate::identity::{canonicalize_json, sha256_hex_str};
 use serde_json::json;

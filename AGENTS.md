@@ -60,7 +60,7 @@ The Anthropic Sandbox Runtime backend is pinned. Linux/macOS availability requir
 - Research is disabled by built-in profiles unless explicitly authorized. `ask` is refused where no approval protocol exists.
 - Architecture checks are developer guardrails, not an OS security boundary.
 - Never expose absolute workspace, cache, mirror, executable, or credential paths to providers or report-safe output.
-- The terminal sanitizer is the single output boundary, the input queue is the single interactive-read owner, and the command catalog is the single command-vocabulary source.
+- The terminal sanitizer is the single output boundary and the input queue is the single interactive-read owner. The interactive frontend owns the command vocabulary it dispatches (`crates/siralos-cli/src/interactive.rs`); `siralos-core::commands` is a frozen replay vocabulary the differential harness reads to reproduce two pinned subjects, never the product's dispatch source.
 - Self-reference and doctor collection are read-only and offline by default: no refresh, live probe, repair, permission broadening, mutation, checkpoint, or secret-bearing report. `ToolProjector` remains authoritative for model-visible tools and `SandboxBackend` for enforcement capability.
 - Keep fixed Godot invocation tuples inside their architecture-owned runner modules. Project-independent probes never accept project arguments; recovery, check-only, and LSP-only flags remain structurally paired even while every runner is unavailable.
 
