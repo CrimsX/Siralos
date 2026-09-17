@@ -134,6 +134,9 @@ function loadExpectations(path, outDir) {
  * can never half-apply:
  *
  *   - the document must carry exactly the declared keys and schema version;
+ *   - `entriesSha256` must match the canonical form of its own `supersessions`
+ *     array, so a hand-edited entry that forgot to re-stamp the document stops
+ *     the run instead of passing review by accident;
  *   - a superseded id must exist in the corpus AND in the pinned oracle;
  *   - `oracleRecordSha256` must match the frozen record it claims to retire, so
  *     the list cannot silently outlive the evidence it was written against;
@@ -145,6 +148,7 @@ function loadExpectations(path, outDir) {
  *     expectation.
  */
 function loadSupersessions(path, outDir, scenarios, oracleRecords, corpusVersion) {
+  let documentSha256 = null;
   const fail = (code, scenarioId, message) => {
     writeFailure(outDir, {
       schemaVersion: 1,
@@ -156,13 +160,16 @@ function loadSupersessions(path, outDir, scenarios, oracleRecords, corpusVersion
         category: "PINNED_ORACLE_FAILURE",
         code,
         message,
+        // The digest of the refused document travels with the refusal, so a
+        // failure names exactly which bytes were rejected.
+        supersessionsSha256: documentSha256,
       },
     });
     const error = new Error(message);
     error.exitCode = 2;
     throw error;
   };
-  const documentKeys = ["schemaVersion", "corpusVersion", "supersessions"];
+  const documentKeys = ["schemaVersion", "corpusVersion", "entriesSha256", "supersessions"];
   const entryKeys = [
     "scenarioId",
     "reason",
@@ -172,13 +179,24 @@ function loadSupersessions(path, outDir, scenarios, oracleRecords, corpusVersion
     "record",
   ];
   let document;
+  let text;
   try {
-    document = JSON.parse(readFileSync(resolve(path), "utf8"));
+    text = readFileSync(resolve(path), "utf8");
   } catch (error) {
     fail(
       "SUPERSESSIONS_READ_FAILURE",
       "<supersessions>",
       `supersessions could not be read: ${error instanceof Error ? error.message : error}`,
+    );
+  }
+  documentSha256 = sha256Hex(text);
+  try {
+    document = JSON.parse(text);
+  } catch (error) {
+    fail(
+      "SUPERSESSIONS_MALFORMED",
+      "<supersessions>",
+      `supersessions is not valid JSON: ${error instanceof Error ? error.message : error}`,
     );
   }
   if (document === null || typeof document !== "object" || Array.isArray(document)) {
@@ -211,6 +229,14 @@ function loadSupersessions(path, outDir, scenarios, oracleRecords, corpusVersion
       "SUPERSESSIONS_MALFORMED",
       "<supersessions>",
       "supersessions must be an array of at most 64 entries",
+    );
+  }
+  const entriesSha256 = sha256Hex(canonicalizeJson(document.supersessions));
+  if (document.entriesSha256 !== entriesSha256) {
+    fail(
+      "SUPERSESSIONS_SELF_DIGEST_MISMATCH",
+      "<supersessions>",
+      `supersessions declare entriesSha256 ${JSON.stringify(document.entriesSha256)} but their entries hash to ${entriesSha256}; re-stamp the document after editing an entry`,
     );
   }
   const scenarioById = new Map(scenarios.map((scenario) => [scenario.id, scenario]));
@@ -319,7 +345,7 @@ function loadSupersessions(path, outDir, scenarios, oracleRecords, corpusVersion
     }
     byId.set(scenarioId, { entry, oracleRecord, record: replacement });
   }
-  return { byId };
+  return { byId, documentSha256, entriesSha256 };
 }
 
 /** Execute candidate runner; oracle is either live (historical replay) or pinned. */
@@ -392,6 +418,7 @@ export async function runDifferential({
     let expectationRecordsSha256 = null;
     let supersededDisclosure = null;
     let supersessionsSha256 = null;
+    let supersessionsEntriesSha256 = null;
     if (pinnedOracle !== undefined) {
       const frozenOracleRecords = loadPinnedOracle(pinnedOracle, absoluteOut);
       const pinnedIds = new Set(frozenOracleRecords.map((r) => r.scenarioId));
@@ -410,7 +437,10 @@ export async function runDifferential({
           frozenOracleRecords,
           manifest.corpusVersion,
         );
-        supersessionsSha256 = sha256Hex(readFileSync(resolve(supersessionsPath)));
+        // The loader already read and hashed the document; the audit carries
+        // both that digest and the document's own entries self-digest.
+        supersessionsSha256 = supersessions.documentSha256;
+        supersessionsEntriesSha256 = supersessions.entriesSha256;
       }
       // A supersession may only retire a record the pinned oracle holds, and the
       // oracle and post-freeze expectation sets are refused an overlap just
@@ -467,6 +497,10 @@ export async function runDifferential({
           replacementRecordSha256: sha256Hex(canonicalRecordDocument([record])),
           oracleValue: oracleRecord,
           replacementValue: record,
+          // Each printed supersession is self-contained: it names the exact list
+          // document it came from and that document's own entry digest.
+          supersessionsSha256: supersessions.documentSha256,
+          entriesSha256: supersessions.entriesSha256,
         }),
       );
       oracleRecords = scenarios.map((scenario) => {
@@ -562,6 +596,7 @@ export async function runDifferential({
       expectationRecordsSha256,
       supersededDisclosure,
       supersessionsSha256,
+      supersessionsEntriesSha256,
     });
     writeFileSync(auditPath, `${canonicalizeJson(audit)}\n`, "utf8");
     if (!audit.parityHeld) {

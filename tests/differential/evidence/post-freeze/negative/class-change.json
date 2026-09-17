@@ -1,18 +1,19 @@
 {
   "schemaVersion": 1,
   "corpusVersion": 82,
+  "entriesSha256": "2e6c927d6219fa2ac660080544fcc3efc68ac48a41be8616a73b4a5ac476d398",
   "supersessions": [
     {
       "scenarioId": "version.identity",
       "reason": "negative-evidence fixture",
       "supersededIn": 82,
-      "decision": "W3.1",
+      "decision": "1.0 release: workspace version identity",
       "oracleRecordSha256": "9e01915d839379a2f65a36d4d9be097222dda507a8a5ec542860810c4173d957",
       "record": {
-        "outcome": "UNSUPPORTED",
         "error": {
           "category": "PLATFORM_NOT_APPLICABLE"
         },
+        "outcome": "UNSUPPORTED",
         "scenarioId": "version.identity",
         "subject": "version-identity"
       }

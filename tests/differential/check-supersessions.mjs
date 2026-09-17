@@ -28,6 +28,7 @@ const CASES = [
   ["duplicate.json", "SUPERSESSIONS_DUPLICATE"],
   ["malformed.json", "SUPERSESSIONS_MALFORMED"],
   ["corpus-mismatch.json", "SUPERSESSIONS_CORPUS_MISMATCH"],
+  ["self-digest.json", "SUPERSESSIONS_SELF_DIGEST_MISMATCH"],
 ];
 
 function optionValue(args, name) {

@@ -262,6 +262,7 @@ export function runCompare({
   expectationRecordsSha256 = null,
   supersededDisclosure = null,
   supersessionsSha256 = null,
+  supersessionsEntriesSha256 = null,
 }) {
   if (platform !== "windows" && platform !== "posix") {
     throw new Error(`unsupported comparison platform ${JSON.stringify(platform)}`);
@@ -403,7 +404,10 @@ export function runCompare({
         : {
             scenarios: supersededDisclosure.map((entry) => entry.scenarioId).sort(),
             count: supersededDisclosure.length,
+            // The digest of the list document itself, and of its entries array,
+            // so the audit names exactly which bytes authorised the retirement.
             recordsSha256: supersessionsSha256,
+            entriesSha256: supersessionsEntriesSha256,
           },
     superseded: supersededDisclosure ?? [],
     perSubject: perSubjectCoverage(scenarios, statuses),
