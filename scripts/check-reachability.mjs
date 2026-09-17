@@ -13,6 +13,15 @@
  * Line-comment tails are stripped before the test, so `…; // commands::` does not
  * count either.
  *
+ * MODULE SET: the module set holds product modules, and a file declared under a
+ * `#[cfg(test)]` attribute is not one — `#[cfg(test)] mod tests;` compiles only
+ * under `cargo test`, so the file it names is the suite. The attribute is read
+ * from the file's declaration site (the sibling `mod.rs`, the parent file, or the
+ * crate root), never from the file name, so a genuinely unreferenced non-test
+ * module called `tests` cannot hide here. A declaration that cannot be located
+ * leaves the module in the set: failing to recognise a test-only module
+ * over-lists, which is the direction this check tolerates.
+ *
  * LIMITS, stated so they cannot become hiding places:
  *   - it is textual and import-shaped: a module reached only through a glob
  *     import or a macro expansion is reported unreachable when it is not, which
@@ -26,9 +35,13 @@
  *     counts as a reference, which is the one residual way a genuinely unimported
  *     module could stay unlisted, so a listed module is spot-checked by a human
  *     before it is deleted;
- *   - it is conservative in the direction that matters — a module nothing
- *     imports must be listed, so unreachable code cannot arrive unlisted. It does
- *     not prove that a listed module is truly unreachable.
+ *   - it is conservative in the direction that matters — a product module nothing
+ *     imports must be listed, so unreachable product code cannot arrive unlisted.
+ *     It does not prove that a listed module is truly unreachable;
+ *   - the module set excludes test-only modules but the reference scan does not: a
+ *     reference from test-only code still counts as a reference, so a module the
+ *     product reaches only through its tests is not catalogued. That under-lists,
+ *     and the scan does not strip `#[cfg(test)]` regions to compensate.
  *
  * It also refuses a stale report: a listed module that the product references
  * again, or a stamp that no longer matches the corpus manifest digest, must be
@@ -43,8 +56,8 @@
  *   node scripts/check-reachability.mjs            # check (gate mode)
  *   node scripts/check-reachability.mjs --write    # refresh the table
  */
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { sha256Hex } from "../tests/differential/shared/canonical.mjs";
 
@@ -71,6 +84,73 @@ function rustFiles(directory) {
   return found;
 }
 
+const ATTRIBUTE_LINE = /^\s*#\[.*\]\s*$/u;
+const DOC_COMMENT_LINE = /^\s*(\/\/\/|\/\/!)/u;
+const TEST_ATTRIBUTE = /^\s*#\[cfg\(\s*test\s*\)\]\s*$/u;
+
+/** The `mod <identifier>;` declaration item, wherever it is written. */
+function declaration(identifier) {
+  return new RegExp("(^|[\\s\\]])(?:pub(?:\\([^)]*\\))?\\s+)?mod\\s+" + identifier + "\\s*;", "u");
+}
+
+/** The parent module file that declares `file`, or null when none exists. */
+function parentModuleFile(file) {
+  const name = basename(file);
+  const parentDirectory = name === "mod.rs" ? dirname(dirname(file)) : dirname(file);
+  const candidates = [
+    join(parentDirectory, "mod.rs"),
+    parentDirectory + ".rs",
+    join(parentDirectory, "lib.rs"),
+    join(parentDirectory, "main.rs"),
+  ];
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+/**
+ * Whether `file` is declared as `mod <identifier>;` under `#[cfg(test)]`.
+ *
+ * The declaration site is the evidence, never the file name. A declaration that
+ * cannot be located leaves the module in the product set: failing to recognise a
+ * test-only module over-lists, which is the direction this check tolerates.
+ */
+function isTestOnlyModule(file, identifier) {
+  const parent = parentModuleFile(file);
+  if (parent === null) {
+    return false;
+  }
+  const lines = readFileSync(parent, "utf8").split("\n");
+  const declared = declaration(identifier);
+  for (let index = 0; index < lines.length; index += 1) {
+    // Comment tails are stripped so documented prose cannot look like a
+    // declaration; see the limits in the header.
+    const code = lines[index].split("//")[0];
+    const match = declared.exec(code);
+    if (match === null) {
+      continue;
+    }
+    // Attributes written on the declaration's own line, before `mod`.
+    for (const attribute of code
+      .slice(0, match.index + match[1].length)
+      .split("#")
+      .slice(1)) {
+      if (TEST_ATTRIBUTE.test("#" + attribute)) {
+        return true;
+      }
+    }
+    // Attributes (and doc comments, which are attributes) on the lines above.
+    for (let above = index - 1; above >= 0; above -= 1) {
+      if (!ATTRIBUTE_LINE.test(lines[above]) && !DOC_COMMENT_LINE.test(lines[above])) {
+        break;
+      }
+      if (TEST_ATTRIBUTE.test(lines[above])) {
+        return true;
+      }
+    }
+    return false;
+  }
+  return false;
+}
+
 /** Every module of a product crate, with the identifier that references it. */
 function productModules() {
   const modules = [];
@@ -83,6 +163,9 @@ function productModules() {
       const identifier =
         parts[parts.length - 1] === "mod" ? parts[parts.length - 2] : parts[parts.length - 1];
       if (identifier === undefined || identifier === "lib" || identifier === "main") {
+        continue;
+      }
+      if (isTestOnlyModule(file, identifier)) {
         continue;
       }
       modules.push({

@@ -557,9 +557,9 @@ closed.
 
 ### Verification state
 
-`npm run check` is green at `a649ae9`: differential parity at 352/352 applicable
-required scenarios with four explicit platform skips, the eight adversarial
-supersession lists refused with their named codes, the reachability ratchet holding
-over 79 of 184 product modules, and clippy, tests, and every documentation gate
-clean. CI remains `unknown` — see the retraction at the top of this file — and the
-release workflow has never executed.
+`npm run check` is green on the current working tree: differential parity at 352/352
+applicable required scenarios with four explicit platform skips, the eight
+adversarial supersession lists refused with their named codes, the reachability
+ratchet holding over 70 of 175 product modules, and clippy, tests, and every
+documentation gate clean. CI remains `unknown` — see the retraction at the top of
+this file — and the release workflow has never executed.
