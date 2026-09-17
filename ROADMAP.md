@@ -506,17 +506,46 @@ later session needs must appear here or in a commit.
 | `cf3e7df` `5c4e654` `2df3c89` `6a44f93` `382f6fc` | Block C1 — the command table stops claiming to be the product's vocabulary; four inert `.reasonix` references dropped; the `sha2` product ratchet and the zero-scenario subject assertion; `docs/development/REACHABILITY.md` plus `npm run check:reachability` |
 | `a649ae9`                                         | Block C2 (first slice) — one atomic staged replacement, `crates/siralos-adapters/src/atomic.rs`, behind all six production writers                                                                                                                              |
 
+### Settled by decision
+
+- **W5.3 — lock honesty: verify-only.** Siralos verifies `siralos.lock` on the
+  composition path and never writes one on any production path; the module doc of
+  `crates/siralos-adapters/src/lockfile.rs` now records that. Its writer stays as
+  the prepared implementation of `siralos profile lock`, one of the two explicit
+  lock operations ADR 0036 §12 freezes the semantics of while deliberately leaving
+  them unimplemented — "Normal execution must not silently modify `siralos.lock`."
+  The absent production caller is that decision, not dead code: the writer is one
+  of the six production `stage_atomic` call sites, and its tests exercise the
+  write / load / verify roundtrip through the atomic path.
+
 ### Remaining
 
-1. **W5.3 — lock honesty.** `crates/siralos-adapters/src/lockfile.rs` verifies a
-   lock in production but its writer has no production caller. Either wire it and
-   widen the payload to the identity classes ADR 0036 §11 lists, or record that
-   Siralos never writes a lockfile and say so in the docs.
-2. **W5.2 — `/cost`.** Reconciles to the accounting inputs on a fixture; the
+1. **W5.2 — `/cost`.** Reconciles to the accounting inputs on a fixture; the
    command does not exist today.
-3. **W4.5 — provider-client consolidation.** The OpenAI, Anthropic, and generic HTTP
+2. **W4.5 — provider-client consolidation.** The OpenAI, Anthropic, and generic HTTP
    paths behind a recorded-pair equivalence harness including error paths,
    explicitly not grep-equivalence.
+3. **One secret-redaction owner in `siralos-core`.** Two independent implementations
+   of the same rules exist: `crates/siralos-core/src/doctor.rs` (`secret_matcher`
+   plus `sanitize_secrets_only`) and `crates/siralos-core/src/executor/brief.rs`
+   (`sanitize_secrets_only` and its six helpers). The frozen reference had exactly
+   one shared owner — a single `SECRET_PATTERNS` list in
+   `packages/core/src/doctor/safe-report.ts` at `5da5cde`, imported by
+   `packages/core/src/executor/brief-compiler.ts:3` — so the duplication came in
+   with the port, and the two have drifted in both directions. The leak half is in
+   `doctor.rs`: a class run ending in `-`, `+`, or `/` before a non-word character
+   is left unredacted, because that scanner consumes the run and rejects without
+   backtracking, where the reference's JavaScript `\b` backtracks into the class.
+   The over-redaction half is in `brief.rs`: `replace_aws_keys` never checks the
+   leading word boundary the reference requires, and the base64 and bearer passes
+   absorb trailing `=` padding the reference backtracks out of. These are latent
+   fidelity defects on enumerated boundary shapes; no credential exposure was
+   demonstrated and nothing was measured, and neither implementation can simply
+   replace the other. The work is one owner reproducing the recovered
+   `SECRET_PATTERNS` semantics, proven against a durable corpus of the divergent
+   inputs, the rule thresholds, and the rule-interaction cases — and any
+   pinned-output change is an explicit reviewed corpus amendment, never a silent
+   regeneration.
 
 ### Blocked
 

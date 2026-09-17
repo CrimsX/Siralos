@@ -475,8 +475,13 @@ pub fn compute_executor_brief_fingerprint(brief: &ExecutorBrief) -> String {
     sha256_hex(canonical_json_value(&brief_value(brief)).as_bytes())
 }
 
-/// Secret-only redaction patterns (faithful port of the reference's
-/// `sanitizeSecretsOnly`).
+/// Secret-only redaction patterns, ported from the reference's
+/// `sanitizeSecretsOnly`. It is not a faithful port: its output is known to
+/// diverge from that reference on enumerated boundary and rule-order cases —
+/// among them the trailing `=` padding its base64 and bearer passes absorb
+/// where the reference backtracks, and the leading word boundary its AWS pass
+/// never checks. `ROADMAP.md` §10 records the divergence and the
+/// consolidation the duplication of this rule set needs.
 #[allow(clippy::too_many_lines)]
 pub fn sanitize_secrets_only(text: &str) -> String {
     let mut sanitized = text.to_owned();

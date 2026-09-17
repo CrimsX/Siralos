@@ -1,9 +1,14 @@
 //! The workspace `siralos.lock` adapter (Stage 5.4, decision 50).
 //!
-//! Owns load/write/verify over the machine-generated lock artifact. The write
-//! stages the bytes with [`crate::atomic::stage_atomic`] and swaps them with
+//! Siralos verifies `siralos.lock` and never writes one on any production
+//! path. Normal execution must not silently modify the lock (ADR 0036 §12), so
+//! no product code calls `write_workspace_lock`. That writer is the prepared
+//! implementation of `siralos profile lock` — the operation §12 freezes the
+//! semantics of and deliberately leaves unimplemented — and it stages its bytes
+//! with [`crate::atomic::stage_atomic`] and swaps them with
 //! [`crate::atomic::StagedWrite::commit`], which owns the exclusive temporary
-//! file, the regular-file check on the target, and the cleanup on any failure.
+//! file, the regular-file check on the target, the symlink and special-target
+//! refusals, and the cleanup on any failure, for when that operation lands.
 //! Loading re-derives the lock digest from the parsed identities, so a
 //! hand-edited or corrupt lock is typed invalid rather than trusted.
 
@@ -176,9 +181,11 @@ pub fn load_workspace_lock(
     Ok(Some(recomputed))
 }
 
-/// Write the lock atomically: unique temporary file, lstat-verified
-/// regular-file target check, rename over the target (a symlink target
-/// is replaced, never followed), temp-file cleanup on any failure.
+/// Write the lock atomically: a unique temporary file in the lock's
+/// directory, then a rename over the target. The target must be absent, or
+/// a regular file that is not a symlink; a symlink or special target is
+/// refused and the staged file is removed. The temporary file is cleaned up
+/// on any failure.
 ///
 /// # Errors
 ///
