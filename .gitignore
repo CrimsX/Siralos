@@ -13,7 +13,6 @@ Thumbs.db
 .idea/
 .vscode/
 .vs/
-.reasonix/
 /target/
 # The differential harness is its own excluded workspace, so it gets its own
 # target dir. The root-anchored /target/ above does not match it — and the

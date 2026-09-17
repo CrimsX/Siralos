@@ -2,7 +2,6 @@ node_modules/
 dist/
 coverage/
 package-lock.json
-.reasonix/
 # Generated differential-harness protocol documents: retained Tier-1
 # evidence must stay byte-identical to the producing runner upload, and
 # out/ holds machine-written canonical records; neither is authored text.
