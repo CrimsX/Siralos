@@ -4,20 +4,26 @@ Status: a **ratchet**, not a proof. This document lists the product modules the
 product cannot reach, so that unreachable code stays catalogued instead of
 accumulating silently. `npm run check:reachability` fails when a module is
 unreferenced by every product crate but absent from the list below, when a listed
-module has become referenced again, or when the list is stamped for a corpus
-version other than the current one.
+module has become referenced again, or when the list's stamp no longer matches the
+corpus manifest digest. The stamp at the end of this page is that digest rather
+than a version number: milestone status, versions included, belongs to the
+canonical status file, and the documentation-truth gate enforces it.
 
 **What the check actually does** — a module counts as referenced when a line
 outside its own file or directory reaches into it (`commands::`,
 `crate::commands`) or imports it (`use … commands;`). A bare mention — a field
-named after it, a comment, a string — is not a reference: a module the product
-never imports is unreachable however often its name appears in prose.
+named after it or a comment (comment tails are stripped) — is not a reference: a
+module the product never imports is unreachable however often its name appears in
+prose.
 
-Three limits, stated so they cannot become hiding places. It is **textual and
-import-shaped**: a module reached only through a glob import or a macro expansion
-is reported unreachable when it is not, which over-lists. It is **module-level**:
-it says nothing about individual items inside a reachable module. And reachability
-here is **direct**: a module imported only by another unreachable module is not
+Four limits, stated so they cannot become hiding places. String literals are not
+parsed, so a literal containing `identifier::` still counts as a reference — the
+one residual way a genuinely unimported module could stay unlisted, which is why a
+listed module is spot-checked by a human before anything is deleted. It is
+**textual and import-shaped**: a module reached only through a glob import or a
+macro expansion is reported unreachable when it is not, which over-lists. It is
+**module-level**: it says nothing about individual items inside a reachable module.
+And reachability here is **direct**: a module imported only by another unreachable module is not
 listed, so this catalogue is a lower bound on the unreachable set, not an exact
 enumeration. What it does guarantee is the direction that matters — a module
 nothing imports must be listed, so unreachable code cannot arrive unlisted — and it
@@ -37,7 +43,7 @@ governed by the reference rule.
 
 <!-- reachability:begin -->
 
-stamp: corpus v82
+stamp: corpus manifest sha256:bb577a317738faf0099f8a2ce1caa94e5125e7404172ff084c20b7878944fa7e
 
 | Module                                                       | Corpus subjects that mention it                                                                                                                                                                                                                                       | Sole consumer            |
 | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |

@@ -5,13 +5,13 @@
  * of product modules the product cannot reach honest. It is a catalogue check,
  * NOT a reachability proof.
  *
- * METHOD: a module is "unreferenced" when the identifier of its file (or of its
- * directory, for a `mod.rs») appears nowhere in the product crates' Rust sources
- * except (a) in the module's own file or directory, (b) on a bare `mod x;» /
- * `pub mod x;» declaration line, which declares rather than uses, or (c) in a
- * the shape of an import or a path. A bare mention of the identifier — a field
- * named after it, a comment, a string — is not a reference, because a module the
+ * METHOD: a module is "unreferenced" when no line outside its own file or
+ * directory has the shape of an import or a path into it — `commands::`,
+ * `crate::commands`, `use … commands;`. A bare mention of the identifier (a
+ * field named after it, a comment) is not a reference, because a module the
  * product never imports is unreachable however often its name appears in prose.
+ * Line-comment tails are stripped before the test, so `…; // commands::` does not
+ * count either.
  *
  * LIMITS, stated so they cannot become hiding places:
  *   - it is textual and import-shaped: a module reached only through a glob
@@ -22,13 +22,19 @@
  *   - reachability here is DIRECT: a module imported only by another unreachable
  *     module is not listed, so the catalogue is a lower bound on the unreachable
  *     set rather than an exact enumeration;
+ *   - string literals are not parsed: a literal containing `identifier::` still
+ *     counts as a reference, which is the one residual way a genuinely unimported
+ *     module could stay unlisted, so a listed module is spot-checked by a human
+ *     before it is deleted;
  *   - it is conservative in the direction that matters — a module nothing
  *     imports must be listed, so unreachable code cannot arrive unlisted. It does
  *     not prove that a listed module is truly unreachable.
  *
  * It also refuses a stale report: a listed module that the product references
- * again, or a stamp from a corpus version other than the current one, must be
- * refreshed before the gate passes.
+ * again, or a stamp that no longer matches the corpus manifest digest, must be
+ * refreshed before the gate passes. The stamp is the manifest's SHA-256 rather
+ * than a version number because milestone status — versions included — belongs to
+ * the canonical status file, and the documentation-truth gate enforces that.
  *
  * The "corpus subjects" column is derived by matching a module identifier inside
  * the scenario documents, so it is a pointer for a reader, not a boundary claim.
@@ -40,7 +46,7 @@
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CORPUS_VERSION } from "../tests/differential/shared/contract.mjs";
+import { sha256Hex } from "../tests/differential/shared/canonical.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..");
@@ -102,10 +108,10 @@ function isReferenced(module) {
         continue;
       }
       for (const line of readFileSync(file, "utf8").split("\n")) {
-        if (line.trim().startsWith("//")) {
-          continue;
-        }
-        if (reaches.test(line) || imports.test(line)) {
+        // Comment tails are stripped so a documented name cannot look like an
+        // import. String literals are not parsed; see the limits in the header.
+        const code = line.split("//")[0];
+        if (reaches.test(code) || imports.test(code)) {
           return true;
         }
       }
@@ -151,9 +157,15 @@ function listedModules(text) {
     throw new Error("REACHABILITY.md is missing its reachability:begin/end block");
   }
   const block = text.slice(start + BEGIN.length, end);
-  const stamp = /stamp: corpus v(\d+)/u.exec(block);
+  const stamp = /stamp: corpus manifest (sha256:[0-9a-f]{64})/u.exec(block);
   const listed = [...block.matchAll(/^\| `([^`]+)`/gmu)].map((match) => match[1]);
-  return { listed, stamp: stamp === null ? null : Number(stamp[1]) };
+  return { listed, stamp: stamp === null ? null : stamp[1] };
+}
+
+/** The corpus manifest digest the catalogue was generated against. */
+function corpusManifestDigest() {
+  const manifest = join(REPO_ROOT, "tests", "differential", "corpus", "manifest.json");
+  return "sha256:" + sha256Hex(readFileSync(manifest, "utf8"));
 }
 
 function renderBlock(entries) {
@@ -162,7 +174,7 @@ function renderBlock(entries) {
     .join("\n");
   return [
     BEGIN,
-    "stamp: corpus v" + CORPUS_VERSION,
+    "stamp: corpus manifest " + corpusManifestDigest(),
     "",
     "| Module | Corpus subjects that mention it | Sole consumer |",
     "| --- | --- | --- |",
@@ -197,12 +209,13 @@ function main() {
     return;
   }
   const errors = [];
-  if (stamp !== CORPUS_VERSION) {
+  const manifestDigest = corpusManifestDigest();
+  if (stamp !== manifestDigest) {
     errors.push(
-      "REACHABILITY.md is stamped for corpus v" +
+      "REACHABILITY.md is stamped " +
         String(stamp) +
-        " but the corpus is v" +
-        CORPUS_VERSION +
+        " but the corpus manifest digests to " +
+        manifestDigest +
         "; refresh it with --write",
     );
   }
