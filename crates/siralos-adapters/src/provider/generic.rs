@@ -25,7 +25,11 @@
 
 use crate::provider::credential::HostCredential;
 use crate::provider::tool_names::ToolNames;
-use crate::provider::{ReplayHooks, record_outcome};
+use crate::provider::{
+    ANTHROPIC_VERSION, CANCELLED_AFTER_HTTP_RESPONSE,
+    CANCELLED_BEFORE_HTTP_CALL, CANCELLED_BEFORE_HTTP_SEND,
+    NO_PROVIDER_RESPONSE_OBSERVED, ReplayHooks, record_outcome,
+};
 use serde_json::Value;
 use siralos_core::composition::Protocol;
 use siralos_core::determinism::{
@@ -85,7 +89,7 @@ impl GenericProvider {
             hooks: ReplayHooks::default(),
             last_replay: RefCell::new(
                 ProviderReplayAvailability::Unavailable {
-                    reason: "no provider response observed yet".to_owned(),
+                    reason: NO_PROVIDER_RESPONSE_OBSERVED.to_owned(),
                 },
             ),
         }
@@ -119,7 +123,7 @@ impl GenericProvider {
     #[must_use]
     pub fn take_last_replay_availability(&self) -> ProviderReplayAvailability {
         self.last_replay.replace(ProviderReplayAvailability::Unavailable {
-            reason: "no provider response observed yet".to_owned(),
+            reason: NO_PROVIDER_RESPONSE_OBSERVED.to_owned(),
         })
     }
 
@@ -329,7 +333,7 @@ impl GenericProvider {
     ) -> CallOutcome {
         if cancellation.is_some_and(|signal| signal.is_cancelled()) {
             return CallOutcome::Events(vec![ProviderEvent::Cancelled {
-                message: "Host cancelled before HTTP call".to_owned(),
+                message: CANCELLED_BEFORE_HTTP_CALL.to_owned(),
             }]);
         }
         let client = match crate::provider::build_http_client() {
@@ -415,7 +419,7 @@ impl GenericProvider {
         }
         if cancellation.is_some_and(|signal| signal.is_cancelled()) {
             return CallOutcome::Events(vec![ProviderEvent::Cancelled {
-                message: "Host cancelled before HTTP send".to_owned(),
+                message: CANCELLED_BEFORE_HTTP_SEND.to_owned(),
             }]);
         }
         let url = chat_url(endpoint, protocol);
@@ -425,7 +429,7 @@ impl GenericProvider {
             if provider == "anthropic" {
                 req = req
                     .header("x-api-key", cred)
-                    .header("anthropic-version", "2023-06-01");
+                    .header("anthropic-version", ANTHROPIC_VERSION);
             } else {
                 req = req.header("Authorization", format!("Bearer {cred}"));
             }
@@ -443,7 +447,7 @@ impl GenericProvider {
         };
         if cancellation.is_some_and(|signal| signal.is_cancelled()) {
             return CallOutcome::Events(vec![ProviderEvent::Cancelled {
-                message: "Host cancelled after HTTP response".to_owned(),
+                message: CANCELLED_AFTER_HTTP_RESPONSE.to_owned(),
             }]);
         }
         let status = response.status();
@@ -842,7 +846,8 @@ mod tests {
     use super::{CallOutcome, GenericProvider, HostCredential};
     use crate::provider::ReplayHooks;
     use crate::provider::probe::{
-        ERROR_STATUSES, Fixture, error_bodies, serve,
+        ERROR_STATUSES, Fixture, error_bodies, retaining_hooks, serve,
+        serve_truncated,
     };
     use siralos_core::composition::Protocol;
     use siralos_core::determinism::ProviderReplayAvailability;
@@ -867,12 +872,13 @@ mod tests {
         })
     }
 
-    /// Drive the real `call_generic` path at `endpoint` under `provider`.
-    fn drive_named(
+    /// Drive the real `call_generic` path at `endpoint` with recorder hooks.
+    fn drive_named_with(
         provider: &str,
         endpoint: &str,
         protocol: Protocol,
         cancellation: Option<CancellationSignal<'_>>,
+        hooks: &ReplayHooks,
     ) -> Vec<ProviderEvent> {
         match GenericProvider::call_generic(
             provider,
@@ -882,7 +888,7 @@ mod tests {
             Some("test-cred".to_owned()),
             &probe_request(),
             cancellation,
-            &ReplayHooks::default(),
+            hooks,
             &probe_replay(),
         ) {
             CallOutcome::Events(events) => events,
@@ -890,6 +896,22 @@ mod tests {
                 panic!("probe expected a buffered outcome")
             }
         }
+    }
+
+    /// Drive the real `call_generic` path at `endpoint` under `provider`.
+    fn drive_named(
+        provider: &str,
+        endpoint: &str,
+        protocol: Protocol,
+        cancellation: Option<CancellationSignal<'_>>,
+    ) -> Vec<ProviderEvent> {
+        drive_named_with(
+            provider,
+            endpoint,
+            protocol,
+            cancellation,
+            &ReplayHooks::default(),
+        )
     }
 
     /// The same, under the neutral probe vendor name.
@@ -1094,6 +1116,122 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn probe_records_what_replay_records_at_each_outcome() {
+        // Recorded baseline, not an approved-parity claim. The non-completions
+        // protocols parse the whole body inline, so this drives
+        // `AnthropicMessages` and pins what `record_outcome` receives, which no
+        // `ProviderEvent` shows.
+        let (hooks, recorder) = retaining_hooks();
+
+        // Pre-response failure: no status, empty body.
+        let _ = drive_named_with(
+            "probe-vendor",
+            "http://127.0.0.1:1",
+            Protocol::OpenAiCompletions,
+            None,
+            &hooks,
+        );
+
+        // HTTP error: the whole bounded body reaches the recorder.
+        let long_body = format!("{}tail", "e".repeat(700));
+        let error = serve(Fixture { status: 404, body: long_body.clone() });
+        let events = drive_named_with(
+            "probe-vendor",
+            &error.base_url,
+            Protocol::AnthropicMessages,
+            None,
+            &hooks,
+        );
+        let _ = error.recorded();
+        let message = failed_message(&events);
+        assert!(
+            message.len() < long_body.len(),
+            "the message is the bounded snippet: {} bytes",
+            message.len()
+        );
+
+        // Parse failure on a 2xx: still the whole body.
+        let unparseable = "not json ".repeat(100);
+        let raw = serve(Fixture { status: 200, body: unparseable.clone() });
+        let _ = drive_named_with(
+            "probe-vendor",
+            &raw.base_url,
+            Protocol::AnthropicMessages,
+            None,
+            &hooks,
+        );
+        let _ = raw.recorded();
+
+        // Success: the status and the body of the response that parsed.
+        let ok_body = r#"{"content":[{"type":"text","text":"hi"}]}"#;
+        let ok = serve(Fixture { status: 200, body: ok_body.to_owned() });
+        let _ = drive_named_with(
+            "probe-vendor",
+            &ok.base_url,
+            Protocol::AnthropicMessages,
+            None,
+            &hooks,
+        );
+        let _ = ok.recorded();
+
+        let records = recorder.records_snapshot();
+        assert_eq!(records.len(), 4, "one recording per terminal outcome");
+        assert_eq!(records[0].identity.status, None);
+        assert_eq!(records[0].body, "");
+        assert_eq!(records[1].identity.status, Some(404));
+        assert_eq!(records[1].body, long_body);
+        assert_eq!(records[2].identity.status, Some(200));
+        assert_eq!(records[2].body, unparseable);
+        assert_eq!(records[3].identity.status, Some(200));
+        assert_eq!(records[3].body, ok_body);
+    }
+
+    #[test]
+    fn probe_records_the_204_empty_body_as_a_parse_failure() {
+        // Recorded baseline, not an approved-parity claim. A 204 is a 2xx, so it
+        // takes the parse path; the matrix's 200-only successes leave that
+        // `is_success` boundary unpinned.
+        let (hooks, recorder) = retaining_hooks();
+        let server = serve(Fixture { status: 204, body: String::new() });
+        let events = drive_named_with(
+            "probe-vendor",
+            &server.base_url,
+            Protocol::AnthropicMessages,
+            None,
+            &hooks,
+        );
+        let _ = server.recorded();
+        let message = failed_message(&events);
+        assert!(
+            message.starts_with("probe-vendor response JSON parse failed: "),
+            "{message}"
+        );
+        assert!(
+            !message.contains("response failed: 204"),
+            "204 is a success status, so this is not the error branch: {message}"
+        );
+        let records = recorder.records_snapshot();
+        assert_eq!(records[0].identity.status, Some(204));
+        assert_eq!(records[0].body, "");
+    }
+
+    #[test]
+    fn probe_records_the_truncated_response_as_a_read_failure() {
+        // Recorded baseline, not an approved-parity claim. The fixture promises
+        // more body than it sends and closes: the read path fails, and only the
+        // prefix is asserted because the transport text is `reqwest`'s.
+        let server = serve_truncated(4096, "{\"content\":[{\"type\"");
+        let events =
+            drive(&server.base_url, Protocol::AnthropicMessages, None);
+        let _ = server.recorded();
+        let message = failed_message(&events);
+        assert!(
+            message.starts_with("probe-vendor response read failed: "),
+            "{message}"
+        );
     }
 
     #[test]

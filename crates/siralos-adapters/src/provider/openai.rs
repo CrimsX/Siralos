@@ -15,7 +15,10 @@
 //! credential or raw body text (only its `sha256`).
 
 use crate::provider::credential::HostCredential;
-use crate::provider::{ReplayHooks, record_outcome};
+use crate::provider::{
+    CANCELLED_BEFORE_HTTP_CALL, CANCELLED_BEFORE_HTTP_SEND,
+    NO_PROVIDER_RESPONSE_OBSERVED, ReplayHooks, record_outcome,
+};
 use serde_json::Value;
 use siralos_core::determinism::{
     Clock, ProviderReplayAvailability, ReplayRecorder,
@@ -56,7 +59,7 @@ impl OpenAiProvider {
             hooks: ReplayHooks::default(),
             last_replay: RefCell::new(
                 ProviderReplayAvailability::Unavailable {
-                    reason: "no provider response observed yet".to_owned(),
+                    reason: NO_PROVIDER_RESPONSE_OBSERVED.to_owned(),
                 },
             ),
         }
@@ -78,7 +81,7 @@ impl OpenAiProvider {
     #[must_use]
     pub fn take_last_replay_availability(&self) -> ProviderReplayAvailability {
         self.last_replay.replace(ProviderReplayAvailability::Unavailable {
-            reason: "no provider response observed yet".to_owned(),
+            reason: NO_PROVIDER_RESPONSE_OBSERVED.to_owned(),
         })
     }
 
@@ -160,7 +163,7 @@ impl OpenAiProvider {
     ) -> Vec<ProviderEvent> {
         if cancellation.is_cancelled() {
             return vec![ProviderEvent::Cancelled {
-                message: "Host cancelled before HTTP call".to_owned(),
+                message: CANCELLED_BEFORE_HTTP_CALL.to_owned(),
             }];
         }
         let client = match crate::provider::build_http_client() {
@@ -232,81 +235,30 @@ impl OpenAiProvider {
         }
         if cancellation.is_cancelled() {
             return vec![ProviderEvent::Cancelled {
-                message: "Host cancelled before HTTP send".to_owned(),
+                message: CANCELLED_BEFORE_HTTP_SEND.to_owned(),
             }];
         }
-        let response = client
-            .post(chat_completions_url(base_url))
-            .header("Authorization", format!("Bearer {credential}"))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send();
-        let response = match response {
-            Ok(resp) => resp,
-            Err(err) => {
-                let events = vec![ProviderEvent::Failed(format!(
-                    "openai request failed: {err}"
-                ))];
-                record_outcome(hooks, last_replay, "openai", model, None, "");
+        let pipeline = crate::provider::run_chat_pipeline(
+            "openai",
+            model,
+            client
+                .post(chat_completions_url(base_url))
+                .header("Authorization", format!("Bearer {credential}"))
+                .header("Content-Type", "application/json")
+                .json(&body),
+            cancellation,
+            hooks,
+            last_replay,
+        );
+        let (status, text, value) = match pipeline {
+            crate::provider::ChatPipelineOutcome::Events(events) => {
                 return events;
             }
-        };
-        if cancellation.is_cancelled() {
-            return vec![ProviderEvent::Cancelled {
-                message: "Host cancelled after HTTP response".to_owned(),
-            }];
-        }
-        let status = response.status();
-        // Bound the response body at READ time (at most 1 MiB is buffered)
-        // and sanitize untrusted data before embedding it in the
-        // Host-visible diagnostic.
-        let text = match crate::provider::bounded_body_text(response) {
-            Ok(text) => text,
-            Err(err) => {
-                let events = vec![ProviderEvent::Failed(format!(
-                    "openai response read failed: {err}"
-                ))];
-                record_outcome(hooks, last_replay, "openai", model, None, "");
-                return events;
-            }
-        };
-        if !status.is_success() {
-            // Sanitize the untrusted body snippet before embedding.
-            let snippet: String = text.chars().take(512).collect();
-            let safe: String = snippet
-                .chars()
-                .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
-                .collect();
-            let events = vec![ProviderEvent::Failed(format!(
-                "openai error {status}: {safe}"
-            ))];
-            record_outcome(
-                hooks,
-                last_replay,
-                "openai",
-                model,
-                Some(status.as_u16()),
-                &text,
-            );
-            return events;
-        }
-        let value: Value = match serde_json::from_str(&text) {
-            Ok(v) => v,
-            Err(err) => {
-                let snippet: String = text.chars().take(512).collect();
-                let events = vec![ProviderEvent::Failed(format!(
-                    "openai response JSON parse failed: {err}: {snippet}"
-                ))];
-                record_outcome(
-                    hooks,
-                    last_replay,
-                    "openai",
-                    model,
-                    Some(status.as_u16()),
-                    &text,
-                );
-                return events;
-            }
+            crate::provider::ChatPipelineOutcome::Parsed {
+                status,
+                text,
+                value,
+            } => (status, text, value),
         };
         let mut events = Vec::new();
         let choices = value
@@ -390,7 +342,8 @@ mod tests {
     };
     use crate::provider::ReplayHooks;
     use crate::provider::probe::{
-        ERROR_STATUSES, Fixture, error_bodies, reason, serve,
+        ERROR_STATUSES, Fixture, error_bodies, reason, retaining_hooks, serve,
+        serve_truncated,
     };
     use siralos_core::determinism::ProviderReplayAvailability;
     use siralos_core::provider::{
@@ -414,10 +367,11 @@ mod tests {
         })
     }
 
-    /// Drive the real `call_openai` path at `base_url`.
-    fn drive(
+    /// Drive the real `call_openai` path at `base_url` with recorder hooks.
+    fn drive_with(
         base_url: &str,
         cancellation: CancellationSignal<'_>,
+        hooks: &ReplayHooks,
     ) -> Vec<ProviderEvent> {
         OpenAiProvider::call_openai(
             "gpt-4o",
@@ -425,9 +379,17 @@ mod tests {
             "test-cred",
             &probe_request(),
             cancellation,
-            &ReplayHooks::default(),
+            hooks,
             &probe_replay(),
         )
+    }
+
+    /// Drive the real `call_openai` path at `base_url`.
+    fn drive(
+        base_url: &str,
+        cancellation: CancellationSignal<'_>,
+    ) -> Vec<ProviderEvent> {
+        drive_with(base_url, cancellation, &ReplayHooks::default())
     }
 
     /// The single `Failed` message an error fixture produces.
@@ -624,5 +586,113 @@ mod tests {
             events[0],
             siralos_core::provider::ProviderEvent::Failed(_)
         ));
+    }
+
+    #[test]
+    fn probe_records_what_replay_records_at_each_outcome() {
+        // Recorded baseline, not an approved-parity claim. `record_outcome`'s
+        // arguments are invisible in every `ProviderEvent`, so they are pinned
+        // here: a later extraction could hand the recorder the 512-character
+        // message snippet instead of the whole bounded body, and every visible
+        // assertion would still pass.
+        let (hooks, recorder) = retaining_hooks();
+
+        // Pre-response failure: no status, empty body.
+        let _ = drive_with(
+            "http://127.0.0.1:1",
+            CancellationToken::new().signal(),
+            &hooks,
+        );
+
+        // HTTP error: the whole bounded body reaches the recorder, while the
+        // event message stays at the 512-character snippet.
+        let long_body = format!("{}tail", "e".repeat(700));
+        let error = serve(Fixture { status: 404, body: long_body.clone() });
+        let events = drive_with(
+            &error.base_url,
+            CancellationToken::new().signal(),
+            &hooks,
+        );
+        let _ = error.recorded();
+        let message = failed_message(&events);
+        assert!(
+            message.len() < long_body.len(),
+            "the message is the bounded snippet: {} bytes",
+            message.len()
+        );
+
+        // Parse failure on a 2xx: still the whole body.
+        let unparseable = "not json ".repeat(100);
+        let raw = serve(Fixture { status: 200, body: unparseable.clone() });
+        let _ = drive_with(
+            &raw.base_url,
+            CancellationToken::new().signal(),
+            &hooks,
+        );
+        let _ = raw.recorded();
+
+        // Success: the status and the body of the response that parsed.
+        let ok_body = r#"{"choices":[{"message":{"content":"hi"}}]}"#;
+        let ok = serve(Fixture { status: 200, body: ok_body.to_owned() });
+        let _ = drive_with(
+            &ok.base_url,
+            CancellationToken::new().signal(),
+            &hooks,
+        );
+        let _ = ok.recorded();
+
+        let records = recorder.records_snapshot();
+        assert_eq!(records.len(), 4, "one recording per terminal outcome");
+        assert_eq!(records[0].identity.status, None);
+        assert_eq!(records[0].body, "");
+        assert_eq!(records[1].identity.status, Some(404));
+        assert_eq!(records[1].body, long_body);
+        assert_eq!(records[2].identity.status, Some(200));
+        assert_eq!(records[2].body, unparseable);
+        assert_eq!(records[3].identity.status, Some(200));
+        assert_eq!(records[3].body, ok_body);
+    }
+
+    #[test]
+    fn probe_records_the_204_empty_body_as_a_parse_failure() {
+        // Recorded baseline, not an approved-parity claim. A 204 is a 2xx, so it
+        // takes the parse path; the matrix's 200-only successes leave that
+        // `is_success` boundary unpinned.
+        let (hooks, recorder) = retaining_hooks();
+        let server = serve(Fixture { status: 204, body: String::new() });
+        let events = drive_with(
+            &server.base_url,
+            CancellationToken::new().signal(),
+            &hooks,
+        );
+        let _ = server.recorded();
+        let message = failed_message(&events);
+        assert!(
+            message.starts_with("openai response JSON parse failed: "),
+            "{message}"
+        );
+        assert!(
+            !message.contains("openai error"),
+            "204 is a success status, so this is not the error branch: {message}"
+        );
+        let records = recorder.records_snapshot();
+        assert_eq!(records[0].identity.status, Some(204));
+        assert_eq!(records[0].body, "");
+    }
+
+    #[test]
+    fn probe_records_the_truncated_response_as_a_read_failure() {
+        // Recorded baseline, not an approved-parity claim. The fixture promises
+        // more body than it sends and closes: the read path fails, and only the
+        // prefix is asserted because the transport text is `reqwest`'s.
+        let server = serve_truncated(4096, "{\"choices\":[{\"message\"");
+        let events =
+            drive(&server.base_url, CancellationToken::new().signal());
+        let _ = server.recorded();
+        let message = failed_message(&events);
+        assert!(
+            message.starts_with("openai response read failed: "),
+            "{message}"
+        );
     }
 }

@@ -64,6 +64,28 @@ pub(crate) fn response_body_sha256(text: &str) -> String {
     siralos_core::identity::sha256_hex(text.as_bytes())
 }
 
+/// Cancellation message for a signal already tripped before the provider call.
+pub(crate) const CANCELLED_BEFORE_HTTP_CALL: &str =
+    "Host cancelled before HTTP call";
+
+/// Cancellation message for a signal tripped before the request is sent.
+pub(crate) const CANCELLED_BEFORE_HTTP_SEND: &str =
+    "Host cancelled before HTTP send";
+
+/// Cancellation message for a signal tripped once the response has arrived.
+pub(crate) const CANCELLED_AFTER_HTTP_RESPONSE: &str =
+    "Host cancelled after HTTP response";
+
+/// The `anthropic-version` header value every Anthropic-shaped path sends.
+pub(crate) const ANTHROPIC_VERSION: &str = "2023-06-01";
+
+/// The replay reason before any provider response has been observed.
+///
+/// It is the initial `last_replay` value and the one restored by
+/// `take_last_replay_availability`; the probe asserts this exact text.
+pub(crate) const NO_PROVIDER_RESPONSE_OBSERVED: &str =
+    "no provider response observed yet";
+
 /// Record one provider HTTP outcome for replay.
 ///
 /// `body_text` must be the sanitized bounded text (never the credential).
@@ -175,6 +197,115 @@ pub(crate) fn build_http_client()
         .build()
 }
 
+/// What one shared chat-pipeline call produced.
+pub(crate) enum ChatPipelineOutcome {
+    /// Terminal: the failure is already recorded, and the caller returns these.
+    Events(Vec<siralos_core::provider::ProviderEvent>),
+    /// The response parsed. The caller performs its own shape extraction.
+    Parsed {
+        /// The status the body arrived with.
+        status: reqwest::StatusCode,
+        /// The bounded, sanitized body text, exactly as recorded for replay.
+        text: String,
+        /// The parsed JSON body.
+        value: serde_json::Value,
+    },
+}
+
+/// Run the region the two chat clients share once a request is ready to send.
+///
+/// The caller owns everything up to and including building the request — URL,
+/// headers and body differ per client — and its own post-parse extraction. This
+/// owns the send and its failure mapping, the post-response cancellation check,
+/// the bounded read and its failure, the non-success mapping, and the JSON parse
+/// and its failure, recording each terminal outcome through [`record_outcome`].
+///
+/// The two asymmetries the probe pins are preserved deliberately: on the error
+/// path the *message* embeds a 512-character, control-filtered snippet while the
+/// *recording* receives the whole bounded text; on the parse-failure path the
+/// message embeds a 512-character snippet with no filter, and the recording
+/// still receives the whole bounded text.
+pub(crate) fn run_chat_pipeline(
+    provider: &str,
+    model: &str,
+    request: reqwest::blocking::RequestBuilder,
+    cancellation: siralos_core::provider::CancellationSignal<'_>,
+    hooks: &ReplayHooks,
+    last_replay: &core::cell::RefCell<
+        siralos_core::determinism::ProviderReplayAvailability,
+    >,
+) -> ChatPipelineOutcome {
+    use siralos_core::provider::ProviderEvent;
+    let response = match request.send() {
+        Ok(response) => response,
+        Err(err) => {
+            let events = vec![ProviderEvent::Failed(format!(
+                "{provider} request failed: {err}"
+            ))];
+            record_outcome(hooks, last_replay, provider, model, None, "");
+            return ChatPipelineOutcome::Events(events);
+        }
+    };
+    if cancellation.is_cancelled() {
+        return ChatPipelineOutcome::Events(vec![ProviderEvent::Cancelled {
+            message: CANCELLED_AFTER_HTTP_RESPONSE.to_owned(),
+        }]);
+    }
+    let status = response.status();
+    // Bound the response body at READ time (at most 1 MiB is buffered)
+    // and sanitize untrusted data before embedding it in the
+    // Host-visible diagnostic.
+    let text = match bounded_body_text(response) {
+        Ok(text) => text,
+        Err(err) => {
+            let events = vec![ProviderEvent::Failed(format!(
+                "{provider} response read failed: {err}"
+            ))];
+            record_outcome(hooks, last_replay, provider, model, None, "");
+            return ChatPipelineOutcome::Events(events);
+        }
+    };
+    if !status.is_success() {
+        // Sanitize the untrusted body snippet before embedding.
+        let snippet: String = text.chars().take(512).collect();
+        let safe: String = snippet
+            .chars()
+            .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+            .collect();
+        let events = vec![ProviderEvent::Failed(format!(
+            "{provider} error {status}: {safe}"
+        ))];
+        record_outcome(
+            hooks,
+            last_replay,
+            provider,
+            model,
+            Some(status.as_u16()),
+            &text,
+        );
+        return ChatPipelineOutcome::Events(events);
+    }
+    let value: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(err) => {
+            let snippet: String = text.chars().take(512).collect();
+            let events = vec![ProviderEvent::Failed(format!(
+                "{provider} response JSON parse failed: {err}: {snippet}"
+            ))];
+            record_outcome(
+                hooks,
+                last_replay,
+                provider,
+                model,
+                Some(status.as_u16()),
+                &text,
+            );
+            return ChatPipelineOutcome::Events(events);
+        }
+    };
+    ChatPipelineOutcome::Parsed { status, text, value }
+}
+
 /// A one-shot loopback HTTP fixture server for the offline provider probe.
 ///
 /// The probe's purpose is to drive the real `call_*` paths with no live
@@ -270,6 +401,15 @@ pub(crate) mod probe {
     }
 
     impl RecordedRequest {
+        /// A placeholder for a server that nothing contacted.
+        fn absent() -> Self {
+            Self {
+                request_line: String::new(),
+                headers: Vec::new(),
+                body: String::new(),
+            }
+        }
+
         /// The value of `name` (lower-cased) when the client sent it.
         pub(crate) fn header(&self, name: &str) -> Option<&str> {
             self.headers
@@ -321,13 +461,44 @@ pub(crate) mod probe {
         let port = listener.local_addr().expect("loopback addr").port();
         let handle = std::thread::spawn(move || match accept(&listener) {
             Some(stream) => handle_connection(stream, &fixture),
-            None => RecordedRequest {
-                request_line: String::new(),
-                headers: Vec::new(),
-                body: String::new(),
-            },
+            None => RecordedRequest::absent(),
         });
         Server { base_url: format!("http://127.0.0.1:{port}"), handle }
+    }
+
+    /// Serve one truncated response: `declared` bytes promised, `body` sent.
+    ///
+    /// The client sees a well-formed status line and headers, a body shorter
+    /// than the declared length, and then a close — the shape a dropped
+    /// connection produces. Returns the loopback base URL.
+    pub(crate) fn serve_truncated(declared: usize, body: &str) -> Server {
+        let listener =
+            TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let port = listener.local_addr().expect("loopback addr").port();
+        let body = body.to_owned();
+        let handle = std::thread::spawn(move || match accept(&listener) {
+            Some(stream) => handle_truncated(stream, declared, &body),
+            None => RecordedRequest::absent(),
+        });
+        Server { base_url: format!("http://127.0.0.1:{port}"), handle }
+    }
+
+    /// Hooks wired to a recorder that retains what `record_outcome` is handed.
+    ///
+    /// The recorder is the crate's existing retaining one; the probe only reads
+    /// its snapshot afterwards, so the observation path is the production one.
+    pub(crate) fn retaining_hooks() -> (
+        crate::provider::ReplayHooks,
+        std::rc::Rc<siralos_core::determinism::RetainingReplayRecorder>,
+    ) {
+        let recorder = std::rc::Rc::new(
+            siralos_core::determinism::RetainingReplayRecorder::new(),
+        );
+        let hooks = crate::provider::ReplayHooks {
+            clock: None,
+            recorder: Some(recorder.clone()),
+        };
+        (hooks, recorder)
     }
 
     /// Accept one connection, or `None` once the deadline passes.
@@ -355,11 +526,46 @@ pub(crate) mod probe {
         None
     }
 
-    /// Read one HTTP/1.1 request, answer it, and record what was read.
+    /// Read one HTTP/1.1 request, answer it in full, and record what was read.
     fn handle_connection(
         mut stream: TcpStream,
         fixture: &Fixture,
     ) -> RecordedRequest {
+        let request = read_request(&mut stream);
+        let response = format!(
+            "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+            fixture.status,
+            reason(fixture.status),
+            fixture.body.len(),
+            fixture.body
+        );
+        stream.write_all(response.as_bytes()).expect("write response");
+        stream.flush().expect("flush response");
+        request
+    }
+
+    /// Read one request, promise more than is sent, then close.
+    fn handle_truncated(
+        mut stream: TcpStream,
+        declared: usize,
+        body: &str,
+    ) -> RecordedRequest {
+        let request = read_request(&mut stream);
+        let headers = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+             Content-Length: {declared}\r\nConnection: close\r\n\r\n"
+        );
+        stream.write_all(headers.as_bytes()).expect("write headers");
+        stream.write_all(body.as_bytes()).expect("write partial body");
+        // Deliberately short: the declared length is never satisfied, and the
+        // close stands in for a dropped connection.
+        stream.flush().expect("flush truncated response");
+        request
+    }
+
+    /// Read one HTTP/1.1 request off `stream`.
+    fn read_request(stream: &mut TcpStream) -> RecordedRequest {
         let mut reader = BufReader::new(stream.try_clone().expect("clone"));
         let mut request_line = String::new();
         reader.read_line(&mut request_line).expect("request line");
@@ -383,21 +589,10 @@ pub(crate) mod probe {
         }
         let mut bytes = vec![0u8; content_length];
         reader.read_exact(&mut bytes).expect("request body");
-        let body = String::from_utf8_lossy(&bytes).into_owned();
-        let response = format!(
-            "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\n\
-             Content-Length: {}\r\nConnection: close\r\n\r\n{}",
-            fixture.status,
-            reason(fixture.status),
-            fixture.body.len(),
-            fixture.body
-        );
-        stream.write_all(response.as_bytes()).expect("write response");
-        stream.flush().expect("flush response");
         RecordedRequest {
             request_line: request_line.trim_end().to_owned(),
             headers,
-            body,
+            body: String::from_utf8_lossy(&bytes).into_owned(),
         }
     }
 
@@ -405,6 +600,7 @@ pub(crate) mod probe {
     pub(crate) fn reason(status: u16) -> &'static str {
         match status {
             200 => "OK",
+            204 => "No Content",
             400 => "Bad Request",
             401 => "Unauthorized",
             404 => "Not Found",
