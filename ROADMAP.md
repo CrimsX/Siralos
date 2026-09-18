@@ -518,6 +518,18 @@ later session needs must appear here or in a commit.
   of the six production `stage_atomic` call sites, and its tests exercise the
   write / load / verify roundtrip through the atomic path.
 
+- **One secret-redaction owner in `siralos-core`.** `crates/siralos-core/src/doctor.rs`
+  now owns the six ordered passes — `redact_secrets`, the ASCII `\b` boundary, the
+  JavaScript `\s` set, and the greedy-run backtracking the reference's regular
+  expressions rely on — and `crates/siralos-core/src/executor/brief.rs` re-exports
+  it, so the 290-line duplicate and its thirteen functions are gone. The divergence
+  shapes the four-seat panel enumerated are fixed against the recovered reference
+  (`packages/core/src/doctor/safe-report.ts` at `5da5cde`), and the durable corpus
+  in `doctor.rs` records its rows with expectations produced by executing that
+  reference in Node rather than by reading it. Differential parity held at 352/352
+  with no corpus amendment and no pinned record changed, and `#[allow(dead_code)]`
+  is now refused under `crates/` by `scripts/check-rust-architecture.mjs`.
+
 ### Remaining
 
 1. **W5.2 — `/cost`.** Reconciles to the accounting inputs on a fixture; the
@@ -525,27 +537,18 @@ later session needs must appear here or in a commit.
 2. **W4.5 — provider-client consolidation.** The OpenAI, Anthropic, and generic HTTP
    paths behind a recorded-pair equivalence harness including error paths,
    explicitly not grep-equivalence.
-3. **One secret-redaction owner in `siralos-core`.** Two independent implementations
-   of the same rules exist: `crates/siralos-core/src/doctor.rs` (`secret_matcher`
-   plus `sanitize_secrets_only`) and `crates/siralos-core/src/executor/brief.rs`
-   (`sanitize_secrets_only` and its six helpers). The frozen reference had exactly
-   one shared owner — a single `SECRET_PATTERNS` list in
-   `packages/core/src/doctor/safe-report.ts` at `5da5cde`, imported by
-   `packages/core/src/executor/brief-compiler.ts:3` — so the duplication came in
-   with the port, and the two have drifted in both directions. The leak half is in
-   `doctor.rs`: a class run ending in `-`, `+`, or `/` before a non-word character
-   is left unredacted, because that scanner consumes the run and rejects without
-   backtracking, where the reference's JavaScript `\b` backtracks into the class.
-   The over-redaction half is in `brief.rs`: `replace_aws_keys` never checks the
-   leading word boundary the reference requires, and the base64 and bearer passes
-   absorb trailing `=` padding the reference backtracks out of. These are latent
-   fidelity defects on enumerated boundary shapes; no credential exposure was
-   demonstrated and nothing was measured, and neither implementation can simply
-   replace the other. The work is one owner reproducing the recovered
-   `SECRET_PATTERNS` semantics, proven against a durable corpus of the divergent
-   inputs, the rule thresholds, and the rule-interaction cases — and any
-   pinned-output change is an explicit reviewed corpus amendment, never a silent
-   regeneration.
+3. **The credential env-var-name rule is implemented twice.** The pattern
+   `[A-Z0-9_]{1,64}` is validated in production at
+   `crates/siralos-cli/src/interactive.rs:2901`
+   (`validate_credential_env_name_inline`, called at `:2985` and `:3013`) with only
+   the terse message `A credential env name must match [A-Z0-9_]{1,64} after
+"env:".`, and again at `crates/siralos-cli/src/tui.rs:3071`
+   (`validate_credential_env_name`) with the O3/I3 teaching message — but every
+   caller of the second is inside that file's `#[cfg(test)] mod tests`, so the
+   teaching text cannot reach a user today. The two are not interchangeable: their
+   messages differ, so merging them would change production output. The choice is
+   to wire the teaching branch into the production path or to delete it; that is
+   the owner's decision, and this round did not take it.
 
 ### Blocked
 
