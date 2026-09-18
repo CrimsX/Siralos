@@ -74,6 +74,59 @@ pub fn is_model_id_char(c: char) -> bool {
         || c == '@'
 }
 
+/// Whether `value` is a well-formed `[profile]` provider id: non-empty, at most
+/// [`MAX_PROFILE_PROVIDER_BYTES`] bytes, and only `[a-z0-9_-]`.
+///
+/// This is the single definition of the provider-id rule, so the write boundary
+/// (`siralos-cli::interactive::write_profile_config`), the TUI provider form,
+/// and the credential adapter enforce one predicate instead of a copy each. NUL
+/// is refused by the character class, which is why the rule needs no separate
+/// NUL arm.
+#[must_use]
+pub fn is_provider_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_PROFILE_PROVIDER_BYTES
+        && value.chars().all(|c| {
+            c.is_ascii_lowercase()
+                || c.is_ascii_digit()
+                || c == '-'
+                || c == '_'
+        })
+}
+
+/// Whether `value` is a well-formed `[profile]` model id: non-empty, at most
+/// [`MAX_PROFILE_MODEL_BYTES`] bytes, no NUL, and every character accepted by
+/// [`is_model_id_char`].
+#[must_use]
+pub fn is_model_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_PROFILE_MODEL_BYTES
+        && !value.contains('\0')
+        && value.chars().all(is_model_id_char)
+}
+
+/// Maximum credential env-var name length in **bytes** (`[A-Z0-9_]{1,64}`).
+///
+/// [`is_credential_env_name`] measures with `str::len`, which counts bytes. The
+/// accepted class is ASCII-only, so bytes and characters coincide here and this
+/// bound accepts exactly the names the pattern's `{1,64}` does.
+const MAX_CREDENTIAL_ENV_NAME_BYTES: usize = 64;
+
+/// Whether `value` is a well-formed credential environment-variable name: one
+/// to `MAX_CREDENTIAL_ENV_NAME_BYTES` bytes, all `[A-Z0-9_]`.
+///
+/// This is the NAME rule alone. The `env:` prefix, the whole-value byte bound
+/// ([`MAX_PROFILE_CREDENTIAL_BYTES`]), the `key:` form and the bare legacy form
+/// are profile-level concerns and are deliberately not part of it.
+#[must_use]
+pub fn is_credential_env_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_CREDENTIAL_ENV_NAME_BYTES
+        && value
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+}
+
 /// The provider API protocol — additive, absent-transparent (default openai-completions).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Protocol {
@@ -326,9 +379,7 @@ fn validate_provider_field(
             message: "A provider must not contain NUL.".to_owned(),
         });
     }
-    if !value.chars().all(|c| {
-        c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_'
-    }) {
+    if !is_provider_id(value) {
         return Err(ProfileValidationError {
             message: "A provider must match [a-z0-9_-]{1,64}.".to_owned(),
         });
@@ -354,7 +405,7 @@ fn validate_model_field(
             message: "A model must not contain NUL.".to_owned(),
         });
     }
-    if !value.chars().all(is_model_id_char) {
+    if !is_model_id(value) {
         return Err(ProfileValidationError {
             message: "A model must match [a-zA-Z0-9._/:@-]{1,256}.".to_owned(),
         });
@@ -381,12 +432,7 @@ fn validate_credential_field(
                 ),
             });
         }
-        if name.is_empty()
-            || name.len() > 64
-            || !name.chars().all(|c| {
-                c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'
-            })
-        {
+        if !is_credential_env_name(name) {
             return Err(ProfileValidationError {
                 message: "A credential env name must match [A-Z0-9_]{1,64} after \"env:\".".to_owned(),
             });
@@ -410,12 +456,7 @@ fn validate_credential_field(
         return Ok(());
     }
     // Bare legacy compat: treat bare env name as env var lookup.
-    if !value.is_empty()
-        && value.len() <= 64
-        && value
-            .chars()
-            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
-    {
+    if is_credential_env_name(value) {
         return Ok(());
     }
     Err(ProfileValidationError {
