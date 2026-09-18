@@ -17,6 +17,9 @@
  *   symbols;
  * - unsafe Rust: no `unsafe fn`/`unsafe impl`/`unsafe trait`/`unsafe {`
  *   in any crate source;
+ * - dead-code suppressions: no `#[allow(dead_code)]` or
+ *   `#![allow(dead_code)]` in any crate source, so dead code cannot hide
+ *   behind its own attribute;
  * - edition and formatting policy: edition 2024, rustfmt configuration,
  *   and an explicit rust-toolchain.toml.
  */
@@ -52,6 +55,37 @@ const FORBIDDEN_CORE_LANGUAGE_SEMANTIC_PATTERN =
 
 /** Dangerous unsafe forms (defense in depth behind the forbid lint). */
 const UNSAFE_PATTERN = /\bunsafe\s+(fn|impl|trait|extern|\{)/;
+
+/**
+ * `dead_code` suppressions anywhere under `crates/`.
+ *
+ * `RUST_STYLE.md` puts the fix before the suppression and forbids suppressing
+ * `dead_code` to preserve scaffolding. A dead function behind its own
+ * attribute is invisible to every other gate here: the reachability ratchet
+ * correctly reports its module as product-reachable, and clippy cannot warn
+ * about what the attribute silences. Both functions the 1.0 alignment work
+ * removed in round 2 of the consolidation were hiding exactly that way.
+ *
+ * Every spelling that silences the lint is refused:
+ *
+ * ```text
+ * #[allow(dead_code)]                      attribute
+ * #![allow(dead_code)]                     crate-level attribute
+ * #[expect(dead_code)]                     expectation; fires only once the item
+ *                                          is live, so a dead item still hides
+ * #[cfg_attr(<condition>, allow(dead_code))] conditional attribute
+ * ```
+ *
+ * The pattern is anchored on `#[`/`#![` and never crosses a square bracket, so
+ * each attribute is judged on its own text: `#[cfg(test)]` and
+ * `#[allow(clippy::too_many_lines)]` do not match, and an unrelated comma in a
+ * neighbouring attribute cannot bridge into one. Comment tails are not
+ * stripped, unlike in the reachability check — a document in a Rust source that
+ * spells one of these attributes out is reported too, which is a loud failure
+ * an author resolves rather than a silent one.
+ */
+const DEAD_CODE_ALLOW_PATTERN =
+  /#!?\[(?:[^[\]]*,\s*)?(?:allow|expect)\s*\([^)]*\bdead_code\b[^)]*\)/;
 
 /** Allowed workspace dependencies per crate. */
 const ALLOWED_DEPENDENCIES = new Map([
@@ -413,6 +447,11 @@ export function runChecks(root) {
       }
       if (UNSAFE_PATTERN.test(content)) {
         errors.push(`${source}: unsafe Rust is forbidden in the Siralos foundation`);
+      }
+      if (DEAD_CODE_ALLOW_PATTERN.test(content)) {
+        errors.push(
+          `${source}: dead_code must not be suppressed; remove the dead code or delete the attribute (RUST_STYLE.md: fixes come before suppressions, and dead_code must not be suppressed to preserve scaffolding)`,
+        );
       }
     }
   }
