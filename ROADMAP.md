@@ -578,6 +578,55 @@ later session needs must appear here or in a commit.
      (`crates/siralos-cli/src/tui.rs:3074`) accept only the three canonical names,
      so a value the loader reads back is one the writer refuses to store.
 
+4. **W4.5 step one: the three provider clients are comparable, and the drifts it
+   found are recorded rather than fixed.** The three identical client-build sites
+   now share `provider::build_http_client`; a base-URL seam
+   (`crates/siralos-adapters/src/provider/openai.rs:143`, `anthropic.rs:136`)
+   lets an offline probe — a loopback fixture server in `provider/mod.rs` plus
+   tests in each client's own test module — drive the real `call_*` paths with no
+   live network: failure classification through the real path, the shared
+   cancellation message, each client's own success event sequence, the request
+   each client actually puts on the wire, and a `(status, body)` matrix over
+   `{400, 401, 404, 429, 500, 503}` × {short, ~10 KB, HTML, ~10 KB HTML}. The
+   probe records
+   today's behaviour as a baseline, **not** approved parity. What it recorded and
+   this round deliberately did not change:
+   - **Error text shape.** `openai.rs:281` and `anthropic.rs:285` build HTTP-error
+     text from a 512-character control-filtered snippet and embed `reqwest`'s
+     full status line (`openai error 400 Bad Request: ...`), while
+     `generic.rs:828` builds `response failed: <code> at <url> - <body>`, cut at
+     the first `<` to 240 characters, and appends `RATE_LIMIT_HINT` on 429 only.
+   - **No shared converter.** `openai.rs` and `anthropic.rs` never call
+     `replay::completion_events_from_body`; only `generic.rs:526` and `:694` do.
+   - **A duplicated response loop in `anthropic.rs` — duplicated code, not
+     duplicated work.** Its parse walks `value["content"]` twice: the first block
+     inline at `:316`, then `skip(1)` in a second pass at `:363`. The slices are
+     disjoint, so the second pass is not redundant; what is written out twice is
+     the `tool_use` extraction. The sharp edge is an asymmetry between the two
+     passes: a `text` field carried on a `tool_use` block reaches the event stream
+     only when that block is **first**, because the first-block pass reads `text`
+     without checking the type while the later-block pass takes `tool_use` in
+     preference to `text`. Text on ordinary blocks is collected wherever it sits,
+     so "text is first-block-only" would be the wrong reading — verified by
+     driving the real path at a loopback fixture with two- and three-block
+     bodies. Recorded by
+     `probe_records_the_text_field_of_a_tool_use_block_only_when_it_is_first`.
+   - **Auth follows the provider NAME, not the declared protocol.**
+     `generic.rs:425` dispatches on `provider == "anthropic"`, so two requests
+     that declare `AnthropicMessages` authenticate differently; recorded by the
+     `probe_records_that_auth_follows_the_name_not_the_declared_protocol` test.
+   - **Tool pairing is wire-different.** `openai.rs` round-trips
+     `tool_calls`/`tool_call_id`; `anthropic.rs:185` and `:200` drop
+     `AssistantToolCall` to an empty assistant message and flatten `ToolResult`
+     into user text.
+     A sixth reported drift **did not reproduce**: all three chat paths embed the
+     same 512-character snippet in their parse-failure text (`openai.rs:296`,
+     `anthropic.rs:300`, `generic.rs:509`). The genuinely different message is the
+     models-listing probe at `generic.rs:780`, which carries no body text at all.
+     Also recorded as out of scope: the `"2023-06-01"` version literal at
+     `anthropic.rs:231` and `generic.rs:428`, and the
+     `"no provider response observed yet"` literal at six production sites.
+
 ### Blocked
 
 - **The version identity (§9)** — the external plugin's `version = "0.0.0"`
