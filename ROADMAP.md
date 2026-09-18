@@ -537,18 +537,46 @@ later session needs must appear here or in a commit.
 2. **W4.5 — provider-client consolidation.** The OpenAI, Anthropic, and generic HTTP
    paths behind a recorded-pair equivalence harness including error paths,
    explicitly not grep-equivalence.
-3. **The credential env-var-name rule is implemented twice.** The pattern
-   `[A-Z0-9_]{1,64}` is validated in production at
-   `crates/siralos-cli/src/interactive.rs:2901`
-   (`validate_credential_env_name_inline`, called at `:2985` and `:3013`) with only
-   the terse message `A credential env name must match [A-Z0-9_]{1,64} after
-"env:".`, and again at `crates/siralos-cli/src/tui.rs:3071`
-   (`validate_credential_env_name`) with the O3/I3 teaching message — but every
-   caller of the second is inside that file's `#[cfg(test)] mod tests`, so the
-   teaching text cannot reach a user today. The two are not interchangeable: their
-   messages differ, so merging them would change production output. The choice is
-   to wire the teaching branch into the production path or to delete it; that is
-   the owner's decision, and this round did not take it.
+3. **One rule model, three predicates — and three divergences found but not fixed.**
+   The provider-id, model-id and credential-env-name rules now live once, in
+   `crates/siralos-core/src/composition.rs` as `is_provider_id` (`:86`),
+   `is_model_id` (`:101`) and `is_credential_env_name` (`:118`); the profile
+   validator, the write boundary, the TUI form and the credential adapter all call
+   them. Every inline copy of those three rules was replaced: core's
+   `validate_provider_field`, `validate_model_field` and `validate_credential_field`
+   (both the `env:` branch and the bare legacy branch), `write_profile_config`'s
+   provider and model predicates (`crates/siralos-cli/src/interactive.rs:2934`) and
+   `validate_live_model_id` (`:3266`), the credential `env:` and bare-legacy checks
+   at the write boundary (`:2956`, `:2989`), the CLI's
+   `validate_credential_env_name_inline` (deleted), `HostCredential::from_env_ref`
+   and the bare legacy branch
+   (`crates/siralos-adapters/src/provider/credential.rs`), and the TUI's
+   `validate_provider_name` and `validate_model_name`. The _messages_ stay separate
+   per boundary by design: the TUI carries a deliberate second register
+   ("Human-readable error (D2) — validation rule unchanged"), so its
+   `validate_api_protocol`, `validate_endpoint_value` and `validate_model_display_name`
+   texts and `write_profile_config`'s endpoint and display-name guards were left
+   alone, with hardcoded bounds replaced by the core constants where one exists.
+   Three divergences were reproduced this round and deliberately **not** repaired,
+   because each changes behaviour and needs its own reviewed decision:
+   - **Credential ordering.** `env:` plus a 67-character name yields
+     `The credential exceeds the 70-byte bound.` from `ProfileRecord::validate`
+     (`crates/siralos-core/src/composition.rs:427`, bound before name) and
+     `A credential env name must match [A-Z0-9_]{1,64} after "env:".` from
+     `write_profile_config` (`crates/siralos-cli/src/interactive.rs:2956`, name
+     before bound): one input, a different error on each path.
+   - **The adapter's `key:` branch is laxer than core's.**
+     `HostCredential::from_credential_str`
+     (`crates/siralos-adapters/src/provider/credential.rs:29`) accepts a `key:`
+     value of any length and one containing NUL, while `validate_credential_field`
+     (`crates/siralos-core/src/composition.rs:438`) refuses both through the
+     4096-byte bound and the NUL check.
+   - **The writer rejects protocol values the loader accepts.** `Protocol::parse`
+     (`crates/siralos-core/src/composition.rs:141`) accepts the legacy aliases
+     `openai-compatible` and `anthropic`, but `write_profile_config`
+     (`crates/siralos-cli/src/interactive.rs:3006`) and the TUI form
+     (`crates/siralos-cli/src/tui.rs:3074`) accept only the three canonical names,
+     so a value the loader reads back is one the writer refuses to store.
 
 ### Blocked
 
@@ -568,6 +596,19 @@ later session needs must appear here or in a commit.
   `AGENTS.md` today, and the 32k-character line it was meant to fix is absent
   (longest line 1,246). Not claimed as done.
 - **A push**, so CI stops being `unknown`. No workflow has ever executed.
+- **The O3/I3 credential teaching message.** `crates/siralos-cli/src/tui.rs` carried
+  a second credential-env-name validator whose failure text taught the pattern
+  instead of restating the rule — verbatim: `this looks like the key itself -
+Siralos stores the NAME of the environment variable holding your key; create it
+with setx YOUR_API_KEY_NAME "the-key" and enter YOUR_API_KEY_NAME here`. It could
+  not reach a user: every caller was inside that file's `#[cfg(test)] mod tests`,
+  and the provider-add form's `ApiKey` handler
+  (`crates/siralos-cli/src/tui.rs:3510`) stores a non-`env:` value verbatim as
+  `key:<value>` with no validation at all, so nothing displayed it. It was deleted
+  in the round-3 consolidation, and the surviving production message is the terse
+  `A credential env name must match [A-Z0-9_]{1,64} after "env:".`. Promoting that
+  teaching branch into the provider-add path — and validating the field at all — is
+  a user-visible product change the owner has not made.
 
 ### Deliberately not in 1.0
 
