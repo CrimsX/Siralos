@@ -35,12 +35,7 @@ impl HostCredential {
             return Ok(Self { bytes: inner.as_bytes().to_vec() });
         }
         // Bare legacy compat: treat as env-var name.
-        if !value.is_empty()
-            && value.len() <= 64
-            && value.chars().all(|c| {
-                c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'
-            })
-        {
+        if siralos_core::composition::is_credential_env_name(value) {
             let var = std::env::var(value)
                 .map_err(|_| format!("env var {value} is not set"))?;
             return Ok(Self { bytes: var.into_bytes() });
@@ -59,12 +54,7 @@ impl HostCredential {
             return Err("A credential must start with \"env:\".".to_owned());
         }
         let name = &value[4..];
-        if name.is_empty()
-            || name.len() > 64
-            || !name.chars().all(|c| {
-                c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'
-            })
-        {
+        if !siralos_core::composition::is_credential_env_name(name) {
             return Err(
                 "A credential env name must match [A-Z0-9_]{1,64} after \"env:\"."
                     .to_owned(),

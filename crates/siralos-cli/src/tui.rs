@@ -3058,57 +3058,10 @@ pub fn derive_provider_name(url: &str) -> String {
     out
 }
 
-// Helpers for tests: expose scroll operations
-#[cfg(test)]
-/// Validate credential env-var name (without env: prefix): [A-Z0-9_]{1,64}.
-/// Human-readable error (D2) — validation rule unchanged, but with O3/I3
-/// teaching message when the input looks like the secret itself.
-fn validate_credential_env_name(name: &str) -> Result<(), String> {
-    if name.is_empty()
-        || name.len() > 64
-        || !name
-            .chars()
-            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
-    {
-        // O3/I3: when validation fails and the input looks like a secret,
-        // teach the env-var-name pattern instead of the standard message.
-        let looks_like_secret = name.chars().any(|c| c.is_ascii_lowercase())
-            || name.starts_with("sk-")
-            || name.chars().any(|c| {
-                !(c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
-            });
-        if looks_like_secret {
-            return Err(
-                "this looks like the key itself - Siralos stores the NAME of the environment variable holding your key; create it with setx YOUR_API_KEY_NAME \"the-key\" and enter YOUR_API_KEY_NAME here"
-                    .to_owned(),
-            );
-        }
-        return Err(
-            "Credential env var must be uppercase letters, numbers, and underscores (e.g. OPENAI_API_KEY) - set this variable with your API key before starting Siralos"
-                .to_owned(),
-        );
-    }
-    Ok(())
-}
-
 /// Validate provider field: [a-z0-9_-]{1,64}, non-empty, no NUL.
 /// Human-readable error (D2) — validation rule unchanged.
 fn validate_provider_name(value: &str) -> Result<(), String> {
-    if value.is_empty() || value.len() > 64 {
-        return Err(
-            "Provider name must be lowercase letters, numbers, hyphens, or underscores (e.g. openai, example-vendor)"
-                .to_owned(),
-        );
-    }
-    if value.contains('\0') {
-        return Err(
-            "Provider name must be lowercase letters, numbers, hyphens, or underscores (e.g. openai, example-vendor)"
-                .to_owned(),
-        );
-    }
-    if !value.chars().all(|c| {
-        c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_'
-    }) {
+    if !siralos_core::composition::is_provider_id(value) {
         return Err(
             "Provider name must be lowercase letters, numbers, hyphens, or underscores (e.g. openai, example-vendor)"
                 .to_owned(),
@@ -3154,7 +3107,9 @@ fn validate_model_display_name(value: &str) -> Result<(), String> {
     if value.is_empty() {
         return Ok(());
     }
-    if value.len() > 256 {
+    if value.len()
+        > siralos_core::composition::MAX_PROFILE_MODEL_DISPLAY_NAME_BYTES
+    {
         return Err(
             "The model display name exceeds the 256-byte bound.".to_owned()
         );
@@ -3169,25 +3124,11 @@ fn validate_model_display_name(value: &str) -> Result<(), String> {
 }
 
 /// Validate model field: 1 to 256 bytes, no NUL, ASCII alphanumeric or
-/// `.` `_` `-` `/` `:` `@` (the core `is_model_id_char` rule).
+/// `.` `_` `-` `/` `:` `@` (the core `is_model_id` rule).
 /// Human-readable error (D2) — the message states the enforced rule in
 /// plain words, never a regex.
 fn validate_model_name(value: &str) -> Result<(), String> {
-    if value.is_empty()
-        || value.len() > siralos_core::composition::MAX_PROFILE_MODEL_BYTES
-    {
-        return Err(
-            "Model name must be 1 to 256 characters: letters, numbers, or . _ - / : @ (e.g. model-a, example/model-a)"
-                .to_owned(),
-        );
-    }
-    if value.contains('\0') {
-        return Err(
-            "Model name must be 1 to 256 characters: letters, numbers, or . _ - / : @ (e.g. model-a, example/model-a)"
-                .to_owned(),
-        );
-    }
-    if !value.chars().all(siralos_core::composition::is_model_id_char) {
+    if !siralos_core::composition::is_model_id(value) {
         return Err(
             "Model name must be 1 to 256 characters: letters, numbers, or . _ - / : @ (e.g. model-a, example/model-a)"
                 .to_owned(),
@@ -3199,7 +3140,9 @@ fn validate_model_name(value: &str) -> Result<(), String> {
 /// Validate endpoint field: https:// or http://, no NUL, no space, 1..512.
 /// Human-readable error (D2) — validation rule unchanged.
 fn validate_endpoint_value(value: &str) -> Result<(), String> {
-    if value.is_empty() || value.len() > 512 {
+    if value.is_empty()
+        || value.len() > siralos_core::composition::MAX_PROFILE_ENDPOINT_BYTES
+    {
         return Err(
             "Endpoint must be a valid URL starting with https:// or http:// (e.g. https://api.openai.com/v1)"
                 .to_owned(),
@@ -6882,7 +6825,7 @@ mod tests {
     }
 
     #[test]
-    fn nonempty_public_rejected_with_teaching_message() {
+    fn nonempty_api_key_is_stored_verbatim_without_a_teaching_error() {
         // Verbatim: non-empty secret-like value is stored as key:<value> with NO validation or teaching error.
         let mut state = TuiState::new();
         open_provider_add_form(&mut state);
@@ -7025,18 +6968,28 @@ mod tests {
     }
 
     #[test]
-    fn credential_env_validation() {
-        // C2 boundary: env-var NAME only, [A-Z0-9_]{1,64}.
-        assert!(validate_credential_env_name("OPENAI_API_KEY").is_ok());
-        assert!(validate_credential_env_name("A").is_ok());
-        assert!(validate_credential_env_name("openai").is_err());
-        assert!(validate_credential_env_name("HAS-DASH").is_err());
-        assert!(validate_credential_env_name("HAS SPACE").is_err());
-        assert!(validate_credential_env_name("").is_err());
-        assert!(
-            validate_credential_env_name("A".repeat(65).as_str()).is_err()
-        );
-        assert!(validate_credential_env_name("A".repeat(64).as_str()).is_ok());
+    fn credential_env_name_rule_is_the_shared_predicate() {
+        // C2 boundary: env-var NAME only, [A-Z0-9_]{1,64}. The rule lives in
+        // core; the TUI form never validated this field, so the local copy was
+        // deleted with the round-3 consolidation.
+        assert!(siralos_core::composition::is_credential_env_name(
+            "OPENAI_API_KEY"
+        ));
+        assert!(siralos_core::composition::is_credential_env_name("A"));
+        assert!(!siralos_core::composition::is_credential_env_name("openai"));
+        assert!(!siralos_core::composition::is_credential_env_name(
+            "HAS-DASH"
+        ));
+        assert!(!siralos_core::composition::is_credential_env_name(
+            "HAS SPACE"
+        ));
+        assert!(!siralos_core::composition::is_credential_env_name(""));
+        assert!(!siralos_core::composition::is_credential_env_name(
+            "A".repeat(65).as_str()
+        ));
+        assert!(siralos_core::composition::is_credential_env_name(
+            "A".repeat(64).as_str()
+        ));
     }
 
     #[test]
@@ -7276,26 +7229,9 @@ mod tests {
             "Model name must be 1 to 256 characters: letters, numbers, or . _ - / : @ (e.g. model-a, example/model-a)"
         );
 
-        // O3: the standard message applies only when the input does NOT look
-        // like a secret (e.g. too long but otherwise valid chars); anything
-        // with lowercase, an sk- prefix, or other outside chars teaches.
-        let cred_err =
-            validate_credential_env_name("A".repeat(65).as_str()).unwrap_err();
-        assert_eq!(
-            cred_err,
-            "Credential env var must be uppercase letters, numbers, and underscores (e.g. OPENAI_API_KEY) - set this variable with your API key before starting Siralos"
-        );
-        assert!(!cred_err.contains("[A-Z0-9_]{1,64}"));
-
-        // O3 teaching message: lowercase input looks like the secret itself.
-        let teaching_err =
-            validate_credential_env_name("lowercase-bad").unwrap_err();
-        assert_eq!(
-            teaching_err,
-            "this looks like the key itself - Siralos stores the NAME of the environment variable holding your key; create it with setx YOUR_API_KEY_NAME \"the-key\" and enter YOUR_API_KEY_NAME here"
-        );
-        let sk_err = validate_credential_env_name("sk-abc123").unwrap_err();
-        assert_eq!(sk_err, teaching_err);
+        // The credential env-var-name validator this test used to cover was
+        // deleted: it had no production caller, so its O3/I3 teaching message
+        // could not reach a user. `ROADMAP.md` keeps the text for the owner.
 
         let endpoint_err = validate_endpoint_value("not-a-url").unwrap_err();
         assert_eq!(
@@ -7340,14 +7276,15 @@ mod tests {
         assert!(validate_model_name("has space").is_err());
         assert!(validate_model_name("ab\0cd").is_err());
 
-        assert!(validate_credential_env_name("OPENAI_API_KEY").is_ok());
-        assert!(validate_credential_env_name("ANTHROPIC_KEY").is_ok());
-        assert!(validate_credential_env_name("openai").is_err());
-        // O3: HAS-DASH contains chars outside [A-Z0-9_], so it now teaches.
-        assert_eq!(
-            validate_credential_env_name("HAS-DASH").unwrap_err(),
-            "this looks like the key itself - Siralos stores the NAME of the environment variable holding your key; create it with setx YOUR_API_KEY_NAME \"the-key\" and enter YOUR_API_KEY_NAME here"
-        );
+        // The credential env-var-name rule moved to core in round 3; its
+        // accept-set is asserted in `credential_env_name_rule_is_the_shared_predicate`.
+        assert!(siralos_core::composition::is_credential_env_name(
+            "OPENAI_API_KEY"
+        ));
+        assert!(siralos_core::composition::is_credential_env_name(
+            "ANTHROPIC_KEY"
+        ));
+        assert!(!siralos_core::composition::is_credential_env_name("openai"));
 
         assert!(validate_endpoint_value("https://api.openai.com/v1").is_ok());
         assert!(validate_endpoint_value("http://localhost:11434").is_ok());

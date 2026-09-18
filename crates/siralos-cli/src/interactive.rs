@@ -2897,21 +2897,6 @@ fn verify_session_lock(
         ),
     }
 }
-/// Validate credential env-var name (without env: prefix): [A-Z0-9_]{1,64}.
-fn validate_credential_env_name_inline(name: &str) -> Result<(), String> {
-    if name.is_empty()
-        || name.len() > 64
-        || !name
-            .chars()
-            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
-    {
-        return Err(
-            "A credential env name must match [A-Z0-9_]{1,64} after \"env:\"."
-                .to_owned(),
-        );
-    }
-    Ok(())
-}
 
 /// Monotonic sequence guaranteeing unique scratch names within this process.
 ///
@@ -2956,24 +2941,10 @@ pub fn write_profile_config(
     model_display_name: Option<&str>,
 ) -> Result<(), String> {
     // Re-validate at the write boundary (defense in depth).
-    if provider.is_empty()
-        || provider.len()
-            > siralos_core::composition::MAX_PROFILE_PROVIDER_BYTES
-        || provider.contains('\0')
-        || !provider.chars().all(|c| {
-            c.is_ascii_lowercase()
-                || c.is_ascii_digit()
-                || c == '-'
-                || c == '_'
-        })
-    {
+    if !siralos_core::composition::is_provider_id(provider) {
         return Err("A provider must match [a-z0-9_-]{1,64}.".to_owned());
     }
-    if model.is_empty()
-        || model.len() > siralos_core::composition::MAX_PROFILE_MODEL_BYTES
-        || model.contains('\0')
-        || !model.chars().all(siralos_core::composition::is_model_id_char)
-    {
+    if !siralos_core::composition::is_model_id(model) {
         return Err(
             "A model must match [a-zA-Z0-9._/:@-]{1,256} with no NUL."
                 .to_owned(),
@@ -2982,7 +2953,12 @@ pub fn write_profile_config(
     if let Some(cred) = credential_env {
         // Verbatim credential: accept env:NAME, key:VALUE, or bare legacy env name. Validation mirrors ProfileRecord.
         if let Some(name) = cred.strip_prefix("env:") {
-            validate_credential_env_name_inline(name)?;
+            if !siralos_core::composition::is_credential_env_name(name) {
+                return Err(
+                    "A credential env name must match [A-Z0-9_]{1,64} after \"env:\"."
+                        .to_owned(),
+                );
+            }
             if cred.len()
                 > siralos_core::composition::MAX_PROFILE_CREDENTIAL_BYTES
             {
@@ -3010,7 +2986,12 @@ pub fn write_profile_config(
             }
         } else {
             // Bare legacy compat — treat as env name.
-            validate_credential_env_name_inline(cred)?;
+            if !siralos_core::composition::is_credential_env_name(cred) {
+                return Err(
+                    "A credential env name must match [A-Z0-9_]{1,64} after \"env:\"."
+                        .to_owned(),
+                );
+            }
         }
         if cred.contains('\0') {
             return Err("A credential must not contain NUL.".to_owned());
@@ -3279,15 +3260,12 @@ pub fn write_profile_config(
     Ok(())
 }
 
-/// Validate a candidate live model id with the existing core rule
-/// (`siralos_core::composition::is_model_id_char`, 1..=256 bytes, no NUL).
+/// Validate a candidate live model id with the core predicate
+/// (`siralos_core::composition::is_model_id`: 1..=256 bytes, no NUL, the
+/// `is_model_id_char` set).
 /// Refuses with the existing honest write-boundary message.
 fn validate_live_model_id(id: &str) -> Result<(), String> {
-    if id.is_empty()
-        || id.len() > siralos_core::composition::MAX_PROFILE_MODEL_BYTES
-        || id.contains('\0')
-        || !id.chars().all(siralos_core::composition::is_model_id_char)
-    {
+    if !siralos_core::composition::is_model_id(id) {
         return Err(
             "A model must match [a-zA-Z0-9._/:@-]{1,256} with no NUL."
                 .to_owned(),
