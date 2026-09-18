@@ -581,7 +581,7 @@ later session needs must appear here or in a commit.
 4. **W4.5 step one: the three provider clients are comparable, and the drifts it
    found are recorded rather than fixed.** The three identical client-build sites
    now share `provider::build_http_client`; a base-URL seam
-   (`crates/siralos-adapters/src/provider/openai.rs:143`, `anthropic.rs:136`)
+   (`crates/siralos-adapters/src/provider/openai.rs:146`, `anthropic.rs:139`)
    lets an offline probe — a loopback fixture server in `provider/mod.rs` plus
    tests in each client's own test module — drive the real `call_*` paths with no
    live network: failure classification through the real path, the shared
@@ -591,16 +591,17 @@ later session needs must appear here or in a commit.
    probe records
    today's behaviour as a baseline, **not** approved parity. What it recorded and
    this round deliberately did not change:
-   - **Error text shape.** `openai.rs:281` and `anthropic.rs:285` build HTTP-error
-     text from a 512-character control-filtered snippet and embed `reqwest`'s
-     full status line (`openai error 400 Bad Request: ...`), while
-     `generic.rs:828` builds `response failed: <code> at <url> - <body>`, cut at
-     the first `<` to 240 characters, and appends `RATE_LIMIT_HINT` on 429 only.
+   - **Error text shape.** The shared `run_chat_pipeline` builds the openai and
+     anthropic HTTP-error text from a 512-character control-filtered snippet and
+     embeds `reqwest`'s full status line (`openai error 400 Bad Request: ...`) at
+     `provider/mod.rs:276`, while `generic.rs:832` builds
+     `response failed: <code> at <url> - <body>`, cut at the first `<` to 240
+     characters, and appends `RATE_LIMIT_HINT` on 429 only.
    - **No shared converter.** `openai.rs` and `anthropic.rs` never call
-     `replay::completion_events_from_body`; only `generic.rs:526` and `:694` do.
+     `replay::completion_events_from_body`; only `generic.rs:530` and `:698` do.
    - **A duplicated response loop in `anthropic.rs` — duplicated code, not
      duplicated work.** Its parse walks `value["content"]` twice: the first block
-     inline at `:316`, then `skip(1)` in a second pass at `:363`. The slices are
+     inline at `:255`, then `skip(1)` in a second pass at `:302`. The slices are
      disjoint, so the second pass is not redundant; what is written out twice is
      the `tool_use` extraction. The sharp edge is an asymmetry between the two
      passes: a `text` field carried on a `tool_use` block reaches the event stream
@@ -612,20 +613,32 @@ later session needs must appear here or in a commit.
      bodies. Recorded by
      `probe_records_the_text_field_of_a_tool_use_block_only_when_it_is_first`.
    - **Auth follows the provider NAME, not the declared protocol.**
-     `generic.rs:425` dispatches on `provider == "anthropic"`, so two requests
+     `generic.rs:429` dispatches on `provider == "anthropic"`, so two requests
      that declare `AnthropicMessages` authenticate differently; recorded by the
      `probe_records_that_auth_follows_the_name_not_the_declared_protocol` test.
    - **Tool pairing is wire-different.** `openai.rs` round-trips
-     `tool_calls`/`tool_call_id`; `anthropic.rs:185` and `:200` drop
+     `tool_calls`/`tool_call_id`; `anthropic.rs:188` and `:203` drop
      `AssistantToolCall` to an empty assistant message and flatten `ToolResult`
      into user text.
      A sixth reported drift **did not reproduce**: all three chat paths embed the
-     same 512-character snippet in their parse-failure text (`openai.rs:296`,
-     `anthropic.rs:300`, `generic.rs:509`). The genuinely different message is the
-     models-listing probe at `generic.rs:780`, which carries no body text at all.
-     Also recorded as out of scope: the `"2023-06-01"` version literal at
-     `anthropic.rs:231` and `generic.rs:428`, and the
-     `"no provider response observed yet"` literal at six production sites.
+     same 512-character snippet in their parse-failure text — the shared pair at
+     `provider/mod.rs:293`, the generic chat path at `generic.rs:513`. The
+     genuinely different message is the models-listing probe at `generic.rs:784`,
+     which carries no body text at all.
+     The two micro-duplications recorded here as out of scope have since been
+     consolidated: the `"2023-06-01"` literal is now
+     `provider/mod.rs:80` (`ANTHROPIC_VERSION`) and the `"no provider response
+observed yet"` literal `provider/mod.rs:86`
+     (`NO_PROVIDER_RESPONSE_OBSERVED`), with those literals surviving only in test
+     assertions.
+     Step two then extracted the send-onward region the two chat clients shared —
+     send, post-response cancellation, bounded read, non-success mapping and JSON
+     parse — into `provider::run_chat_pipeline` (`provider/mod.rs:228`), leaving
+     each caller its own request construction and its own parse. The two
+     asymmetries recorded above (`safe`/`text` on the error path,
+     `snippet`/`text` on the parse-failure path) were preserved exactly, and every
+     probe assertion — including the recorded-outcome assertions that observe what
+     `record_outcome` receives — passed unchanged before and after the extraction.
 
 ### Blocked
 
