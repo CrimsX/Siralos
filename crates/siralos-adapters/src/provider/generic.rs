@@ -332,11 +332,7 @@ impl GenericProvider {
                 message: "Host cancelled before HTTP call".to_owned(),
             }]);
         }
-        let client = match reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .build()
-        {
+        let client = match crate::provider::build_http_client() {
             Ok(client) => client,
             Err(err) => {
                 let events = vec![ProviderEvent::Failed(format!(
@@ -752,6 +748,10 @@ pub fn fetch_models(
     credential: Option<&HostCredential>,
 ) -> Result<Vec<String>, String> {
     let url = models_url(endpoint);
+    // Deliberately NOT `crate::provider::build_http_client()`: this is a
+    // user-triggered listing probe that must fail fast, so it keeps its own
+    // 5-second request / 3-second connect timeouts. Folding it into the shared
+    // helper would change an observable timeout.
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .connect_timeout(std::time::Duration::from_secs(3))
@@ -839,10 +839,262 @@ impl std::fmt::Display for GenericProvider {
 
 #[cfg(test)]
 mod tests {
-    use super::{GenericProvider, HostCredential};
-    use siralos_core::provider::{
-        CancellationToken, ModelProvider, ModelRequest,
+    use super::{CallOutcome, GenericProvider, HostCredential};
+    use crate::provider::ReplayHooks;
+    use crate::provider::probe::{
+        ERROR_STATUSES, Fixture, error_bodies, serve,
     };
+    use siralos_core::composition::Protocol;
+    use siralos_core::determinism::ProviderReplayAvailability;
+    use siralos_core::provider::{
+        CancellationSignal, CancellationToken, ModelEvent, ModelProvider,
+        ModelRequest, ProviderEvent,
+    };
+
+    /// A request that carries nothing workspace-specific.
+    fn probe_request() -> ModelRequest {
+        ModelRequest {
+            messages: vec![],
+            tools: vec![],
+            system: Some("probe".to_owned()),
+        }
+    }
+
+    /// Fresh per-call replay availability; the call path takes it by reference.
+    fn probe_replay() -> std::cell::RefCell<ProviderReplayAvailability> {
+        std::cell::RefCell::new(ProviderReplayAvailability::Unavailable {
+            reason: "no provider response observed yet".to_owned(),
+        })
+    }
+
+    /// Drive the real `call_generic` path at `endpoint` under `provider`.
+    fn drive_named(
+        provider: &str,
+        endpoint: &str,
+        protocol: Protocol,
+        cancellation: Option<CancellationSignal<'_>>,
+    ) -> Vec<ProviderEvent> {
+        match GenericProvider::call_generic(
+            provider,
+            "probe-model",
+            endpoint,
+            protocol,
+            Some("test-cred".to_owned()),
+            &probe_request(),
+            cancellation,
+            &ReplayHooks::default(),
+            &probe_replay(),
+        ) {
+            CallOutcome::Events(events) => events,
+            CallOutcome::Streaming { .. } => {
+                panic!("probe expected a buffered outcome")
+            }
+        }
+    }
+
+    /// The same, under the neutral probe vendor name.
+    fn drive(
+        endpoint: &str,
+        protocol: Protocol,
+        cancellation: Option<CancellationSignal<'_>>,
+    ) -> Vec<ProviderEvent> {
+        drive_named("probe-vendor", endpoint, protocol, cancellation)
+    }
+
+    /// The single `Failed` message an error fixture produces.
+    fn failed_message(events: &[ProviderEvent]) -> &str {
+        assert_eq!(events.len(), 1, "expected one event, got {events:?}");
+        match &events[0] {
+            ProviderEvent::Failed(message) => message,
+            other => panic!("expected Failed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn probe_connect_refused_is_one_bounded_failed_event() {
+        let events =
+            drive("http://127.0.0.1:1", Protocol::OpenAiCompletions, None);
+        let message = failed_message(&events);
+        assert!(
+            message.starts_with("probe-vendor request failed: "),
+            "{message}"
+        );
+        // Each client carries its own prefix for the shared transport failure;
+        // recorded here so a future unification cannot quietly drop one.
+        for other in ["openai request failed: ", "anthropic request failed: "]
+        {
+            assert!(
+                !message.starts_with(other),
+                "prefix collision: {message}"
+            );
+        }
+        assert!(message.len() <= 512, "bounded: {}", message.len());
+    }
+
+    #[test]
+    fn probe_pre_cancelled_stops_before_the_http_call() {
+        let token = CancellationToken::new();
+        token.cancel();
+        let events = drive(
+            "http://127.0.0.1:1",
+            Protocol::OpenAiCompletions,
+            Some(token.signal()),
+        );
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            ProviderEvent::Cancelled { message } => {
+                assert_eq!(message, "Host cancelled before HTTP call");
+            }
+            other => panic!("expected Cancelled, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn probe_contacts_only_the_loopback_fixture_server() {
+        let server = serve(Fixture {
+            status: 200,
+            body: r#"{"content":[{"type":"text","text":"hello"}]}"#.to_owned(),
+        });
+        assert!(
+            server.base_url.starts_with("http://127.0.0.1:"),
+            "the probe must only ever point at loopback: {}",
+            server.base_url
+        );
+        // A non-completions protocol parses the whole body inline, so the call
+        // returns events rather than an open response.
+        let events =
+            drive(&server.base_url, Protocol::AnthropicMessages, None);
+        // `recorded` panics when nothing reached 127.0.0.1 within its deadline:
+        // a probe that contacted a real endpoint fails loudly here.
+        let recorded = server.recorded();
+        assert_eq!(recorded.request_line, "POST /messages HTTP/1.1");
+        assert_eq!(recorded.header("authorization"), Some("Bearer test-cred"));
+        let body: serde_json::Value =
+            serde_json::from_str(&recorded.body).expect("json request body");
+        assert_eq!(body["model"], "probe-model");
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ProviderEvent::Event(ModelEvent::TextDelta { text }) if text == "hello"
+        )));
+    }
+
+    #[test]
+    fn probe_records_that_auth_follows_the_name_not_the_declared_protocol() {
+        // Recorded drift: `call_generic` chooses the auth header from the
+        // provider NAME, so two requests that declare the same protocol get
+        // different authentication.
+        let named = |provider: &str| {
+            let server = serve(Fixture { status: 200, body: "{}".to_owned() });
+            let _ = drive_named(
+                provider,
+                &server.base_url,
+                Protocol::AnthropicMessages,
+                None,
+            );
+            server.recorded()
+        };
+        let neutral = named("probe-vendor");
+        assert_eq!(neutral.header("authorization"), Some("Bearer test-cred"));
+        assert_eq!(neutral.header("x-api-key"), None);
+
+        let anthropic_named = named("anthropic");
+        assert_eq!(anthropic_named.header("x-api-key"), Some("test-cred"));
+        assert_eq!(
+            anthropic_named.header("anthropic-version"),
+            Some("2023-06-01")
+        );
+        assert_eq!(anthropic_named.header("authorization"), None);
+    }
+
+    #[test]
+    fn probe_records_the_buffered_and_streaming_outcomes() {
+        // Recorded: a 2xx on the completions protocol hands the OPEN response
+        // back for the caller to iterate, where the other two protocols parse
+        // the whole body here.
+        let streaming = serve(Fixture {
+            status: 200,
+            body: r#"{"choices":[]}"#.to_owned(),
+        });
+        let outcome = GenericProvider::call_generic(
+            "probe-vendor",
+            "probe-model",
+            &streaming.base_url,
+            Protocol::OpenAiCompletions,
+            Some("test-cred".to_owned()),
+            &probe_request(),
+            None,
+            &ReplayHooks::default(),
+            &probe_replay(),
+        );
+        let _ = streaming.recorded();
+        assert!(matches!(outcome, CallOutcome::Streaming { .. }));
+
+        let buffered = serve(Fixture {
+            status: 200,
+            body: r#"{"choices":[]}"#.to_owned(),
+        });
+        let outcome = GenericProvider::call_generic(
+            "probe-vendor",
+            "probe-model",
+            &buffered.base_url,
+            Protocol::OpenAiResponses,
+            Some("test-cred".to_owned()),
+            &probe_request(),
+            None,
+            &ReplayHooks::default(),
+            &probe_replay(),
+        );
+        let _ = buffered.recorded();
+        assert!(matches!(outcome, CallOutcome::Events(_)));
+    }
+
+    #[test]
+    fn probe_records_the_http_error_matrix() {
+        // Recorded baseline, not an approved-parity claim: these assertions
+        // describe what this path does today at each (status, body) pair.
+        for status in ERROR_STATUSES {
+            for (label, body) in error_bodies() {
+                let server = serve(Fixture { status, body: body.clone() });
+                let events =
+                    drive(&server.base_url, Protocol::OpenAiCompletions, None);
+                let _ = server.recorded();
+                let message = failed_message(&events);
+                assert!(
+                    message
+                        .contains(&format!("response failed: {status} at ")),
+                    "{message}"
+                );
+                assert!(
+                    message.len() <= 240 + 512,
+                    "status {status}: {} bytes",
+                    message.len()
+                );
+                if label.contains("html") {
+                    // Recorded: this path cuts the body at the first `<`, so no
+                    // markup reaches the diagnostic (the other two keep it).
+                    assert!(!message.contains("<html>"), "{message}");
+                }
+                if label == "10kb-html" {
+                    // Recorded: the cut happens BEFORE the 240-character
+                    // truncation, so the 300-character prefix survives exactly
+                    // its first 240 characters and nothing after the markup
+                    // leaks into the diagnostic.
+                    assert!(
+                        message.contains(&"x".repeat(240)),
+                        "the prefix is kept to the bound: {message}"
+                    );
+                    assert!(!message.contains("<html>"), "{message}");
+                    assert!(!message.contains('z'), "{message}");
+                }
+                if status == 429 {
+                    // Recorded: only this path appends an actionable hint.
+                    assert!(message.contains("rate limiting"), "{message}");
+                } else {
+                    assert!(!message.contains("rate limiting"), "{message}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn generic_id_is_provider_name() {

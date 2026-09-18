@@ -123,6 +123,7 @@ impl ModelProvider for OpenAiProvider {
         let request = request.clone();
         let events = Self::call_openai(
             &model,
+            CHAT_BASE_URL,
             &credential,
             &request,
             cancellation,
@@ -133,9 +134,24 @@ impl ModelProvider for OpenAiProvider {
     }
 }
 
+/// The OpenAI chat-completions base URL.
+///
+/// Production is this client's only supplier of a base URL: `stream` passes
+/// this constant, and [`chat_completions_url`] appends the path, so the URL the
+/// wire sees is unchanged. The parameter exists so an offline probe can point
+/// the real call path at a loopback fixture server.
+const CHAT_BASE_URL: &str = "https://api.openai.com/v1";
+
+/// The chat POST URL for `base_url`; trailing slashes are tolerated so a seam
+/// caller cannot produce a doubled separator.
+fn chat_completions_url(base_url: &str) -> String {
+    format!("{}/chat/completions", base_url.trim_end_matches('/'))
+}
+
 impl OpenAiProvider {
     fn call_openai(
         model: &str,
+        base_url: &str,
         credential: &str,
         request: &ModelRequest,
         cancellation: CancellationSignal<'_>,
@@ -147,11 +163,7 @@ impl OpenAiProvider {
                 message: "Host cancelled before HTTP call".to_owned(),
             }];
         }
-        let client = match reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .build()
-        {
+        let client = match crate::provider::build_http_client() {
             Ok(client) => client,
             Err(err) => {
                 let events = vec![ProviderEvent::Failed(format!(
@@ -224,7 +236,7 @@ impl OpenAiProvider {
             }];
         }
         let response = client
-            .post("https://api.openai.com/v1/chat/completions")
+            .post(chat_completions_url(base_url))
             .header("Authorization", format!("Bearer {credential}"))
             .header("Content-Type", "application/json")
             .json(&body)
@@ -373,10 +385,205 @@ impl std::fmt::Display for OpenAiProvider {
 
 #[cfg(test)]
 mod tests {
-    use super::{HostCredential, OpenAiProvider};
-    use siralos_core::provider::{
-        CancellationToken, ModelProvider, ModelRequest,
+    use super::{
+        CHAT_BASE_URL, HostCredential, OpenAiProvider, chat_completions_url,
     };
+    use crate::provider::ReplayHooks;
+    use crate::provider::probe::{
+        ERROR_STATUSES, Fixture, error_bodies, reason, serve,
+    };
+    use siralos_core::determinism::ProviderReplayAvailability;
+    use siralos_core::provider::{
+        CancellationSignal, CancellationToken, ModelEvent, ModelProvider,
+        ModelRequest, ProviderEvent,
+    };
+
+    /// A request that carries nothing workspace-specific.
+    fn probe_request() -> ModelRequest {
+        ModelRequest {
+            messages: vec![],
+            tools: vec![],
+            system: Some("probe".to_owned()),
+        }
+    }
+
+    /// Fresh per-call replay availability; the call path takes it by reference.
+    fn probe_replay() -> std::cell::RefCell<ProviderReplayAvailability> {
+        std::cell::RefCell::new(ProviderReplayAvailability::Unavailable {
+            reason: "no provider response observed yet".to_owned(),
+        })
+    }
+
+    /// Drive the real `call_openai` path at `base_url`.
+    fn drive(
+        base_url: &str,
+        cancellation: CancellationSignal<'_>,
+    ) -> Vec<ProviderEvent> {
+        OpenAiProvider::call_openai(
+            "gpt-4o",
+            base_url,
+            "test-cred",
+            &probe_request(),
+            cancellation,
+            &ReplayHooks::default(),
+            &probe_replay(),
+        )
+    }
+
+    /// The single `Failed` message an error fixture produces.
+    fn failed_message(events: &[ProviderEvent]) -> &str {
+        assert_eq!(events.len(), 1, "expected one event, got {events:?}");
+        match &events[0] {
+            ProviderEvent::Failed(message) => message,
+            other => panic!("expected Failed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn production_chat_url_is_the_historical_endpoint() {
+        // The seam takes a base URL; production supplies the constant, and the
+        // composed URL must be the one this client has always posted to. A
+        // wrong constant or a wrong path fails here.
+        assert_eq!(
+            chat_completions_url(CHAT_BASE_URL),
+            "https://api.openai.com/v1/chat/completions"
+        );
+        // Trailing slashes cannot produce a doubled separator.
+        assert_eq!(
+            chat_completions_url("https://api.openai.com/v1/"),
+            "https://api.openai.com/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn probe_connect_refused_is_one_bounded_failed_event() {
+        // Loopback port 1 refuses immediately: hermetic, no live network.
+        let events =
+            drive("http://127.0.0.1:1", CancellationToken::new().signal());
+        let message = failed_message(&events);
+        assert!(message.starts_with("openai request failed: "), "{message}");
+        // Each client carries its own prefix for the shared transport failure;
+        // recorded here so a future unification cannot quietly drop one.
+        for other in
+            ["anthropic request failed: ", "probe-vendor request failed: "]
+        {
+            assert!(
+                !message.starts_with(other),
+                "prefix collision: {message}"
+            );
+        }
+        assert!(message.len() <= 512, "bounded: {}", message.len());
+    }
+
+    #[test]
+    fn probe_pre_cancelled_stops_before_the_http_call() {
+        let token = CancellationToken::new();
+        token.cancel();
+        let events = drive("http://127.0.0.1:1", token.signal());
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            ProviderEvent::Cancelled { message } => {
+                assert_eq!(message, "Host cancelled before HTTP call");
+            }
+            other => panic!("expected Cancelled, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn probe_contacts_only_the_loopback_fixture_server() {
+        let server = serve(Fixture {
+            status: 200,
+            body: r#"{"choices":[{"message":{"content":"hello"}}]}"#
+                .to_owned(),
+        });
+        assert!(
+            server.base_url.starts_with("http://127.0.0.1:"),
+            "the probe must only ever point at loopback: {}",
+            server.base_url
+        );
+        let events =
+            drive(&server.base_url, CancellationToken::new().signal());
+        // `recorded` panics when nothing reached 127.0.0.1 within its deadline:
+        // a probe that contacted a real endpoint fails loudly here.
+        let recorded = server.recorded();
+        // Recorded: the seam appends the path to whatever base it is given, so
+        // a bare loopback base yields `/chat/completions`; production's base
+        // carries the `/v1` and composes the historical URL.
+        assert_eq!(recorded.request_line, "POST /chat/completions HTTP/1.1");
+        assert_eq!(recorded.header("authorization"), Some("Bearer test-cred"));
+        let body: serde_json::Value =
+            serde_json::from_str(&recorded.body).expect("json request body");
+        assert_eq!(body["model"], "gpt-4o");
+        assert_eq!(body["messages"][0]["role"], "system");
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ProviderEvent::Event(ModelEvent::TextDelta { text }) if text == "hello"
+        )));
+    }
+
+    #[test]
+    fn probe_records_the_success_event_sequence() {
+        let server = serve(Fixture {
+            status: 200,
+            body: r#"{"choices":[{"message":{"content":"hello","tool_calls":[{"id":"c1","type":"function","function":{"name":"workspace_read","arguments":"{}"}}]}}]}"#
+                .to_owned(),
+        });
+        let events =
+            drive(&server.base_url, CancellationToken::new().signal());
+        let _ = server.recorded();
+        // Recorded baseline, not an approved-parity claim: this is the sequence
+        // this client produced today for this body.
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ProviderEvent::Event(ModelEvent::ToolCall { .. })
+        )));
+        assert!(matches!(
+            events.last(),
+            Some(ProviderEvent::Event(ModelEvent::Completed))
+        ));
+    }
+
+    #[test]
+    fn probe_records_the_http_error_matrix() {
+        // Recorded baseline, not an approved-parity claim: these assertions
+        // describe what this client does today at each (status, body) pair.
+        for status in ERROR_STATUSES {
+            for (label, body) in error_bodies() {
+                let server = serve(Fixture { status, body: body.clone() });
+                let events =
+                    drive(&server.base_url, CancellationToken::new().signal());
+                let _ = server.recorded();
+                let message = failed_message(&events);
+                // Recorded: the message embeds `reqwest`'s full status line
+                // (`400 Bad Request`), not the bare numeric code, which is what
+                // the generic path prints.
+                assert!(
+                    message.starts_with(&format!("openai error {status} ")),
+                    "{message}"
+                );
+                assert!(
+                    message.contains(&format!("{status} {}", reason(status))),
+                    "{message}"
+                );
+                // The whole body never reaches the event: the snippet is 512
+                // characters, so a 10 KB body cannot inflate the diagnostic.
+                assert!(
+                    message.len() <= 512 + 64,
+                    "status {status}: {} bytes",
+                    message.len()
+                );
+                if label.contains("html") {
+                    // Recorded: this client keeps the raw HTML snippet, however
+                    // large the body is — the 512-character cut lands after the
+                    // markup in both HTML fixtures.
+                    assert!(message.contains("<html>"), "{message}");
+                }
+                // Recorded: this client appends no rate-limit hint, unlike the
+                // generic path's `http_error_message`.
+                assert!(!message.contains("rate limiting"), "{message}");
+            }
+        }
+    }
 
     #[test]
     fn debug_is_redacted() {
@@ -394,7 +601,8 @@ mod tests {
     }
 
     #[test]
-    fn openai_stream_is_host_observed_and_bounded_without_live_network() {
+    fn generic_provider_named_openai_fails_closed_on_an_unreachable_endpoint()
+    {
         // Host-observed, bounded, no live network in `cargo test` — the
         // `openai` endpoint is not hit; the test verifies the `Failed`
         // path via the `GenericProvider` with an unreachable loopback
