@@ -955,23 +955,6 @@ impl WorkingSetState {
         }
         total
     }
-
-    #[allow(dead_code)]
-    fn hot_total_legacy(
-        &self,
-        map: &BTreeMap<String, usize>,
-    ) -> Result<usize, SchedulerError> {
-        let mut total: usize = 0;
-        for e in &self.entries {
-            if e.tier == WorkingSetTier::Hot {
-                let tok = map.get(&e.node_id).ok_or_else(|| {
-                    SchedulerError::UnknownNode { node_id: e.node_id.clone() }
-                })?;
-                total = total.saturating_add(*tok);
-            }
-        }
-        Ok(total)
-    }
 }
 
 impl SchedulerTick for WorkingSetState {

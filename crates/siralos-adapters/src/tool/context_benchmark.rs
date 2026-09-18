@@ -685,7 +685,6 @@ fn compute_baseline_with(state: &ContextToolState, bpt: usize) -> usize {
     compute_deep_all_with(state, bpt)
 }
 
-#[allow(dead_code)]
 fn deepest_level_for(
     set: &NodeRepresentationSet,
 ) -> Option<RepresentationLevel> {

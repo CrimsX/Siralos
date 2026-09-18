@@ -1235,11 +1235,6 @@ impl TuiState {
         }
     }
 
-    #[allow(dead_code)]
-    fn push_single(&mut self, line: String) {
-        self.push_single_stamped(line, None);
-    }
-
     fn push_single_stamped(
         &mut self,
         line: String,
@@ -3064,7 +3059,7 @@ pub fn derive_provider_name(url: &str) -> String {
 }
 
 // Helpers for tests: expose scroll operations
-#[allow(dead_code)]
+#[cfg(test)]
 /// Validate credential env-var name (without env: prefix): [A-Z0-9_]{1,64}.
 /// Human-readable error (D2) — validation rule unchanged, but with O3/I3
 /// teaching message when the input looks like the secret itself.
