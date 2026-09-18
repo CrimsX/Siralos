@@ -113,20 +113,6 @@ impl<'text> Scanner<'text> {
             .all(|(offset, expected)| self.peek(offset) == Some(expected))
     }
 
-    fn word_boundary_at(&self, index: usize) -> bool {
-        let before = index > 0 && {
-            let previous = self.chars[index - 1];
-            previous.is_ascii_alphanumeric() || previous == '_'
-        };
-        let after = match self.chars.get(index) {
-            None => false,
-            Some(current) => {
-                current.is_ascii_alphanumeric() || *current == '_'
-            }
-        };
-        before != after
-    }
-
     fn consume_while(&mut self, accept: impl Fn(char) -> bool) {
         while let Some(current) = self.peek(0) {
             if !accept(current) {
@@ -290,109 +276,303 @@ fn tilde_matcher(scanner: &mut Scanner) -> bool {
     true
 }
 
-/// Credential-shaped token matchers, applied in the reference order:
-/// `sk-` keys, AKIA access keys, `gh[pso]_` tokens, case-insensitive
-/// Bearer headers, long hex runs, and long base64 runs.
-fn secret_matcher(scanner: &mut Scanner) -> bool {
-    if !scanner.word_boundary_at(scanner.position) {
-        return false;
+/// The single secret-redaction owner: the frozen reference's `SECRET_PATTERNS`
+/// list from `packages/core/src/doctor/safe-report.ts` at `5da5cde`, applied as
+/// its six ordered whole-string passes.
+///
+/// The reference is JavaScript, and its semantics are narrower than the
+/// patterns suggest:
+///
+/// - `\b` is ASCII-only and zero-width, so it holds where exactly one side is
+///   `[A-Za-z0-9_]` — true at a string edge adjacent to a word character, false
+///   at an edge adjacent to a non-word character — and two matches may share one
+///   boundary;
+/// - every quantifier is greedy with backtracking, so a class run gives
+///   characters back from its right end until the trailing `\b` holds, and the
+///   base64 padding `={0,2}` gives padding back the same way;
+/// - `Bearer` carries the `i` flag on the literal only, then JavaScript `\s`
+///   (`is_js_space`), then the token class.
+///
+/// Later passes see earlier passes' output, so the emitted
+/// `SECRET_REPLACEMENT` is re-scanned; `no_rule_can_match_inside_the_replacement`
+/// asserts it stays inert rather than assuming it.
+fn redact_secrets(text: &str) -> String {
+    let sanitized = replace_pass(text, find_sk_key);
+    let sanitized = replace_pass(&sanitized, find_aws_key);
+    let sanitized = replace_pass(&sanitized, find_github_token);
+    let sanitized = replace_pass(&sanitized, find_bearer_token);
+    let sanitized = replace_pass(&sanitized, find_long_hex_run);
+    replace_pass(&sanitized, find_long_base64_run)
+}
+
+/// The marker every rule emits in place of a matched token.
+const SECRET_REPLACEMENT: &str = "<secret>";
+
+/// A half-open character range, `[start, end)`, holding one match.
+type Span = (usize, usize);
+
+/// One rule, in the shape `replace_pass` drives it: the next match at or after
+/// the index it is offered.
+type Rule = fn(&[char], usize) -> Option<Span>;
+
+/// One global, non-overlapping, leftmost-first pass — the behaviour of
+/// `String.prototype.replace` with a `/g` pattern.
+///
+/// `find` is offered the first index the pass may still match at and returns the
+/// next match at or after it. Scanning resumes at a match's end rather than one
+/// character past it, because the reference's `\b` is zero-width and a match may
+/// therefore begin exactly where the previous one ended.
+fn replace_pass(text: &str, find: Rule) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut cursor = 0usize;
+    while let Some((start, end)) = find(&chars, cursor) {
+        // A rule that matched nothing would leave `cursor` where it was and spin
+        // this loop forever, so the invariant is enforced rather than assumed.
+        assert!(
+            end > start,
+            "a secret rule must consume at least one character"
+        );
+        out.extend(chars[cursor..start].iter().copied());
+        out.push_str(SECRET_REPLACEMENT);
+        cursor = end;
     }
-    if scanner.starts_with("sk-") {
-        let start = scanner.position;
-        scanner.position += 3;
-        scanner.consume_while(|current| {
-            current.is_ascii_alphanumeric() || current == '_' || current == '-'
-        });
-        if scanner.position - start >= 3 + 8
-            && scanner.word_boundary_at(scanner.position)
+    out.extend(chars[cursor..].iter().copied());
+    out
+}
+
+/// `[A-Za-z0-9_]`: the JavaScript `\w` set, and ASCII-only like it.
+fn is_word_char(current: char) -> bool {
+    current.is_ascii_alphanumeric() || current == '_'
+}
+
+/// JavaScript `\b` at `index`.
+///
+/// Zero-width and ASCII-only: true where exactly one side is a word character,
+/// which makes it true at a string edge adjacent to a word character and false
+/// at an edge adjacent to a non-word character.
+fn boundary_at(chars: &[char], index: usize) -> bool {
+    let before = index > 0 && is_word_char(chars[index - 1]);
+    let after = index < chars.len() && is_word_char(chars[index]);
+    before != after
+}
+
+/// JavaScript `\s`, which is neither `char::is_whitespace` nor
+/// `char::is_ascii_whitespace`.
+///
+/// It includes U+00A0, U+1680, U+2000..=U+200A, U+2028, U+2029, U+202F, U+205F,
+/// U+3000 and U+FEFF, and excludes U+0085. Both predicates the two former
+/// implementations used got at least one of those wrong.
+fn is_js_space(current: char) -> bool {
+    matches!(
+        current,
+        '\u{9}'..='\u{d}'
+            | ' '
+            | '\u{a0}'
+            | '\u{1680}'
+            | '\u{2000}'..='\u{200a}'
+            | '\u{2028}'
+            | '\u{2029}'
+            | '\u{202f}'
+            | '\u{205f}'
+            | '\u{3000}'
+            | '\u{feff}'
+    )
+}
+
+/// Whether `chars[index..]` starts with `literal`.
+fn starts_with(chars: &[char], index: usize, literal: &str) -> bool {
+    literal
+        .chars()
+        .enumerate()
+        .all(|(offset, expected)| chars.get(index + offset) == Some(&expected))
+}
+
+/// The same, case-insensitively: the reference gives `Bearer` the `i` flag.
+fn starts_with_ignore_case(
+    chars: &[char],
+    index: usize,
+    literal: &str,
+) -> bool {
+    literal.chars().enumerate().all(|(offset, expected)| {
+        chars
+            .get(index + offset)
+            .is_some_and(|actual| actual.eq_ignore_ascii_case(&expected))
+    })
+}
+
+/// Consume the longest `accept` run at `from`, then give characters back from
+/// its right end until the trailing `\b` holds, failing once it is shorter than
+/// `minimum`. That is a greedy quantifier plus the reference's backtracking.
+fn class_run(
+    chars: &[char],
+    from: usize,
+    minimum: usize,
+    accept: fn(char) -> bool,
+) -> Option<usize> {
+    let mut end = from;
+    while end < chars.len() && accept(chars[end]) {
+        end += 1;
+    }
+    while end >= from + minimum {
+        if boundary_at(chars, end) {
+            return Some(end);
+        }
+        end -= 1;
+    }
+    None
+}
+
+/// `[A-Za-z0-9_-]`: the `sk-` key body.
+fn is_key_body(current: char) -> bool {
+    current.is_ascii_alphanumeric() || current == '_' || current == '-'
+}
+
+/// `[A-Za-z0-9_]`: the `gh[pso]_` token body.
+fn is_token_body(current: char) -> bool {
+    current.is_ascii_alphanumeric() || current == '_'
+}
+
+/// `[A-Za-z0-9._~+/=-]`: the `Bearer` token body.
+fn is_bearer_body(current: char) -> bool {
+    current.is_ascii_alphanumeric()
+        || matches!(current, '.' | '_' | '~' | '+' | '/' | '=' | '-')
+}
+
+/// `[A-Za-z0-9+/]`: the base64 body, which admits no `-`, `.` or `_`.
+fn is_base64_body(current: char) -> bool {
+    current.is_ascii_alphanumeric() || current == '+' || current == '/'
+}
+
+/// The reference's first pattern, `\bsk-[A-Za-z0-9_-]{8,}\b`.
+fn find_sk_key(chars: &[char], from: usize) -> Option<Span> {
+    let mut start = from;
+    while start + 3 <= chars.len() {
+        if boundary_at(chars, start) && starts_with(chars, start, "sk-") {
+            if let Some(end) = class_run(chars, start + 3, 8, is_key_body) {
+                return Some((start, end));
+            }
+        }
+        start += 1;
+    }
+    None
+}
+
+/// The reference's second pattern, `\bAKIA[0-9A-Z]{16}\b`.
+///
+/// The body is fixed-width, so there is no run to give back; `{16}` also means a
+/// longer uppercase run cannot match at all.
+fn find_aws_key(chars: &[char], from: usize) -> Option<Span> {
+    let mut start = from;
+    while start + 20 <= chars.len() {
+        let end = start + 20;
+        if boundary_at(chars, start)
+            && starts_with(chars, start, "AKIA")
+            && chars[start + 4..end].iter().all(|current| {
+                current.is_ascii_digit() || current.is_ascii_uppercase()
+            })
+            && boundary_at(chars, end)
         {
-            return true;
+            return Some((start, end));
         }
-        scanner.position = start;
+        start += 1;
     }
-    if scanner.starts_with("AKIA") {
-        let start = scanner.position;
-        scanner.position += 4;
-        scanner.consume_while(|current| {
-            current.is_ascii_uppercase() || current.is_ascii_digit()
-        });
-        if scanner.position - start == 4 + 16
-            && scanner.word_boundary_at(scanner.position)
+    None
+}
+
+/// The reference's third pattern, `\bgh[pso]_[A-Za-z0-9_]{20,}\b`.
+fn find_github_token(chars: &[char], from: usize) -> Option<Span> {
+    let mut start = from;
+    while start + 4 <= chars.len() {
+        if boundary_at(chars, start)
+            && starts_with(chars, start, "gh")
+            && matches!(chars[start + 2], 'p' | 's' | 'o')
+            && chars[start + 3] == '_'
         {
-            return true;
-        }
-        scanner.position = start;
-    }
-    for prefix in ["ghp_", "gho_", "ghs_"] {
-        if scanner.starts_with(prefix) {
-            let start = scanner.position;
-            scanner.position += 4;
-            scanner.consume_while(|current| {
-                current.is_ascii_alphanumeric() || current == '_'
-            });
-            if scanner.position - start >= 4 + 20
-                && scanner.word_boundary_at(scanner.position)
-            {
-                return true;
-            }
-            scanner.position = start;
-        }
-    }
-    const BEARER_LOWER: [char; 6] = ['b', 'e', 'a', 'r', 'e', 'r'];
-    if scanner
-        .chars
-        .iter()
-        .skip(scanner.position)
-        .zip(BEARER_LOWER.iter())
-        .all(|(actual, expected)| actual.to_ascii_lowercase() == *expected)
-    {
-        let start = scanner.position;
-        scanner.position += BEARER_LOWER.len();
-        let whitespace_start = scanner.position;
-        scanner.consume_while(char::is_whitespace);
-        if scanner.position > whitespace_start {
-            let token_start = scanner.position;
-            scanner.consume_while(|current| {
-                current.is_ascii_alphanumeric()
-                    || matches!(
-                        current,
-                        '.' | '_' | '~' | '+' | '/' | '=' | '-'
-                    )
-            });
-            if scanner.position - token_start >= 12
-                && scanner.word_boundary_at(scanner.position)
-            {
-                return true;
+            if let Some(end) = class_run(chars, start + 4, 20, is_token_body) {
+                return Some((start, end));
             }
         }
-        scanner.position = start;
+        start += 1;
     }
-    let long_run =
-        |scanner: &mut Scanner, accept: fn(char) -> bool, minimum: usize| {
-            let start = scanner.position;
-            scanner.consume_while(accept);
-            let matched = scanner.position - start >= minimum
-                && scanner.word_boundary_at(scanner.position);
-            if matched {
-                true
-            } else {
-                scanner.position = start;
-                false
+    None
+}
+
+/// The reference's fourth pattern, `\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b`.
+///
+/// `\s+` is greedy, and giving a space back cannot help: the token class admits
+/// no whitespace, so a shorter run would have to start on a character the class
+/// rejects.
+fn find_bearer_token(chars: &[char], from: usize) -> Option<Span> {
+    let literal = "Bearer".len();
+    let mut start = from;
+    while start + literal <= chars.len() {
+        if boundary_at(chars, start)
+            && starts_with_ignore_case(chars, start, "Bearer")
+        {
+            let mut cursor = start + literal;
+            while cursor < chars.len() && is_js_space(chars[cursor]) {
+                cursor += 1;
             }
-        };
-    if long_run(scanner, |current| current.is_ascii_hexdigit(), 32) {
-        return true;
+            if cursor > start + literal {
+                if let Some(end) = class_run(chars, cursor, 12, is_bearer_body)
+                {
+                    return Some((start, end));
+                }
+            }
+        }
+        start += 1;
     }
-    if long_run(
-        scanner,
-        |current| {
-            current.is_ascii_alphanumeric() || current == '+' || current == '/'
-        },
-        40,
-    ) {
-        return true;
+    None
+}
+
+/// The reference's fifth pattern, `\b[0-9a-fA-F]{32,}\b`.
+fn find_long_hex_run(chars: &[char], from: usize) -> Option<Span> {
+    let mut start = from;
+    while start < chars.len() {
+        if boundary_at(chars, start) {
+            if let Some(end) = class_run(chars, start, 32, |current| {
+                current.is_ascii_hexdigit()
+            }) {
+                return Some((start, end));
+            }
+        }
+        start += 1;
     }
-    false
+    None
+}
+
+/// The reference's sixth pattern, `\b[A-Za-z0-9+/]{40,}={0,2}\b`.
+///
+/// The class run is greedy, then the padding is greedy, then the trailing `\b`
+/// decides; a failure gives padding back first and shortens the run only after
+/// every padding count has failed.
+fn find_long_base64_run(chars: &[char], from: usize) -> Option<Span> {
+    let mut start = from;
+    while start < chars.len() {
+        if boundary_at(chars, start) && is_base64_body(chars[start]) {
+            let mut end = start;
+            while end < chars.len() && is_base64_body(chars[end]) {
+                end += 1;
+            }
+            while end >= start + 40 {
+                for padding in (0..=2).rev() {
+                    let candidate = end + padding;
+                    if candidate <= chars.len()
+                        && chars[end..candidate]
+                            .iter()
+                            .all(|byte| *byte == '=')
+                        && boundary_at(chars, candidate)
+                    {
+                        return Some((start, candidate));
+                    }
+                }
+                end -= 1;
+            }
+        }
+        start += 1;
+    }
+    None
 }
 
 /// Conservative sanitizer for doctor text: redacts absolute paths and
@@ -403,12 +583,12 @@ pub fn sanitize_safe_doctor_text(text: &str) -> String {
     let sanitized = apply_scanner(&sanitized, "<path>", multi_segment_matcher);
     let sanitized = apply_scanner(&sanitized, "<path>", unc_matcher);
     let sanitized = apply_scanner(&sanitized, "<path>", tilde_matcher);
-    apply_scanner(&sanitized, "<secret>", secret_matcher)
+    redact_secrets(&sanitized)
 }
 
-/// Secret-only redaction (no path rewriting).
+/// Secret-only redaction (no path rewriting), delegating to the single owner.
 pub fn sanitize_secrets_only(text: &str) -> String {
-    apply_scanner(text, "<secret>", secret_matcher)
+    redact_secrets(text)
 }
 
 /// Render one check's sanitized safe-report entry.
@@ -650,5 +830,351 @@ mod tests {
             "capability": "workspace.read"
         });
         assert_ne!(tool_abi_revision(&tools), tool_abi_revision(&[different]));
+    }
+}
+
+/// The durable corpus for the single secret-redaction owner (`ROADMAP.md` §10
+/// item 3).
+///
+/// PROVENANCE: every `expected` value below was produced by **executing** the
+/// recovered reference, not by reading it or deriving it by hand.
+/// `SECRET_PATTERNS` is extracted verbatim from
+/// `packages/core/src/doctor/safe-report.ts` at `5da5cde` — six patterns, applied
+/// in order by that file's `sanitizeSecretsOnly` through
+/// `String.prototype.replace` — and was run in Node over exactly these inputs.
+/// The four-seat panel reported its own independent execution of the same
+/// patterns; the two agreed on all forty rows the panel stated.
+///
+/// The spaces this corpus pins:
+///
+/// - every rule at, below and above its minimum (the `AKIA` body at 15, 16, 17
+///   and 18 characters among them);
+/// - every member of the JavaScript `\s` set, one row per character, and the
+///   characters that resemble members and are not (U+0085, U+180E, U+200B and an
+///   ordinary letter) — so a regression to `char::is_whitespace` or to
+///   `is_ascii_whitespace` fails here;
+/// - `Bearer` case-insensitivity in three spellings, with two negatives;
+/// - the boundary shapes the two former implementations disagreed on: a class run
+///   ending in `-`, `+` or `/` before a non-word character, `=` padding of one,
+///   two and three characters, and a mid-word `AKIA`;
+/// - `\b` at index 0, at end of input, and against `_`, `-`, `.`, `/` and `=`;
+/// - rule order, where two rules could claim the same text;
+/// - adjacency to non-ASCII text (é and CJK);
+/// - the pinned redaction inputs of the `capability-doctor-injected` and
+///   `brief-render-bounded` records.
+///
+/// Anything outside those spaces is unmeasured, and coverage is by construction
+/// of the row list below rather than by a generator: a new or altered rule is
+/// unproven until a row pins it, and passing this module is not an equivalence
+/// proof against the reference.
+///
+/// The AWS-shaped rows use the documented AWS sample key instead of a synthetic
+/// `AKIA` body. A key-shaped literal in this file is indistinguishable from a
+/// real credential to the secret-hygiene gate, which scans every repository
+/// file and exempts exactly that documented sample; the rule's behaviour depends
+/// only on the character classes, which the sample satisfies. Nothing here is a
+/// credential.
+#[cfg(test)]
+mod secret_corpus {
+    use super::sanitize_safe_doctor_text;
+    use super::{SECRET_REPLACEMENT, is_word_char, redact_secrets};
+
+    /// `(label, input, expected)`, in the order the oracle emitted them.
+    const CASES: &[(&str, &str, &str)] = &[
+        ("sk-7", "sk-aaaaaaa x", "sk-aaaaaaa x"),
+        ("sk-8", "sk-aaaaaaaa x", "<secret> x"),
+        ("sk-9", "sk-aaaaaaaaa x", "<secret> x"),
+        ("sk-8-dash-bang", "sk-aaaaaaaa-!", "<secret>-!"),
+        ("sk-8-dash-space", "sk-aaaaaaaa- x", "<secret>- x"),
+        ("akia16", "AKIAIOSFODNN7EXAMPLE x", "<secret> x"),
+        ("akia17", "AKIAIOSFODNN7EXAMPLEX x", "AKIAIOSFODNN7EXAMPLEX x"),
+        ("akia-midword", "xAKIAIOSFODNN7EXAMPLE", "xAKIAIOSFODNN7EXAMPLE"),
+        ("gh19", "ghp_aaaaaaaaaaaaaaaaaaa x", "ghp_aaaaaaaaaaaaaaaaaaa x"),
+        ("gh20", "ghp_aaaaaaaaaaaaaaaaaaaa x", "<secret> x"),
+        ("bearer11", "Bearer aaaaaaaaaaa x", "Bearer aaaaaaaaaaa x"),
+        ("bearer12", "Bearer aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-space", "Bearer aaaaaaaaaaaaaaaaaaaaaa x", "<secret> x"),
+        (
+            "bearer-overlap",
+            "Bearer aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/=",
+            "<secret>/=",
+        ),
+        (
+            "b64-41-plusbang",
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz+!",
+            "<secret>+!",
+        ),
+        (
+            "b64-40-eq-eof",
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz=",
+            "<secret>=",
+        ),
+        (
+            "b64-40-eq-x",
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz=x",
+            "<secret>x",
+        ),
+        (
+            "b64-40-eqeq-eof",
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz==",
+            "<secret>==",
+        ),
+        (
+            "b64-40-eqeqeq-eof",
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz===",
+            "<secret>===",
+        ),
+        (
+            "hex31",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa x",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa x",
+        ),
+        ("hex32", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa x", "<secret> x"),
+        (
+            "eacute-flank",
+            "\u{e9}AKIAIOSFODNN7EXAMPLE\u{e9}",
+            "\u{e9}<secret>\u{e9}",
+        ),
+        (
+            "PINNED-secrets",
+            "found sk-abcdef123456 and AKIAIOSFODNN7EXAMPLE and Bearer abc.def.ghi_jkl-123",
+            "found <secret> and <secret> and <secret>",
+        ),
+        (
+            "PINNED-brief-secret",
+            "never embed tokens like sk-abcd12345678 in output",
+            "never embed tokens like <secret> in output",
+        ),
+        (
+            "PINNED-secretsOnly",
+            "see src/app.ts for Bearer abcdefghijkl1234567890",
+            "see src/app.ts for <secret>",
+        ),
+        (
+            "bearer-40hex-overlap",
+            "Bearer aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "<secret>",
+        ),
+        (
+            "b64-containing-sk",
+            "zzzzzzzzzzzzzzzzzzzzsk-aaaaaaaazzzzzzzzzzzzzzzzzzzz",
+            "zzzzzzzzzzzzzzzzzzzzsk-aaaaaaaazzzzzzzzzzzzzzzzzzzz",
+        ),
+        ("sk-at-index-0", "sk-aaaaaaaa x", "<secret> x"),
+        ("sk-at-eof", "x sk-aaaaaaaa", "x <secret>"),
+        ("sk-glued-underscore", "_sk-aaaaaaaa_", "_sk-aaaaaaaa_"),
+        ("sk-glued-dash", "-sk-aaaaaaaa-", "-<secret>-"),
+        ("sk-glued-dot", ".sk-aaaaaaaa.", ".<secret>."),
+        (
+            "sk-then-akia",
+            "sk-aaaaaaaa AKIAIOSFODNN7EXAMPLE",
+            "<secret> <secret>",
+        ),
+        ("ghp-at-eof", "x ghp_aaaaaaaaaaaaaaaaaaaa", "x <secret>"),
+        (
+            "hex32-midword",
+            "zaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaz",
+            "zaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaz",
+        ),
+        (
+            "two-adjacent-hex",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "<secret>",
+        ),
+        (
+            "hex-sep-one-word-char",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaxbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "<secret>",
+        ),
+        (
+            "secret-marker-input",
+            "<secret> AKIAIOSFODNN7EXAMPLE",
+            "<secret> <secret>",
+        ),
+        ("empty", "", ""),
+        ("whitespace", "   ", "   "),
+        ("gho-20", "gho_aaaaaaaaaaaaaaaaaaaa x", "<secret> x"),
+        ("ghs-20", "ghs_aaaaaaaaaaaaaaaaaaaa x", "<secret> x"),
+        ("ghp-21", "ghp_aaaaaaaaaaaaaaaaaaaaa x", "<secret> x"),
+        ("bearer13", "Bearer aaaaaaaaaaaaa x", "<secret> x"),
+        // The reference's `i` flag covers the literal only.
+        ("bearer-upper", "BEARER aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-mixed", "bEaReR aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-mixed-2", "BeArEr aaaaaaaaaaaa x", "<secret> x"),
+        (
+            "bearer-wrong-literal",
+            "Beare aaaaaaaaaaaa x",
+            "Beare aaaaaaaaaaaa x",
+        ),
+        (
+            "bearer-upper-nowhitespace",
+            "BEARERaaaaaaaaaaaa x",
+            "BEARERaaaaaaaaaaaa x",
+        ),
+        // Every member of the JavaScript `\s` set, one row each: it must
+        // separate the literal from the token.
+        ("bearer-space-u0009", "Bearer\u{9}aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-space-u000a", "Bearer\u{a}aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-space-u000b", "Bearer\u{b}aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-space-u000c", "Bearer\u{c}aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-space-u000d", "Bearer\u{d}aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-space-u0020", "Bearer aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-space-u00a0", "Bearer\u{a0}aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-space-u1680", "Bearer\u{1680}aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-space-u2000", "Bearer\u{2000}aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-space-u2001", "Bearer\u{2001}aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-space-u2002", "Bearer\u{2002}aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-space-u2003", "Bearer\u{2003}aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-space-u2004", "Bearer\u{2004}aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-space-u2005", "Bearer\u{2005}aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-space-u2006", "Bearer\u{2006}aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-space-u2007", "Bearer\u{2007}aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-space-u2008", "Bearer\u{2008}aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-space-u2009", "Bearer\u{2009}aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-space-u200a", "Bearer\u{200a}aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-space-u2028", "Bearer\u{2028}aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-space-u2029", "Bearer\u{2029}aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-space-u202f", "Bearer\u{202f}aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-space-u205f", "Bearer\u{205f}aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-space-u3000", "Bearer\u{3000}aaaaaaaaaaaa x", "<secret> x"),
+        ("bearer-space-ufeff", "Bearer\u{feff}aaaaaaaaaaaa x", "<secret> x"),
+        // Characters that look like JavaScript `\s` and are not in it.
+        (
+            "bearer-space-u0085",
+            "Bearer\u{85}aaaaaaaaaaaa x",
+            "Bearer\u{85}aaaaaaaaaaaa x",
+        ),
+        (
+            "bearer-space-u180e",
+            "Bearer\u{180e}aaaaaaaaaaaa x",
+            "Bearer\u{180e}aaaaaaaaaaaa x",
+        ),
+        (
+            "bearer-space-u200b",
+            "Bearer\u{200b}aaaaaaaaaaaa x",
+            "Bearer\u{200b}aaaaaaaaaaaa x",
+        ),
+        (
+            "bearer-space-letter",
+            "Beareraaaaaaaaaaaaa x",
+            "Beareraaaaaaaaaaaaa x",
+        ),
+        ("bearer-midword", "xBearer aaaaaaaaaaaa x", "xBearer aaaaaaaaaaaa x"),
+        ("sk-eof-underscore", "x sk-aaaaaaaa_", "x <secret>"),
+        ("sk-bang-delimited", "!sk-aaaaaaaa!", "!<secret>!"),
+        ("sk-hyphen-body", "sk--------- x", "sk--------- x"),
+        ("sk-underscore-body", "sk-________ x", "<secret> x"),
+        (
+            "hex-slash-flank",
+            "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/",
+            "/<secret>/",
+        ),
+        ("hex-at-eof", "x aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "x <secret>"),
+        (
+            "b64-39-plus-tail",
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz+?",
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz+?",
+        ),
+        (
+            "b64-39-slash-tail",
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz/?",
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz/?",
+        ),
+        (
+            "b64-40-plus-tail",
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz+?",
+            "<secret>+?",
+        ),
+        (
+            "b64-40-slash-tail",
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz/?",
+            "<secret>/?",
+        ),
+        (
+            "b64-40-plus-bang",
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz+!",
+            "<secret>+!",
+        ),
+        (
+            "b64-abutting",
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz=zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+            "<secret><secret>",
+        ),
+        (
+            "han-flank-hex",
+            "\u{6f22}aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u{6f22}",
+            "\u{6f22}<secret>\u{6f22}",
+        ),
+        (
+            "han-flank-bearer",
+            "\u{6f22}Bearer aaaaaaaaaaaa\u{6f22}",
+            "\u{6f22}<secret>\u{6f22}",
+        ),
+        ("marker-alone", "<secret>", "<secret>"),
+        ("marker-after-sk", "sk-aaaaaaaa <secret>", "<secret> <secret>"),
+        ("whitespace-tab", "\t\n", "\t\n"),
+        ("akia18", "AKIAIOSFODNN7EXAMPLEXX x", "AKIAIOSFODNN7EXAMPLEXX x"),
+        ("akia15", "AKIAIOSFODNN7EXAMPL x", "AKIAIOSFODNN7EXAMPL x"),
+        (
+            "akia-lowercase-body",
+            "AKIAaaaaaaaaaaaaaaaa x",
+            "AKIAaaaaaaaaaaaaaaaa x",
+        ),
+    ];
+
+    #[test]
+    fn the_owner_reproduces_the_executed_reference() {
+        let mut diverged: Vec<String> = Vec::new();
+        for &(label, input, expected) in CASES {
+            let actual = redact_secrets(input);
+            if actual != expected {
+                diverged.push(format!(
+                    "  {label}\n    input:    {input:?}\n    expected: {expected:?}\n    actual:   {actual:?}"
+                ));
+            }
+        }
+        assert!(
+            diverged.is_empty(),
+            "{} of {} corpus row(s) diverge from the reference:\n{}",
+            diverged.len(),
+            CASES.len(),
+            diverged.join("\n"),
+        );
+    }
+
+    #[test]
+    fn no_rule_can_match_inside_the_replacement() {
+        // A later pass re-scans the marker an earlier pass emitted, so the marker
+        // must be inert. Its longest word run is `secret`, far below the shortest
+        // minimum (`sk-` plus eight), and it carries none of the rule literals.
+        let longest = SECRET_REPLACEMENT
+            .split(|current| !is_word_char(current))
+            .map(str::len)
+            .max()
+            .unwrap_or(0);
+        assert!(
+            longest < 8,
+            "`{SECRET_REPLACEMENT}` carries a {longest}-character word run"
+        );
+        assert_eq!(redact_secrets(SECRET_REPLACEMENT), SECRET_REPLACEMENT);
+    }
+
+    #[test]
+    fn the_path_stage_still_runs_first_and_is_unchanged() {
+        // `sanitizeSafeDoctorText` is five path passes and then the owner, so a
+        // redaction change must not disturb the path records pinned by the
+        // `capability-doctor-injected` subject.
+        assert_eq!(
+            sanitize_safe_doctor_text(
+                "relative src/app.ts stays intact; /doctor stays intact"
+            ),
+            "relative src<path>.ts stays intact; /doctor stays intact"
+        );
+        assert_eq!(
+            sanitize_safe_doctor_text(
+                "found sk-abcdef123456 and AKIAIOSFODNN7EXAMPLE and Bearer abc.def.ghi_jkl-123"
+            ),
+            "found <secret> and <secret> and <secret>"
+        );
     }
 }
