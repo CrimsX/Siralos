@@ -3023,7 +3023,7 @@ pub fn write_profile_config(
                     "A model display name must not contain NUL.".to_owned()
                 );
             }
-            if !display.chars().all(|c| !c.is_control()) {
+            if !siralos_core::composition::is_printable(display) {
                 return Err(
                     "A model display name must be printable.".to_owned()
                 );
@@ -3031,27 +3031,29 @@ pub fn write_profile_config(
         }
     }
     if let Some(ep) = endpoint {
+        // One sequential clause check with an early return each: the previous
+        // shape wrapped these in an outer `if` that re-evaluated the same five
+        // conditions to choose a message, and its last arm was an unconditional
+        // `return Err` — so any later edit that weakened the outer condition
+        // would have reported "must not contain spaces" for a valid endpoint.
         if ep.is_empty()
             || ep.len() > siralos_core::composition::MAX_PROFILE_ENDPOINT_BYTES
-            || ep.contains('\0')
-            || !(ep.starts_with("https://") || ep.starts_with("http://"))
-            || ep.contains(' ')
         {
-            if ep.is_empty() || ep.len() > 512 {
-                return Err(
-                    "The endpoint exceeds the 512-byte bound or is empty."
-                        .to_owned(),
-                );
-            }
-            if ep.contains('\0') {
-                return Err("An endpoint must not contain NUL.".to_owned());
-            }
-            if !(ep.starts_with("https://") || ep.starts_with("http://")) {
-                return Err(
-                    "An endpoint must start with \"https://\" or \"http://\"."
-                        .to_owned(),
-                );
-            }
+            return Err(format!(
+                "The endpoint exceeds the {}-byte bound or is empty.",
+                siralos_core::composition::MAX_PROFILE_ENDPOINT_BYTES
+            ));
+        }
+        if ep.contains('\0') {
+            return Err("An endpoint must not contain NUL.".to_owned());
+        }
+        if !siralos_core::composition::has_http_scheme(ep) {
+            return Err(
+                "An endpoint must start with \"https://\" or \"http://\"."
+                    .to_owned(),
+            );
+        }
+        if ep.contains(' ') {
             return Err("An endpoint must not contain spaces.".to_owned());
         }
     }
@@ -5845,6 +5847,80 @@ mod tests {
             "the stale display name is dropped, so the header cannot lie"
         );
         let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn write_profile_config_endpoint_messages_are_pinned() {
+        // Regression pin: the write boundary's endpoint guard reports four
+        // distinct messages, one per clause. Nothing else asserts them — the
+        // strings appear only at their definition sites.
+        let refused = |endpoint: &str| {
+            write_profile_config(
+                std::path::Path::new("unused-guard-probe"),
+                "openai",
+                "model-a",
+                None,
+                Some(endpoint),
+                None,
+                None,
+            )
+            .expect_err("the endpoint guard refuses")
+        };
+        assert_eq!(
+            refused(""),
+            "The endpoint exceeds the 512-byte bound or is empty."
+        );
+        assert_eq!(
+            refused(&"h".repeat(
+                siralos_core::composition::MAX_PROFILE_ENDPOINT_BYTES + 1
+            )),
+            "The endpoint exceeds the 512-byte bound or is empty."
+        );
+        assert_eq!(
+            refused("https://api.example.com/a\0b"),
+            "An endpoint must not contain NUL."
+        );
+        assert_eq!(
+            refused("ftp://api.example.com"),
+            "An endpoint must start with \"https://\" or \"http://\"."
+        );
+        assert_eq!(
+            refused("https://api.example.com/a b"),
+            "An endpoint must not contain spaces."
+        );
+    }
+
+    #[test]
+    fn write_profile_config_display_name_messages_are_pinned() {
+        // Regression pin: the display-name guard reports three distinct
+        // messages, one per clause.
+        let refused = |display: &str| {
+            write_profile_config(
+                std::path::Path::new("unused-guard-probe"),
+                "openai",
+                "model-a",
+                None,
+                None,
+                None,
+                Some(display),
+            )
+            .expect_err("the display-name guard refuses")
+        };
+        assert_eq!(
+            refused(&"d".repeat(
+                siralos_core::composition::MAX_PROFILE_MODEL_DISPLAY_NAME_BYTES
+                    + 1
+            )),
+            "The model display name exceeds the 256-byte bound."
+        );
+        assert_eq!(
+            refused("display\0name"),
+            "A model display name must not contain NUL."
+        );
+        assert_eq!(
+            refused("line\nbreak"),
+            "A model display name must be printable."
+        );
     }
 
     #[test]

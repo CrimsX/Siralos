@@ -3117,7 +3117,7 @@ fn validate_model_display_name(value: &str) -> Result<(), String> {
     if value.contains('\0') {
         return Err("A model display name must not contain NUL.".to_owned());
     }
-    if !value.chars().all(|c| !c.is_control()) {
+    if !siralos_core::composition::is_printable(value) {
         return Err("A model display name must be printable.".to_owned());
     }
     Ok(())
@@ -3154,7 +3154,7 @@ fn validate_endpoint_value(value: &str) -> Result<(), String> {
                 .to_owned(),
         );
     }
-    if !(value.starts_with("https://") || value.starts_with("http://")) {
+    if !siralos_core::composition::has_http_scheme(value) {
         return Err(
             "Endpoint must be a valid URL starting with https:// or http:// (e.g. https://api.openai.com/v1)"
                 .to_owned(),
