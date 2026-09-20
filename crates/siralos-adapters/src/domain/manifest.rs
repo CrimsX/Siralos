@@ -498,9 +498,7 @@ fn validate_record(
     })?;
     let path_ok = !record.path.is_empty()
         && !record.path.contains('\0')
-        && !record.path.starts_with('/')
-        && !record.path.starts_with('\\')
-        && !is_absolute_drive(&record.path);
+        && !siralos_core::workspace::path::is_absolute_pattern(&record.path);
     let digest_ok = record.digest.len() == "sha256:".len() + 64
         && record.digest.starts_with("sha256:")
         && is_hex64(&record.digest[7..]);
@@ -511,11 +509,6 @@ fn validate_record(
         )));
     }
     Ok(record)
-}
-
-fn is_absolute_drive(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
 fn is_hex64(value: &str) -> bool {

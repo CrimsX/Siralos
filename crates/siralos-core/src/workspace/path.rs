@@ -123,7 +123,19 @@ pub fn validate_relative_path(value: &str) -> Result<(), PathValidationError> {
 
 /// Absolute-path detection matching the reference patterns
 /// `^(?:[A-Za-z]:)?[\\/]` and `^[A-Za-z]:` (drive letters).
-fn is_absolute_pattern(value: &str) -> bool {
+///
+/// Absolute means the first two bytes are an ASCII letter and `:`, or the
+/// first byte is `/` or `\`. Both halves are decided on bytes, so a
+/// multi-byte leading character is never a drive letter and the empty string
+/// is never absolute.
+///
+/// This is the rule alone. NUL, emptiness and `..` traversal stay separate
+/// checks that each caller keeps in its own order, so a caller that does not
+/// want the `..` rule calls this predicate rather than
+/// `validate_relative_path`: that validator refuses every `..` component,
+/// which the resolver deliberately does not (it normalizes and then checks
+/// containment) and the manifest validator does not either.
+pub fn is_absolute_pattern(value: &str) -> bool {
     let bytes = value.as_bytes();
     let drive_prefix =
         bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
@@ -193,7 +205,7 @@ pub fn is_protected_write_target(relative: &str, fold: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        PathValidationError, WorkspaceRelativePath,
+        PathValidationError, WorkspaceRelativePath, is_absolute_pattern,
         is_protected_behavioral_config_path, is_protected_write_target,
         validate_relative_path,
     };
@@ -222,6 +234,34 @@ mod tests {
                 validate_relative_path(value),
                 Err(PathValidationError::Absolute)
             );
+        }
+    }
+
+    #[test]
+    fn absolute_pattern_is_decided_on_bytes() {
+        // The rule is the reference's: a `[A-Za-z]:` drive prefix or a leading
+        // `/` or `\`. Both halves are byte-wise, which is what keeps a
+        // multi-byte leading character (`é`, `漢`) out of the drive branch, and
+        // what makes the empty string non-absolute.
+        for value in ["/", "\\", "/x", "\\x", "C:", "c:", "C:/x", "d:y"] {
+            assert!(is_absolute_pattern(value), "{value:?} is absolute");
+        }
+        for value in [
+            "",
+            ":",
+            ":a",
+            "C",
+            "1:",
+            "\u{e9}",
+            "\u{e9}:",
+            "\u{6f22}:",
+            "a\0b",
+            "a/b",
+            ".",
+            "..",
+            "a/../b",
+        ] {
+            assert!(!is_absolute_pattern(value), "{value:?} is relative");
         }
     }
 

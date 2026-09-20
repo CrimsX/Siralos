@@ -83,7 +83,7 @@ pub fn resolve_workspace_path(
     if requested.is_empty() {
         return Err(PathRejection::Empty);
     }
-    if is_absolute_pattern(requested) {
+    if siralos_core::workspace::path::is_absolute_pattern(requested) {
         return Err(PathRejection::Absolute);
     }
     let canonical_root = std::fs::canonicalize(root).map_err(|error| {
@@ -120,18 +120,6 @@ pub fn resolve_workspace_path(
         workspace_relative_path,
         absolute_path: canonical_target,
     })
-}
-
-/// Absolute-path detection matching the reference patterns
-/// `^(?:[A-Za-z]:)?[\\/]` and `^[A-Za-z]:`.
-fn is_absolute_pattern(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    let drive_prefix =
-        bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
-    if drive_prefix {
-        return true;
-    }
-    bytes.first().is_some_and(|byte| *byte == b'/' || *byte == b'\\')
 }
 
 #[cfg(test)]
