@@ -23,9 +23,9 @@ pub use model::{
     ReviseTaskPlanInput, TaskPlan, TaskPlanApprovalKind, TaskPlanContent,
     TaskPlanState, TaskPlanStateKind, TouchpointConfidence,
     compute_plan_revision_digest, content_candidate_value, create_task_plan,
-    has_meaningful_acceptance_criteria, is_valid_plan_element_id,
-    is_valid_plan_id, is_valid_revision_handle, plan_content_payload,
-    revise_task_plan, stored_plan_digest, summarize_plan,
+    has_meaningful_acceptance_criteria, is_valid_plan_id,
+    is_valid_revision_handle, plan_content_payload, revise_task_plan,
+    stored_plan_digest, summarize_plan,
 };
 pub use policy::{
     PlanningDecision, PlanningDecisionInput, PlanningDecisionReason,

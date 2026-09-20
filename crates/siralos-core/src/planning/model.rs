@@ -364,14 +364,8 @@ pub fn is_valid_plan_id(id: &str) -> bool {
 }
 
 /// `^[A-Za-z][A-Za-z0-9._-]{0,63}$` (step/touchpoint/constraint/risk ids).
-pub fn is_valid_plan_element_id(id: &str) -> bool {
-    let bytes = id.as_bytes();
-    !bytes.is_empty()
-        && bytes.len() <= 64
-        && bytes[0].is_ascii_alphabetic()
-        && bytes[1..].iter().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
-        })
+pub(crate) fn is_valid_plan_element_id(id: &str) -> bool {
+    crate::identifier::is_element_id(id)
 }
 
 /// `^rev_[0-9a-f]{32}$` — opaque workspace revision handles.

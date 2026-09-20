@@ -121,13 +121,7 @@ pub struct ExecutionContractRef {
 }
 
 fn is_contract_id(id: &str) -> bool {
-    let bytes = id.as_bytes();
-    !bytes.is_empty()
-        && bytes.len() <= 64
-        && bytes[0].is_ascii_alphabetic()
-        && bytes[1..].iter().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
-        })
+    crate::identifier::is_element_id(id)
 }
 
 fn is_rule_id(id: &str) -> bool {
@@ -141,13 +135,7 @@ fn is_rule_id(id: &str) -> bool {
 }
 
 fn is_reporting_id(id: &str) -> bool {
-    let bytes = id.as_bytes();
-    !bytes.is_empty()
-        && bytes.len() <= 64
-        && bytes[0].is_ascii_alphabetic()
-        && bytes[1..].iter().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
-        })
+    crate::identifier::is_element_id(id)
 }
 
 fn copy_rules(

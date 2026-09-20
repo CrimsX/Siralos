@@ -24,6 +24,7 @@ pub mod domain;
 pub mod evaluation;
 pub mod evolution;
 pub mod executor;
+mod identifier;
 pub mod identity;
 pub mod instructions;
 pub mod knowledge;
