@@ -28,7 +28,8 @@ use crate::provider::tool_names::ToolNames;
 use crate::provider::{
     ANTHROPIC_VERSION, CANCELLED_AFTER_HTTP_RESPONSE,
     CANCELLED_BEFORE_HTTP_CALL, CANCELLED_BEFORE_HTTP_SEND,
-    NO_PROVIDER_RESPONSE_OBSERVED, ReplayHooks, record_outcome,
+    CANCELLED_BEFORE_PROVIDER_START, NO_PROVIDER_RESPONSE_OBSERVED,
+    ReplayHooks, record_outcome,
 };
 use serde_json::Value;
 use siralos_core::composition::Protocol;
@@ -266,8 +267,7 @@ impl GenericProvider {
     ) -> Box<dyn Iterator<Item = ProviderEvent> + 'a> {
         if cancellation.is_some_and(|signal| signal.is_cancelled()) {
             return Box::new(std::iter::once(ProviderEvent::Cancelled {
-                message: "Host cancelled the turn before provider start"
-                    .to_owned(),
+                message: CANCELLED_BEFORE_PROVIDER_START.to_owned(),
             }));
         }
         let provider = self.provider.clone();

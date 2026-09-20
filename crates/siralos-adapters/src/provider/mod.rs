@@ -64,6 +64,10 @@ pub(crate) fn response_body_sha256(text: &str) -> String {
     siralos_core::identity::sha256_hex(text.as_bytes())
 }
 
+/// Cancellation message for a signal tripped before the provider starts.
+pub(crate) const CANCELLED_BEFORE_PROVIDER_START: &str =
+    "Host cancelled the turn before provider start";
+
 /// Cancellation message for a signal already tripped before the provider call.
 pub(crate) const CANCELLED_BEFORE_HTTP_CALL: &str =
     "Host cancelled before HTTP call";

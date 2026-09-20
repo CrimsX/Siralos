@@ -17,7 +17,8 @@
 use crate::provider::credential::HostCredential;
 use crate::provider::{
     CANCELLED_BEFORE_HTTP_CALL, CANCELLED_BEFORE_HTTP_SEND,
-    NO_PROVIDER_RESPONSE_OBSERVED, ReplayHooks, record_outcome,
+    CANCELLED_BEFORE_PROVIDER_START, NO_PROVIDER_RESPONSE_OBSERVED,
+    ReplayHooks, record_outcome,
 };
 use serde_json::Value;
 use siralos_core::determinism::{
@@ -116,8 +117,7 @@ impl ModelProvider for OpenAiProvider {
     ) -> Self::Stream<'a> {
         if cancellation.is_cancelled() {
             return Box::new(std::iter::once(ProviderEvent::Cancelled {
-                message: "Host cancelled the turn before provider start"
-                    .to_owned(),
+                message: CANCELLED_BEFORE_PROVIDER_START.to_owned(),
             }));
         }
         let model = self.model.borrow().clone();

@@ -5,6 +5,7 @@
 //! determinism-port recordings as `ProviderEvent`s; recordings live in memory
 //! only.
 
+use crate::provider::CANCELLED_BEFORE_PROVIDER_START;
 use serde_json::Value;
 use siralos_core::determinism::ReplayRecording;
 use siralos_core::provider::{
@@ -249,8 +250,7 @@ impl ModelProvider for RecordedReplayProvider {
     ) -> Self::Stream<'a> {
         if cancellation.is_cancelled() {
             return Box::new(std::iter::once(ProviderEvent::Cancelled {
-                message: "Host cancelled the turn before provider start"
-                    .to_owned(),
+                message: CANCELLED_BEFORE_PROVIDER_START.to_owned(),
             }));
         }
         let index = self.cursor.get();

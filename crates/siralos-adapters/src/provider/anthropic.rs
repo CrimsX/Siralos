@@ -11,7 +11,8 @@
 use crate::provider::credential::HostCredential;
 use crate::provider::{
     ANTHROPIC_VERSION, CANCELLED_BEFORE_HTTP_CALL, CANCELLED_BEFORE_HTTP_SEND,
-    NO_PROVIDER_RESPONSE_OBSERVED, ReplayHooks, record_outcome,
+    CANCELLED_BEFORE_PROVIDER_START, NO_PROVIDER_RESPONSE_OBSERVED,
+    ReplayHooks, record_outcome,
 };
 use serde_json::Value;
 use siralos_core::determinism::{
@@ -109,8 +110,7 @@ impl ModelProvider for AnthropicProvider {
     ) -> Self::Stream<'a> {
         if cancellation.is_cancelled() {
             return Box::new(std::iter::once(ProviderEvent::Cancelled {
-                message: "Host cancelled the turn before provider start"
-                    .to_owned(),
+                message: CANCELLED_BEFORE_PROVIDER_START.to_owned(),
             }));
         }
         let model = self.model.borrow().clone();
@@ -252,90 +252,28 @@ impl AnthropicProvider {
             } => (status, text, value),
         };
         let mut events = Vec::new();
-        if let Some(content) = value
-            .get("content")
-            .and_then(|v| v.as_array())
-            .and_then(|arr| arr.first())
-        {
-            if let Some(text) = content.get("text").and_then(|v| v.as_str()) {
-                if !text.is_empty() {
-                    events.push(ProviderEvent::Event(ModelEvent::TextDelta {
-                        text: text.to_owned(),
-                    }));
-                }
-            }
-            if let Some(tool_use) =
-                content.get("type").and_then(|v| v.as_str())
-            {
-                if tool_use == "tool_use" {
-                    let id = content
-                        .get("id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_owned();
-                    let name = content
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_owned();
-                    let input_val =
-                        content.get("input").cloned().unwrap_or(Value::Null);
-                    if !id.is_empty() && !name.is_empty() {
-                        let input =
-                            siralos_core::provider::ToolCallInput::from_value(
-                                input_val,
-                            );
-                        events.push(ProviderEvent::Event(
-                            ModelEvent::ToolCall {
-                                call_id: id,
-                                tool_name: name,
-                                input,
-                            },
-                        ));
-                    }
-                }
-            }
-        }
         if let Some(content_arr) =
             value.get("content").and_then(|v| v.as_array())
         {
-            for block in content_arr.iter().skip(1) {
+            for (index, block) in content_arr.iter().enumerate() {
                 if block.get("type").and_then(|v| v.as_str())
                     == Some("tool_use")
                 {
-                    let id = block
-                        .get("id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_owned();
-                    let name = block
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_owned();
-                    let input_val =
-                        block.get("input").cloned().unwrap_or(Value::Null);
-                    if !id.is_empty() && !name.is_empty() {
-                        let input =
-                            siralos_core::provider::ToolCallInput::from_value(
-                                input_val,
-                            );
-                        events.push(ProviderEvent::Event(
-                            ModelEvent::ToolCall {
-                                call_id: id,
-                                tool_name: name,
-                                input,
-                            },
-                        ));
+                    // A tool-use block never falls through to the text arm, so
+                    // its `text` field is dropped — except on the first block,
+                    // which the original walk read for `text` before it looked
+                    // at the type. That is why the delta is emitted first here
+                    // and never for a later block, and why the guard below
+                    // controls only the push: a block that fails it still takes
+                    // this branch and still suppresses its text.
+                    if index == 0 {
+                        push_text_delta(block, &mut events);
                     }
-                } else if let Some(text) =
-                    block.get("text").and_then(|v| v.as_str())
-                {
-                    if !text.is_empty() {
-                        events.push(ProviderEvent::Event(
-                            ModelEvent::TextDelta { text: text.to_owned() },
-                        ));
+                    if let Some(event) = tool_call_event(block) {
+                        events.push(ProviderEvent::Event(event));
                     }
+                } else {
+                    push_text_delta(block, &mut events);
                 }
             }
         }
@@ -350,6 +288,39 @@ impl AnthropicProvider {
         );
         events
     }
+}
+
+/// Push a block's non-empty `text` field as a delta, when it carries one.
+fn push_text_delta(block: &Value, events: &mut Vec<ProviderEvent>) {
+    if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
+        if !text.is_empty() {
+            events.push(ProviderEvent::Event(ModelEvent::TextDelta {
+                text: text.to_owned(),
+            }));
+        }
+    }
+}
+
+/// The tool call a `tool_use` block describes, or `None` when it has no id or
+/// no name; a missing `input` becomes [`Value::Null`].
+///
+/// The caller tests the block's `type` to choose the branch and uses this only
+/// to decide the push. Using it as the branch condition instead would change
+/// behaviour: a block that fails this guard still belongs to the tool-use
+/// branch, which is what suppresses its `text` field.
+fn tool_call_event(block: &Value) -> Option<ModelEvent> {
+    let id = block.get("id").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+    let name =
+        block.get("name").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+    if id.is_empty() || name.is_empty() {
+        return None;
+    }
+    let input_val = block.get("input").cloned().unwrap_or(Value::Null);
+    Some(ModelEvent::ToolCall {
+        call_id: id,
+        tool_name: name,
+        input: siralos_core::provider::ToolCallInput::from_value(input_val),
+    })
 }
 
 impl std::fmt::Display for AnthropicProvider {
@@ -721,6 +692,169 @@ mod tests {
         assert!(
             message.starts_with("anthropic response read failed: "),
             "{message}"
+        );
+    }
+
+    /// Drive one recorded 200 body through the real anthropic parse.
+    fn events_for_body(body: &str) -> Vec<ProviderEvent> {
+        let server = serve(Fixture { status: 200, body: body.to_owned() });
+        let events =
+            drive(&server.base_url, CancellationToken::new().signal());
+        let _ = server.recorded();
+        events
+    }
+
+    /// How many `ToolCall` events `events` holds.
+    fn tool_call_count(events: &[ProviderEvent]) -> usize {
+        events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    ProviderEvent::Event(ModelEvent::ToolCall { .. })
+                )
+            })
+            .count()
+    }
+
+    #[test]
+    fn probe_records_first_block_text_before_its_tool_call() {
+        // Recorded baseline, not an approved-parity claim. The first block is
+        // read for `text` before its type is considered, so a first `tool_use`
+        // block that also carries `text` emits the delta first and the call
+        // second — asserted by position, not by presence.
+        let events = events_for_body(
+            r#"{"content":[{"type":"tool_use","id":"t1","name":"n","input":{},"text":"lead"}]}"#,
+        );
+        let delta_at = events.iter().position(|event| {
+            matches!(
+                event,
+                ProviderEvent::Event(ModelEvent::TextDelta { text })
+                    if text == "lead"
+            )
+        });
+        let call_at = events.iter().position(|event| {
+            matches!(event, ProviderEvent::Event(ModelEvent::ToolCall { .. }))
+        });
+        assert!(delta_at.is_some(), "the text survives: {events:?}");
+        assert!(call_at.is_some(), "the call is emitted: {events:?}");
+        assert!(delta_at < call_at, "delta precedes call: {events:?}");
+    }
+
+    #[test]
+    fn probe_records_the_tool_use_guard_dropping_only_the_push() {
+        // Recorded baseline, not an approved-parity claim. An empty id or name
+        // suppresses the push only: the block still takes the `tool_use` branch,
+        // so nothing else fires for it.
+        for body in [
+            r#"{"content":[{"type":"tool_use","id":"","name":"n","input":{}}]}"#,
+            r#"{"content":[{"type":"tool_use","id":"t1","name":"","input":{}}]}"#,
+        ] {
+            let events = events_for_body(body);
+            assert_eq!(events.len(), 1, "only Completed: {events:?}");
+            assert!(matches!(
+                events[0],
+                ProviderEvent::Event(ModelEvent::Completed)
+            ));
+        }
+
+        // The trap: the same guard LATER in the array, on a block carrying a
+        // `text` field. Because the block still takes the `tool_use` branch, its
+        // text is dropped rather than falling through to the text arm.
+        let events = events_for_body(
+            r#"{"content":[{"type":"text","text":"lead"},{"type":"tool_use","id":"","name":"n","input":{},"text":"must-not-appear"}]}"#,
+        );
+        assert!(
+            !events.iter().any(|event| {
+                matches!(
+                    event,
+                    ProviderEvent::Event(ModelEvent::TextDelta { text })
+                        if text == "must-not-appear"
+                )
+            }),
+            "a later failing-guard tool_use block suppresses its text: {events:?}"
+        );
+        assert_eq!(tool_call_count(&events), 0, "{events:?}");
+        assert_eq!(events.len(), 2, "leading text then Completed: {events:?}");
+        assert!(matches!(
+            events[0],
+            ProviderEvent::Event(ModelEvent::TextDelta { .. })
+        ));
+        assert!(matches!(
+            events[1],
+            ProviderEvent::Event(ModelEvent::Completed)
+        ));
+    }
+
+    #[test]
+    fn probe_records_a_tool_call_with_no_input_key() {
+        // Recorded baseline, not an approved-parity claim: a missing `input`
+        // becomes `Value::Null`, and the call is still emitted.
+        let events = events_for_body(
+            r#"{"content":[{"type":"tool_use","id":"t1","name":"n"}]}"#,
+        );
+        let call = events
+            .iter()
+            .find_map(|event| match event {
+                ProviderEvent::Event(ModelEvent::ToolCall {
+                    call_id,
+                    tool_name,
+                    input,
+                }) => {
+                    Some((call_id.clone(), tool_name.clone(), input.clone()))
+                }
+                _ => None,
+            })
+            .expect("the call is emitted");
+        assert_eq!(call.0, "t1");
+        assert_eq!(call.1, "n");
+        assert_eq!(
+            call.2,
+            siralos_core::provider::ToolCallInput::from_value(
+                serde_json::Value::Null
+            ),
+            "the absent key becomes Null"
+        );
+    }
+
+    #[test]
+    fn probe_records_every_later_tool_use_block() {
+        // Recorded baseline, not an approved-parity claim: the later walk
+        // extracts each block, not only the first of them.
+        let events = events_for_body(
+            r#"{"content":[{"type":"tool_use","id":"t1","name":"n1","input":{}},{"type":"tool_use","id":"t2","name":"n2","input":{}},{"type":"tool_use","id":"t3","name":"n3","input":{}}]}"#,
+        );
+        assert_eq!(
+            tool_call_count(&events),
+            3,
+            "every later block is extracted: {events:?}"
+        );
+        assert!(matches!(
+            events.last(),
+            Some(ProviderEvent::Event(ModelEvent::Completed))
+        ));
+    }
+
+    #[test]
+    fn probe_records_the_skip_first_boundary() {
+        // Recorded baseline, not an approved-parity claim. Re-processing block 0
+        // would be observable: a text-only first block would emit its delta
+        // twice, and a first `tool_use` block would push a second call.
+        let text_only =
+            events_for_body(r#"{"content":[{"type":"text","text":"once"}]}"#);
+        assert_eq!(text_only.len(), 2, "{text_only:?}");
+        assert!(matches!(
+            text_only[0],
+            ProviderEvent::Event(ModelEvent::TextDelta { .. })
+        ));
+
+        let one_call = events_for_body(
+            r#"{"content":[{"type":"tool_use","id":"t1","name":"n","input":{}}]}"#,
+        );
+        assert_eq!(
+            tool_call_count(&one_call),
+            1,
+            "block 0 is not walked twice: {one_call:?}"
         );
     }
 
