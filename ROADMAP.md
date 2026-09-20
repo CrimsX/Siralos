@@ -642,6 +642,20 @@ later session needs must appear here or in a commit.
     changes observable behaviour and needs its own reviewed decision, exactly like the
     three divergences under Remaining.
 
+- **File-level redundancy: swept, and the honest answer is a negative.** All 999
+  tracked files were hashed against each other: exactly one byte-identical group
+  exists, the freeze-record pair recorded under "Owner decisions pending". There are
+  no zero-byte files, no tracked build artifacts under any `target/`, no corpus file
+  the manifest does not name (359 files under `tests/differential/corpus/`: the 357
+  scenario files, every one of them resolving, plus `manifest.json` and its
+  `README.md`), and no script that nothing references — all ten under `scripts/` are
+  reached from `package.json`, a workflow, or a document. The one remaining
+  candidate class is historical rather than duplicated: `docs/wayfinder/tickets/`
+  holds 97 tickets, 52 of them sharing a filename with a decision that supersedes
+  them, and `tests/differential/evidence/r11/EVIDENCE.md:58` links one ticket by
+  path from digest-bound evidence — so deleting tickets is a history decision, and
+  for the linked one a corpus amendment, never a cleanup.
+
 ### Remaining
 
 1. **W5.2 — `/cost`.** Reconciles to the accounting inputs on a fixture; the
