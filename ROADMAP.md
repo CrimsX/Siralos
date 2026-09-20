@@ -540,13 +540,13 @@ later session needs must appear here or in a commit.
 3. **One rule model, three predicates — and three divergences found but not fixed.**
    The provider-id, model-id and credential-env-name rules now live once, in
    `crates/siralos-core/src/composition.rs` as `is_provider_id` (`:86`),
-   `is_model_id` (`:101`) and `is_credential_env_name` (`:118`); the profile
+   `is_model_id` (`:101`) and `is_credential_env_name` (`:122`); the profile
    validator, the write boundary, the TUI form and the credential adapter all call
    them. Every inline copy of those three rules was replaced: core's
    `validate_provider_field`, `validate_model_field` and `validate_credential_field`
    (both the `env:` branch and the bare legacy branch), `write_profile_config`'s
    provider and model predicates (`crates/siralos-cli/src/interactive.rs:2934`) and
-   `validate_live_model_id` (`:3266`), the credential `env:` and bare-legacy checks
+   `validate_live_model_id` (`:3269`), the credential `env:` and bare-legacy checks
    at the write boundary (`:2956`, `:2989`), the CLI's
    `validate_credential_env_name_inline` (deleted), `HostCredential::from_env_ref`
    and the bare legacy branch
@@ -705,6 +705,6 @@ closed.
 `npm run check` is green on the current working tree: differential parity at 352/352
 applicable required scenarios with four explicit platform skips, the eight
 adversarial supersession lists refused with their named codes, the reachability
-ratchet holding over 70 of 175 product modules, and clippy, tests, and every
+ratchet holding over 70 of 176 product modules, and clippy, tests, and every
 documentation gate clean. CI remains `unknown` — see the retraction at the top of
 this file — and the release workflow has never executed.
