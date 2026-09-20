@@ -668,6 +668,22 @@ later session needs must appear here or in a commit.
      (`crates/siralos-cli/src/tui.rs:3074`) accept only the three canonical names,
      so a value the loader reads back is one the writer refuses to store.
 
+3. **The record path's rendering claim.** `validate_record`
+   (`crates/siralos-adapters/src/domain/manifest.rs:490`) rejects an empty path, a
+   NUL and an absolute path, and its doc comment read as if that were enough that a
+   crafted `siralos.toml` "cannot drive arbitrary rendering". It is not:
+   `format_domains` (`crates/siralos-cli/src/output.rs:210`) renders `record.path`
+   verbatim, and the terminal sanitizer wrapping it
+   (`crates/siralos-cli/src/interactive.rs:1118`) keeps `\n` and `\t` by design
+   (`crates/siralos-cli/src/sanitize.rs:67`), so a path with a newline in it forges
+   extra lines inside the `/domains` view. What is _not_ reachable: ESC is swallowed
+   and `\r` is caret-escaped, the path is never resolved against the filesystem — it
+   is hashed into the lock as a string
+   (`crates/siralos-core/src/composition/lock.rs:131`) — and `siralos.toml` is
+   workspace-local (`.gitignore:33`). The doc comment now states only what the checks
+   deliver; rejecting control characters in the path would change behaviour, so it
+   needs its own reviewed decision.
+
 ### Blocked
 
 - **The version identity (§9)** — the external plugin's `version = "0.0.0"`
@@ -699,6 +715,23 @@ with setx YOUR_API_KEY_NAME "the-key" and enter YOUR_API_KEY_NAME here`. It coul
   `A credential env name must match [A-Z0-9_]{1,64} after "env:".`. Promoting that
   teaching branch into the provider-add path — and validating the field at all — is
   a user-visible product change the owner has not made.
+- **The duplicated freeze record.** The tracked
+  `tests/differential/evidence/typescript-freeze-v32/candidate.json` is
+  byte-identical to its sibling `oracle.json` (both `sha256 9f5f786…`);
+  `FREEZE.json:8` and `FREEZE.json:9` name the two roles, and `FREEZE.json:5-6`
+  records `referenceRecordsSha256` and `candidateRecordsSha256` as that same
+  digest. Nothing reads it: no script, workflow, `package.json` entry or test
+  names the evidence-directory copy; the harness writes its own outputs to the
+  gitignored `tests/differential/out/` (`.gitignore:22`) and reads only the
+  pinned oracle (`tests/differential/run-differential.mjs:630`). Because the two
+  recorded digests are equal, hashing `oracle.json` alone already confirms both
+  fields, so the duplicate adds no verification the directory does not already
+  carry. Against that, the two files are provenance-distinct artifacts — the
+  reference's and the candidate's — so their byte-identity is the parity claim
+  itself, and after deletion it survives only as a recorded digest.
+  `PROJECT_CONTEXT.md:79` names the file among the five retained, so removing
+  its 1.2 MB is an amendment to a pinned record: the owner's decision, not the
+  agent's.
 
 ### Deliberately not in 1.0
 
