@@ -127,6 +127,26 @@ pub fn is_credential_env_name(value: &str) -> bool {
             .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
 }
 
+/// Whether `value` starts with an `https://` or `http://` scheme.
+///
+/// This is one *clause* of the endpoint rule, not the rule: the endpoint rule
+/// has four clauses and four distinct messages, so the CLI write guard, the TUI
+/// form and this crate's profile validator each keep their own clause order and
+/// wording and share only the tests.
+#[must_use]
+pub fn has_http_scheme(value: &str) -> bool {
+    value.starts_with("https://") || value.starts_with("http://")
+}
+
+/// Whether every character of `value` is non-control.
+///
+/// One clause of the model-display-name rule. An empty value is printable, so
+/// a rule that treats emptiness separately must keep doing so.
+#[must_use]
+pub fn is_printable(value: &str) -> bool {
+    value.chars().all(|c| !c.is_control())
+}
+
 /// The provider API protocol — additive, absent-transparent (default openai-completions).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Protocol {
@@ -346,7 +366,7 @@ fn validate_endpoint_field(
             message: "An endpoint must not contain NUL.".to_owned(),
         });
     }
-    if !(value.starts_with("https://") || value.starts_with("http://")) {
+    if !has_http_scheme(value) {
         return Err(ProfileValidationError {
             message:
                 "An endpoint must start with \"https://\" or \"http://\"."
@@ -482,7 +502,7 @@ fn validate_model_display_name_field(
             message: "A model display name must not contain NUL.".to_owned(),
         });
     }
-    if !value.chars().all(|c| !c.is_control()) {
+    if !is_printable(value) {
         return Err(ProfileValidationError {
             message: "A model display name must be printable.".to_owned(),
         });
