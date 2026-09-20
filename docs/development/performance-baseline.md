@@ -282,10 +282,10 @@ owner, and the antisymmetry property test calls it directly; the crate's test
 set is unchanged at 626 names, one of them renamed to drop the deleted
 function's name.
 
-The module is a leaf: it imports nothing, so it adds no edge between `language`
-and `projection`. The mentions of `utf16_cmp` above name it as it was when those
-columns were measured, and none of these numbers are attributed to the
-consolidation.
+The module is a leaf: it takes no import from this crate, so it adds no edge
+between `language` and `projection`. The mentions of `utf16_cmp` above name it as
+it was when those columns were measured, and none of these numbers are attributed
+to the consolidation.
 
 ## Future workloads
 

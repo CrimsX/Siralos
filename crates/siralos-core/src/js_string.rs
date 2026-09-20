@@ -5,8 +5,9 @@
 //! the same walk, which is the shape that drifts: the surrogate rule below is
 //! easy to get wrong and is silent when it is wrong.
 //!
-//! The module is a leaf. It imports nothing, so it adds no edge between
-//! `language` and `projection`, which the architecture keeps independent.
+//! The module is a leaf: it takes no import from this crate — only
+//! `std::cmp::Ordering` — so it adds no edge between `language` and
+//! `projection`, which the architecture keeps independent.
 
 use std::cmp::Ordering;
 

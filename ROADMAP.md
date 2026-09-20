@@ -660,9 +660,9 @@ later session needs must appear here or in a commit.
   UTF-16 code-unit comparison that `language::diagnostic::utf16_cmp` and
   `projection::segments::js_string_cmp` each implemented — two copies of a rule
   whose subtle case (an astral scalar's lead surrogate sorts below a BMP scalar
-  above U+E000) is silent when it is wrong. The module is a leaf: it imports
-  nothing, so it adds no edge between `language` and `projection`, which reach
-  each other nowhere. Both copies are deleted and both call sites moved; the
+  above U+E000) is silent when it is wrong. The module is a leaf: it takes no
+  import from this crate, so it adds no edge between `language` and `projection`,
+  which reach each other nowhere. Both copies are deleted and both call sites moved; the
   three contract tests moved with the rule, and the crate's test set is unchanged
   at 626 names, one of them renamed to drop the deleted function's name.
   Differential parity held at 352/352 with no corpus row moved. It is **not** an
