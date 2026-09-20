@@ -530,35 +530,125 @@ later session needs must appear here or in a commit.
   with no corpus amendment and no pinned record changed, and `#[allow(dead_code)]`
   is now refused under `crates/` by `scripts/check-rust-architecture.mjs`.
 
+- **One rule model, three predicates.** The provider-id, model-id and
+  credential-env-name rules now live once, in
+  `crates/siralos-core/src/composition.rs` as `is_provider_id` (`:86`),
+  `is_model_id` (`:101`) and `is_credential_env_name` (`:122`); the profile
+  validator, the write boundary, the TUI form and the credential adapter all call
+  them. Every inline copy of those three rules was replaced: core's
+  `validate_provider_field`, `validate_model_field` and `validate_credential_field`
+  (both the `env:` branch and the bare legacy branch), `write_profile_config`'s
+  provider and model predicates (`crates/siralos-cli/src/interactive.rs:2934`) and
+  `validate_live_model_id` (`:3269`), the credential `env:` and bare-legacy checks
+  at the write boundary (`:2956`, `:2989`), the CLI's
+  `validate_credential_env_name_inline` (deleted), `HostCredential::from_env_ref`
+  and the bare legacy branch
+  (`crates/siralos-adapters/src/provider/credential.rs`), and the TUI's
+  `validate_provider_name` and `validate_model_name`. The _messages_ stay separate
+  per boundary by design, and the shared clause tests were adopted where core names
+  one: the TUI carries a deliberate second register ("Human-readable error (D2) —
+  validation rule unchanged"), so its `validate_endpoint_value` and
+  `validate_model_display_name` keep their own texts and their own clause order
+  while calling core's `has_http_scheme`
+  (`crates/siralos-core/src/composition.rs:137`) and `is_printable` (`:146`) in
+  place of clauses they used to test inline, and `write_profile_config` does the
+  same for its endpoint guard (`crates/siralos-cli/src/interactive.rs:3050`) and its
+  display-name guard (`:3026`). That endpoint guard is four sequential clauses with
+  an early return each — one evaluation per clause, with the bound read from
+  `MAX_PROFILE_ENDPOINT_BYTES` instead of a hardcoded `512` — where it used to wrap
+  the same conditions in one outer test and re-evaluate them to choose a message.
+  The TUI's `validate_api_protocol` is untouched, and its closed set, which refuses
+  the two legacy protocol aliases `Protocol::parse` accepts, is the third
+  divergence under Remaining. Both write-guard message sets are pinned by
+  `write_profile_config_endpoint_messages_are_pinned` and
+  `write_profile_config_display_name_messages_are_pinned`.
+
+- **W4.5 step one — the three provider clients are comparable, and the drifts it
+  found are recorded rather than fixed.** The three identical client-build sites
+  now share `provider::build_http_client`; a base-URL seam
+  (`crates/siralos-adapters/src/provider/openai.rs:146`, `anthropic.rs:139`)
+  lets an offline probe — a loopback fixture server in `provider/mod.rs` plus
+  tests in each client's own test module — drive the real `call_*` paths with no
+  live network: failure classification through the real path, the shared
+  cancellation message, each client's own success event sequence, the request
+  each client actually puts on the wire, and a `(status, body)` matrix over
+  `{400, 401, 404, 429, 500, 503}` × {short, ~10 KB, HTML, ~10 KB HTML}. The
+  probe records
+  today's behaviour as a baseline, **not** approved parity. What it recorded and
+  this round deliberately did not change:
+  - **Error text shape.** The shared `run_chat_pipeline` builds the openai and
+    anthropic HTTP-error text from a 512-character control-filtered snippet and
+    embeds `reqwest`'s full status line (`openai error 400 Bad Request: ...`) at
+    `provider/mod.rs:280`, while `generic.rs:832` builds
+    `response failed: <code> at <url> - <body>`, cut at the first `<` to 240
+    characters, and appends `RATE_LIMIT_HINT` on 429 only.
+  - **No shared converter.** `openai.rs` and `anthropic.rs` never call
+    `replay::completion_events_from_body`; only `generic.rs:530` and `:698` do.
+  - **A response walk that stated an asymmetry — now one pass.** `anthropic.rs`
+    used to walk `value["content"]` twice: the first block inline, then `skip(1)`
+    over the rest, with the `tool_use` extraction written out in both arms. It is
+    now a single pass over the array (`anthropic.rs:258`) that states the
+    asymmetry at a named `index == 0` branch (`:269`), with the extraction written
+    once (`tool_call_event`, `:311`). **The asymmetry itself is unchanged, because
+    it is behaviour:** a `text` field carried on a `tool_use` block reaches the
+    event stream only when that block is **first** — the first block is read for
+    `text` before its type is considered, while a later `tool_use` block takes the
+    tool-use branch and never falls through to the text arm. Text on ordinary
+    blocks is collected wherever it sits, so "text is first-block-only" would be
+    the wrong reading. Five probe cases pin it —
+    `probe_records_first_block_text_before_its_tool_call`,
+    `probe_records_the_tool_use_guard_dropping_only_the_push`,
+    `probe_records_a_tool_call_with_no_input_key`,
+    `probe_records_every_later_tool_use_block` and
+    `probe_records_the_skip_first_boundary` — all five passing against the two-arm
+    walk before the rewrite and against the single pass after it, unchanged; they
+    join the round-4
+    `probe_records_the_text_field_of_a_tool_use_block_only_when_it_is_first`.
+  - **Auth follows the provider NAME, not the declared protocol.**
+    `generic.rs:429` dispatches on `provider == "anthropic"`, so two requests
+    that declare `AnthropicMessages` authenticate differently; recorded by the
+    `probe_records_that_auth_follows_the_name_not_the_declared_protocol` test.
+  - **Tool pairing is wire-different.** `openai.rs` round-trips
+    `tool_calls`/`tool_call_id`; `anthropic.rs:188` and `:203` drop
+    `AssistantToolCall` to an empty assistant message and flatten `ToolResult`
+    into user text.
+    A sixth reported drift **did not reproduce**: all three chat paths embed the
+    same 512-character snippet in their parse-failure text — the shared pair at
+    `provider/mod.rs:297`, the generic chat path at `generic.rs:513`. The
+    genuinely different message is the models-listing probe at `generic.rs:784`,
+    which carries no body text at all.
+    The literals recorded here as out of scope have since been consolidated into
+    constants in `provider/mod.rs`: `"2023-06-01"` at `:84`
+    (`ANTHROPIC_VERSION`), `"no provider response observed yet"` at `:90`
+    (`NO_PROVIDER_RESPONSE_OBSERVED`), and
+    `"Host cancelled the turn before provider start"` at `:68`
+    (`CANCELLED_BEFORE_PROVIDER_START`) — the last was not listed in this entry,
+    because nothing here had flagged it — now owning all four of its sites,
+    including `provider/replay.rs:253`. The first two literals survive only in
+    test assertions; the third is referenced only through its constant.
+    Step two then extracted the send-onward region the two chat clients shared —
+    send, post-response cancellation, bounded read, non-success mapping and JSON
+    parse — into `provider::run_chat_pipeline` (`provider/mod.rs:232`), leaving
+    each caller its own request construction and its own parse. The two
+    asymmetries recorded above (`safe`/`text` on the error path,
+    `snippet`/`text` on the parse-failure path) were preserved exactly, and every
+    probe assertion — including the recorded-outcome assertions that observe what
+    `record_outcome` receives — passed unchanged before and after the extraction.
+    `generic.rs` sits deliberately outside that extraction: it streams — its
+    `CallOutcome::Streaming` becomes a lazy iterator over the response — and its chat
+    path returns `CallOutcome`, while `run_chat_pipeline` buffers the response and
+    returns `ChatPipelineOutcome`, so the shared pipeline does not fit its shape. The
+    drifts recorded here are findings, not approved parity: repairing any of them
+    changes observable behaviour and needs its own reviewed decision, exactly like the
+    three divergences under Remaining.
+
 ### Remaining
 
 1. **W5.2 — `/cost`.** Reconciles to the accounting inputs on a fixture; the
    command does not exist today.
-2. **W4.5 — provider-client consolidation.** The OpenAI, Anthropic, and generic HTTP
-   paths behind a recorded-pair equivalence harness including error paths,
-   explicitly not grep-equivalence.
-3. **One rule model, three predicates — and three divergences found but not fixed.**
-   The provider-id, model-id and credential-env-name rules now live once, in
-   `crates/siralos-core/src/composition.rs` as `is_provider_id` (`:86`),
-   `is_model_id` (`:101`) and `is_credential_env_name` (`:122`); the profile
-   validator, the write boundary, the TUI form and the credential adapter all call
-   them. Every inline copy of those three rules was replaced: core's
-   `validate_provider_field`, `validate_model_field` and `validate_credential_field`
-   (both the `env:` branch and the bare legacy branch), `write_profile_config`'s
-   provider and model predicates (`crates/siralos-cli/src/interactive.rs:2934`) and
-   `validate_live_model_id` (`:3269`), the credential `env:` and bare-legacy checks
-   at the write boundary (`:2956`, `:2989`), the CLI's
-   `validate_credential_env_name_inline` (deleted), `HostCredential::from_env_ref`
-   and the bare legacy branch
-   (`crates/siralos-adapters/src/provider/credential.rs`), and the TUI's
-   `validate_provider_name` and `validate_model_name`. The _messages_ stay separate
-   per boundary by design: the TUI carries a deliberate second register
-   ("Human-readable error (D2) — validation rule unchanged"), so its
-   `validate_api_protocol`, `validate_endpoint_value` and `validate_model_display_name`
-   texts and `write_profile_config`'s endpoint and display-name guards were left
-   alone, with hardcoded bounds replaced by the core constants where one exists.
-   Three divergences were reproduced this round and deliberately **not** repaired,
-   because each changes behaviour and needs its own reviewed decision:
+
+2. **Three validation divergences reproduced and deliberately not repaired.**
+   Each changes behaviour and needs its own reviewed decision:
    - **Credential ordering.** `env:` plus a 67-character name yields
      `The credential exceeds the 70-byte bound.` from `ProfileRecord::validate`
      (`crates/siralos-core/src/composition.rs:451`, bound before name) and
@@ -577,78 +667,6 @@ later session needs must appear here or in a commit.
      (`crates/siralos-cli/src/interactive.rs:3006`) and the TUI form
      (`crates/siralos-cli/src/tui.rs:3074`) accept only the three canonical names,
      so a value the loader reads back is one the writer refuses to store.
-
-4. **W4.5 step one: the three provider clients are comparable, and the drifts it
-   found are recorded rather than fixed.** The three identical client-build sites
-   now share `provider::build_http_client`; a base-URL seam
-   (`crates/siralos-adapters/src/provider/openai.rs:146`, `anthropic.rs:139`)
-   lets an offline probe — a loopback fixture server in `provider/mod.rs` plus
-   tests in each client's own test module — drive the real `call_*` paths with no
-   live network: failure classification through the real path, the shared
-   cancellation message, each client's own success event sequence, the request
-   each client actually puts on the wire, and a `(status, body)` matrix over
-   `{400, 401, 404, 429, 500, 503}` × {short, ~10 KB, HTML, ~10 KB HTML}. The
-   probe records
-   today's behaviour as a baseline, **not** approved parity. What it recorded and
-   this round deliberately did not change:
-   - **Error text shape.** The shared `run_chat_pipeline` builds the openai and
-     anthropic HTTP-error text from a 512-character control-filtered snippet and
-     embeds `reqwest`'s full status line (`openai error 400 Bad Request: ...`) at
-     `provider/mod.rs:280`, while `generic.rs:832` builds
-     `response failed: <code> at <url> - <body>`, cut at the first `<` to 240
-     characters, and appends `RATE_LIMIT_HINT` on 429 only.
-   - **No shared converter.** `openai.rs` and `anthropic.rs` never call
-     `replay::completion_events_from_body`; only `generic.rs:530` and `:698` do.
-   - **A response walk that stated an asymmetry — now one pass.** `anthropic.rs`
-     used to walk `value["content"]` twice: the first block inline, then `skip(1)`
-     over the rest, with the `tool_use` extraction written out in both arms. It is
-     now a single pass over the array (`anthropic.rs:258`) that states the
-     asymmetry at a named `index == 0` branch (`:269`), with the extraction written
-     once (`tool_call_event`, `:311`). **The asymmetry itself is unchanged, because
-     it is behaviour:** a `text` field carried on a `tool_use` block reaches the
-     event stream only when that block is **first** — the first block is read for
-     `text` before its type is considered, while a later `tool_use` block takes the
-     tool-use branch and never falls through to the text arm. Text on ordinary
-     blocks is collected wherever it sits, so "text is first-block-only" would be
-     the wrong reading. Five probe cases pin it —
-     `probe_records_first_block_text_before_its_tool_call`,
-     `probe_records_the_tool_use_guard_dropping_only_the_push`,
-     `probe_records_a_tool_call_with_no_input_key`,
-     `probe_records_every_later_tool_use_block` and
-     `probe_records_the_skip_first_boundary` — all five passing against the two-arm
-     walk before the rewrite and against the single pass after it, unchanged; they
-     join the round-4
-     `probe_records_the_text_field_of_a_tool_use_block_only_when_it_is_first`.
-   - **Auth follows the provider NAME, not the declared protocol.**
-     `generic.rs:429` dispatches on `provider == "anthropic"`, so two requests
-     that declare `AnthropicMessages` authenticate differently; recorded by the
-     `probe_records_that_auth_follows_the_name_not_the_declared_protocol` test.
-   - **Tool pairing is wire-different.** `openai.rs` round-trips
-     `tool_calls`/`tool_call_id`; `anthropic.rs:188` and `:203` drop
-     `AssistantToolCall` to an empty assistant message and flatten `ToolResult`
-     into user text.
-     A sixth reported drift **did not reproduce**: all three chat paths embed the
-     same 512-character snippet in their parse-failure text — the shared pair at
-     `provider/mod.rs:297`, the generic chat path at `generic.rs:513`. The
-     genuinely different message is the models-listing probe at `generic.rs:784`,
-     which carries no body text at all.
-     The literals recorded here as out of scope have since been consolidated into
-     constants in `provider/mod.rs`: `"2023-06-01"` at `:84`
-     (`ANTHROPIC_VERSION`), `"no provider response observed yet"` at `:90`
-     (`NO_PROVIDER_RESPONSE_OBSERVED`), and
-     `"Host cancelled the turn before provider start"` at `:68`
-     (`CANCELLED_BEFORE_PROVIDER_START`) — the last was not listed in this entry,
-     because nothing here had flagged it — now owning all four of its sites,
-     including `provider/replay.rs:253`. The first two literals survive only in
-     test assertions; the third is referenced only through its constant.
-     Step two then extracted the send-onward region the two chat clients shared —
-     send, post-response cancellation, bounded read, non-success mapping and JSON
-     parse — into `provider::run_chat_pipeline` (`provider/mod.rs:232`), leaving
-     each caller its own request construction and its own parse. The two
-     asymmetries recorded above (`safe`/`text` on the error path,
-     `snippet`/`text` on the parse-failure path) were preserved exactly, and every
-     probe assertion — including the recorded-outcome assertions that observe what
-     `record_outcome` receives — passed unchanged before and after the extraction.
 
 ### Blocked
 
