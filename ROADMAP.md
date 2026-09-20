@@ -561,7 +561,7 @@ later session needs must appear here or in a commit.
    because each changes behaviour and needs its own reviewed decision:
    - **Credential ordering.** `env:` plus a 67-character name yields
      `The credential exceeds the 70-byte bound.` from `ProfileRecord::validate`
-     (`crates/siralos-core/src/composition.rs:427`, bound before name) and
+     (`crates/siralos-core/src/composition.rs:451`, bound before name) and
      `A credential env name must match [A-Z0-9_]{1,64} after "env:".` from
      `write_profile_config` (`crates/siralos-cli/src/interactive.rs:2956`, name
      before bound): one input, a different error on each path.
@@ -569,10 +569,10 @@ later session needs must appear here or in a commit.
      `HostCredential::from_credential_str`
      (`crates/siralos-adapters/src/provider/credential.rs:29`) accepts a `key:`
      value of any length and one containing NUL, while `validate_credential_field`
-     (`crates/siralos-core/src/composition.rs:438`) refuses both through the
+     (`crates/siralos-core/src/composition.rs:462`) refuses both through the
      4096-byte bound and the NUL check.
    - **The writer rejects protocol values the loader accepts.** `Protocol::parse`
-     (`crates/siralos-core/src/composition.rs:141`) accepts the legacy aliases
+     (`crates/siralos-core/src/composition.rs:165`) accepts the legacy aliases
      `openai-compatible` and `anthropic`, but `write_profile_config`
      (`crates/siralos-cli/src/interactive.rs:3006`) and the TUI form
      (`crates/siralos-cli/src/tui.rs:3074`) accept only the three canonical names,
