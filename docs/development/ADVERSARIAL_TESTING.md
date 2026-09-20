@@ -7,9 +7,9 @@ and priorities).
 ## Fuzzing (contract Part 4)
 
 - Tooling: `cargo-fuzz` 0.13.2 + `libfuzzer-sys` in `fuzz/` — a standalone
-  crate **excluded from the workspace** (`exclude = ["fuzz"]`): fuzzing
-  requires a nightly toolchain and must never enter the stable quality
-  gate.
+  crate **excluded from the workspace** (the root manifest lists
+  `exclude = ["fuzz", "harness"]`): fuzzing requires a nightly toolchain
+  and must never enter the stable quality gate.
 - Targets (all assert invariants, not merely "did not panic"):
   - `version_parse` — `Version::parse` never panics; decode → encode →
     decode preserves the version; component bounds hold.
@@ -18,15 +18,26 @@ and priorities).
   - `corpus_scenario` — arbitrary JSON never panics the differential
     corpus decoder; invalid parity/unknown subjects never silently
     become valid scenarios.
-- The **Windows GNU host cannot build libFuzzer** (requires clang;
-  `address sanitizer is not supported for this target`), so local
-  fuzzing is documented as unavailable on this host. The scheduled
-  assurance workflow (ubuntu) builds and runs the targets with a
-  bounded smoke (`-max_total_time`/`-runs`), and minimized crashes, if
-  any, become deterministic regression tests in the repository.
-- Miri on the Windows GNU host is likewise unavailable (cargo-miri
-  requires the MSVC target); the scheduled workflow runs it with pinned
-  `nightly-2026-07-15` on ubuntu.
+- Local fuzzing is unavailable from this repository's pin, and the reason
+  previously recorded here was not evidence this repository holds: it
+  quoted a rustc diagnostic from a target this pin does not build. What is
+  locally true is the pin itself — a stable channel with
+  `profile = "minimal"`, no `rust-src`, and `fuzz/` Cargo-excluded from the
+  workspace — which does not satisfy cargo-fuzz's nightly requirement.
+  Nothing here asserts whether the address sanitizer works on
+  `x86_64-pc-windows-msvc`; that was not established. The scheduled
+  assurance workflow (ubuntu) installs a pinned nightly, builds the targets,
+  and runs each with a bounded smoke (`-max_total_time=60`); minimized
+  crashes, if any, are added to the repository as deterministic regression
+  tests by a follow-up.
+- Miri is likewise unavailable locally, and the reason this file used to
+  give was backwards: the active toolchain already **is** the MSVC host
+  (`1.97.1-x86_64-pc-windows-msvc`), and Miri is unavailable all the same.
+  What the tool prints is what is recorded — `cargo miri --version` reports
+  the `miri` component as not available for that toolchain, and
+  `rustup component list` offers no `miri` line for it — and why it is not
+  provided is not established here. The scheduled workflow installs the
+  component explicitly with pinned `nightly-2026-07-15` on ubuntu.
 
 ## Property testing (contract Part 5)
 
@@ -44,8 +55,10 @@ The workspace is fully safe Rust (`unsafe_code = "forbid"`; zero
 `unsafe` occurrences; no FFI, pointer manipulation, or custom memory
 representation). Miri therefore adds minimal signal for
 infrastructure-heavy tests. It is kept scoped: `siralos-core` tests run
-under Miri in the scheduled ubuntu workflow; the Windows GNU host cannot
-run cargo-miri. Architecture is not contorted for Miri compatibility.
+under Miri in the scheduled ubuntu workflow, which installs the component
+on a pinned nightly; this pin cannot run cargo-miri, because the component
+is not available for `1.97.1-x86_64-pc-windows-msvc`. Architecture is not
+contorted for Miri compatibility.
 
 ## Sanitizers (contract Part 7)
 
@@ -55,7 +68,7 @@ run cargo-miri. Architecture is not contorted for Miri compatibility.
 - ThreadSanitizer: **NOT APPLICABLE** — the workspace contains zero
   shared-state concurrency primitives (no `std::sync`, atomics,
   channels, `Arc`, or `thread::spawn` in any crate; verified by scan).
-- Sanitizer jobs are separate from the stable quality gate and use pinned
+- Sanitizer runs are separate from the stable quality gate and use pinned
   `nightly-2026-07-15`.
 
 ## Concurrency model testing (contract Part 8)
@@ -80,13 +93,32 @@ validation, state transitions). There is no repository-wide percentage
 objective; generated/error-only boilerplate is not artificially tested.
 Results are recorded per milestone in the R2.5 report.
 
-## Host limitations (recorded evidence)
+## Local tool limitations (recorded evidence)
 
-- The Windows GNU host cannot build libFuzzer (`address sanitizer is
-not supported for this target`; requires clang) and cannot run
-  cargo-miri (requires the MSVC target) or `cargo llvm-cov` (the GNU
-  rustc distribution lacks the profiler runtime). All three are
-  executed in the scheduled ubuntu assurance workflow; local runs on
-  this host are documented as unavailable rather than faked.
+- The three adversarial tools are unavailable from this repository's pin, and
+  the reasons previously recorded here were wrong in shape rather than in host
+  name:
+  - **libFuzzer**: the pin is a stable channel with `profile = "minimal"`, no
+    `rust-src`, and `fuzz/` Cargo-excluded from the workspace, which does not
+    satisfy cargo-fuzz's nightly requirement. Nothing here asserts whether the
+    address sanitizer works on `x86_64-pc-windows-msvc`.
+  - **cargo-miri**: `cargo miri --version` reports the `miri` component as not
+    available for `1.97.1-x86_64-pc-windows-msvc`, and `rustup component list`
+    offers no `miri` line for it. This is not a GNU-versus-MSVC matter — the
+    active toolchain already is MSVC — and why the component is not provided is
+    not established here.
+  - **`cargo llvm-cov`**: the command is not installed for this toolchain
+    (`cargo llvm-cov --version` reports no such command), although
+    `llvm-tools-x86_64-pc-windows-msvc` is offered for it. No claim is made
+    about any other toolchain or host.
+- All three are configured to run in the scheduled ubuntu assurance workflow
+  (`.github/workflows/assurance.yml`): a fuzz build plus three bounded
+  `-max_total_time=60` runs, Miri on the pinned nightly, and coverage on stable
+  after `rustup component add llvm-tools-preview`. No workflow in this
+  repository has run yet — `ROADMAP.md` records CI as `unknown` and the release
+  workflow as never executed — so these are the steps the workflow performs,
+  not observed runs. Local runs are documented as unavailable rather than
+  faked, and that policy now rests on the reasons above rather than on a host
+  name.
 - Loom and ThreadSanitizer are not required: the workspace contains no
   shared-state concurrency primitives (verified by scan).

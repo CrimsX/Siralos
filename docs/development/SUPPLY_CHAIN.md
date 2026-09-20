@@ -67,9 +67,11 @@ Status: authoritative (pre-Stage-4 assurance, contract Part 1 / Part 25).
 - Stable Rust is the production-build requirement. Nightly is used only
   for separate quality jobs (fuzzing, Miri, sanitizers, coverage) and
   never enters the ordinary stable quality gate.
-- Windows: the GNU host target with MinGW-w64 is used for local
-  development; CI Windows runners use the default MSVC host (the
-  runners provide the Windows SDK).
+- Windows: the pinned channel's default host toolchain
+  (`x86_64-pc-windows-msvc`, which `rustup show active-toolchain` reports)
+  is what local development and CI both use. `rust-toolchain.toml` pins no
+  target and no host, so nothing selects the GNU host target and no
+  MinGW-w64 toolchain is needed on `PATH`.
 
 ## CI integration
 
