@@ -11,7 +11,7 @@
 //! deterministically by (line, kind, name) under the reference UTF-16
 //! string ordering.
 
-use crate::language::diagnostic::utf16_cmp;
+use crate::js_string;
 use crate::language::limits::LanguageLimits;
 
 use std::cmp::Ordering;
@@ -124,7 +124,7 @@ pub fn normalize_symbols(
         if by_kind != Ordering::Equal {
             return by_kind;
         }
-        utf16_cmp(&left.name, &right.name)
+        js_string::cmp(&left.name, &right.name)
     });
     let truncated = symbols.len() > limits.max_symbols_per_document;
     symbols.truncate(limits.max_symbols_per_document);

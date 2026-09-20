@@ -8,6 +8,7 @@
 //! message using the reference UTF-16 string ordering). The vocabulary
 //! and semantics match the reference behavior (ADR 0010/0011).
 
+use crate::js_string;
 use crate::language::limits::LanguageLimits;
 use crate::language::position::{RawRange, to_one_based_range};
 use crate::language::sanitize::sanitize_control_characters;
@@ -194,18 +195,6 @@ pub fn normalize_diagnostic_payload(
     }
 }
 
-/// Compare two strings in JavaScript string order (UTF-16 code units),
-/// which is the reference ordering for deterministic sorts.
-///
-/// The code units are walked lazily. Materializing a `Vec<u16>` for each
-/// side first made every comparison in `normalize_diagnostic_set`'s sort
-/// allocate twice, which dominated that benchmark's 10,000-diagnostic
-/// workload; `Iterator::cmp` compares the same units, in the same order,
-/// without building them.
-pub fn utf16_cmp(left: &str, right: &str) -> Ordering {
-    left.encode_utf16().cmp(right.encode_utf16())
-}
-
 /// Deterministic diagnostic aggregation: exact duplicates are collapsed
 /// (path, line, column, code, message), results are sorted by (path,
 /// line, column, message) in reference order, and the run-wide bound is
@@ -233,7 +222,7 @@ pub fn normalize_diagnostic_set(
     unique.sort_by(|left, right| {
         let left_path = left.path.as_deref().unwrap_or("");
         let right_path = right.path.as_deref().unwrap_or("");
-        let by_path = utf16_cmp(left_path, right_path);
+        let by_path = js_string::cmp(left_path, right_path);
         if by_path != Ordering::Equal {
             return by_path;
         }
@@ -267,7 +256,7 @@ pub fn normalize_diagnostic_set(
         }
         let left_message = left.message.as_str();
         let right_message = right.message.as_str();
-        let by_message = utf16_cmp(left_message, right_message);
+        let by_message = js_string::cmp(left_message, right_message);
         if by_message != Ordering::Equal {
             return by_message;
         }

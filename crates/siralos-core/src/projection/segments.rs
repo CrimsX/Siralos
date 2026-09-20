@@ -6,6 +6,7 @@
 //! ordered stable `{id,title,content}` values only.
 
 use crate::identity::{CanonicalValue, sha256_hex};
+use crate::js_string;
 
 use super::estimator::estimate_tokens;
 
@@ -101,19 +102,6 @@ pub struct ContextProjection {
     pub estimated_tokens: usize,
 }
 
-/// Compare two Rust `&str` values as JavaScript default string comparison
-/// (UTF-16 code-unit lexicographic order).
-///
-/// For strings in the Basic Multilingual Plane this coincides with Rust's
-/// byte ordering. For supplementary scalars (surrogate pairs in JS) the
-/// UTF-16 code-unit order can diverge from UTF-8 byte order, so we
-/// compare via UTF-16 code units explicitly.
-pub fn js_string_cmp(a: &str, b: &str) -> std::cmp::Ordering {
-    let a_units: Vec<u16> = a.encode_utf16().collect();
-    let b_units: Vec<u16> = b.encode_utf16().collect();
-    a_units.cmp(&b_units)
-}
-
 /// Serialize one segment as `[Title]\\ncontent`.
 pub fn serialize_segment(segment: &ContextSegment) -> String {
     format!("[{}]\n{}", segment.title, segment.content)
@@ -138,7 +126,7 @@ fn build_segment(input: SegmentInput) -> ContextSegment {
     }
 }
 
-/// Project segments: copy, sort by (rank, js_string_cmp(id)), split by
+/// Project segments: copy, sort by (rank, JS string order on id), split by
 /// class, compute byte/token accounting and stable fingerprint.
 pub fn project_segments(inputs: Vec<SegmentInput>) -> ContextProjection {
     let mut sorted = inputs;
@@ -147,7 +135,7 @@ pub fn project_segments(inputs: Vec<SegmentInput>) -> ContextProjection {
         if rank != std::cmp::Ordering::Equal {
             return rank;
         }
-        js_string_cmp(&a.id, &b.id)
+        js_string::cmp(&a.id, &b.id)
     });
     let built: Vec<ContextSegment> =
         sorted.into_iter().map(build_segment).collect();
@@ -222,26 +210,8 @@ pub fn serialize_prefix(projection: &ContextProjection) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        SegmentInput, Stability, js_string_cmp, project_segments,
-        serialize_segments,
+        SegmentInput, Stability, project_segments, serialize_segments,
     };
-
-    #[test]
-    fn js_cmp_matches_rust_for_bmp() {
-        assert_eq!(js_string_cmp("a", "b"), std::cmp::Ordering::Less);
-        assert_eq!(js_string_cmp("b", "a"), std::cmp::Ordering::Greater);
-        assert_eq!(js_string_cmp("a", "a"), std::cmp::Ordering::Equal);
-    }
-
-    #[test]
-    fn js_cmp_for_supplementary_scalar() {
-        // U+10400 (DESERET CAPITAL LETTER LONG I) is outside BMP; its UTF-16
-        // encoding is a surrogate pair 0xD801 0xDC00. Ensure js_string_cmp
-        // handles supplementary scalars (no panic, deterministic).
-        let a = "\u{10400}";
-        let b = "\u{10401}";
-        assert_eq!(js_string_cmp(a, b), std::cmp::Ordering::Less);
-    }
 
     #[test]
     fn ordering_and_fingerprint() {

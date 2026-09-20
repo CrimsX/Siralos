@@ -27,6 +27,7 @@ pub mod executor;
 mod identifier;
 pub mod identity;
 pub mod instructions;
+mod js_string;
 pub mod knowledge;
 pub mod language;
 pub mod planning;

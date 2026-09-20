@@ -8,8 +8,9 @@
 
 use proptest::prelude::*;
 
+use crate::js_string;
 use crate::language::diagnostic::{
-    Diagnostic, DiagnosticSeverity, normalize_diagnostic_set, utf16_cmp,
+    Diagnostic, DiagnosticSeverity, normalize_diagnostic_set,
 };
 use crate::language::position::{
     LanguagePosition, LanguageRange, PositionError, validate_range,
@@ -97,12 +98,12 @@ proptest! {
         prop_assert_eq!(bytes, prefix.len());
     }
 
-    /// utf16_cmp is a total order consistent with prefix comparison.
+    /// The comparison is a total order consistent with prefix comparison.
     #[test]
-    fn utf16_cmp_is_antisymmetric(left in ".{0,16}", right in ".{0,16}") {
+    fn js_string_order_is_antisymmetric(left in ".{0,16}", right in ".{0,16}") {
         use std::cmp::Ordering;
-        let a = utf16_cmp(&left, &right);
-        let b = utf16_cmp(&right, &left);
+        let a = js_string::cmp(&left, &right);
+        let b = js_string::cmp(&right, &left);
         match a {
             Ordering::Equal => prop_assert_eq!(b, Ordering::Equal),
             Ordering::Less => prop_assert_eq!(b, Ordering::Greater),

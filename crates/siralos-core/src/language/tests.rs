@@ -9,7 +9,7 @@ use crate::language::definition::{
 use crate::language::diagnostic::{
     Diagnostic, DiagnosticSeverity, RawDiagnostic, RawDiagnosticCode,
     bind_diagnostic_set, map_lsp_severity, normalize_diagnostic_payload,
-    normalize_diagnostic_set, utf16_cmp,
+    normalize_diagnostic_set,
 };
 use crate::language::limits::LANGUAGE_LIMITS;
 use crate::language::position::{
@@ -27,8 +27,6 @@ use crate::language::symbol::{Symbol, SymbolKind, normalize_symbols};
 use crate::language::truncate::truncate_utf8_bytes;
 use crate::language::validation::{ValidationResult, ValidationStatus};
 use crate::workspace::revision::compute_workspace_revision_handle;
-
-use std::cmp::Ordering;
 
 fn diagnostic(message: &str) -> Diagnostic {
     Diagnostic {
@@ -197,18 +195,6 @@ fn diagnostic_set_ordering_is_deterministic() {
     assert_eq!(diagnostics[1].message, "a");
     assert_eq!(diagnostics[2].message, "z");
     assert_eq!(diagnostics[3].line, Some(40));
-}
-
-#[test]
-fn utf16_ordering_matches_javascript_string_order() {
-    // Astral characters sort BEFORE BMP characters in UTF-16 order
-    // (high surrogate 0xD800 < 0xFFFF), but AFTER in byte order.
-    let astral = "a\u{1f600}";
-    let bmp_high = "a\u{ffff}";
-    assert_eq!(utf16_cmp(astral, bmp_high), Ordering::Less);
-    assert_eq!(utf16_cmp("abc", "abd"), Ordering::Less);
-    assert_eq!(utf16_cmp("abc", "abc"), Ordering::Equal);
-    assert_eq!(utf16_cmp("abc", "abcd"), Ordering::Less);
 }
 
 #[test]
