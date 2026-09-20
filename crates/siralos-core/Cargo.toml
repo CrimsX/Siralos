@@ -27,5 +27,9 @@ harness = false
 name = "language_normalization"
 harness = false
 
+[[bench]]
+name = "redaction"
+harness = false
+
 [lints]
 workspace = true

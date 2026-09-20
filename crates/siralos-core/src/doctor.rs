@@ -308,52 +308,59 @@ fn redact_secrets(text: &str) -> String {
 /// The marker every rule emits in place of a matched token.
 const SECRET_REPLACEMENT: &str = "<secret>";
 
-/// A half-open character range, `[start, end)`, holding one match.
+/// A half-open range, `[start, end)`, holding one match as byte offsets.
+///
+/// Every rule is an ASCII pattern — each literal byte and each class member is
+/// one byte — so a match always begins and ends on a character boundary.
 type Span = (usize, usize);
 
 /// One rule, in the shape `replace_pass` drives it: the next match at or after
 /// the index it is offered.
-type Rule = fn(&[char], usize) -> Option<Span>;
+type Rule = fn(&[u8], usize) -> Option<Span>;
 
 /// One global, non-overlapping, leftmost-first pass — the behaviour of
 /// `String.prototype.replace` with a `/g` pattern.
 ///
 /// `find` is offered the first index the pass may still match at and returns the
 /// next match at or after it. Scanning resumes at a match's end rather than one
-/// character past it, because the reference's `\b` is zero-width and a match may
+/// byte past it, because the reference's `\b` is zero-width and a match may
 /// therefore begin exactly where the previous one ended.
+///
+/// The pass scans `text` as bytes rather than as a decoded `Vec<char>`: no rule
+/// can match outside ASCII, so decoding re-encoded the whole input once per
+/// pass, and a match's byte offsets index the original text directly.
 fn replace_pass(text: &str, find: Rule) -> String {
-    let chars: Vec<char> = text.chars().collect();
+    let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
     let mut cursor = 0usize;
-    while let Some((start, end)) = find(&chars, cursor) {
+    while let Some((start, end)) = find(bytes, cursor) {
         // A rule that matched nothing would leave `cursor` where it was and spin
         // this loop forever, so the invariant is enforced rather than assumed.
-        assert!(
-            end > start,
-            "a secret rule must consume at least one character"
-        );
-        out.extend(chars[cursor..start].iter().copied());
+        assert!(end > start, "a secret rule must consume at least one byte");
+        // Both offsets come from ASCII matches, so both are char boundaries.
+        out.push_str(&text[cursor..start]);
         out.push_str(SECRET_REPLACEMENT);
         cursor = end;
     }
-    out.extend(chars[cursor..].iter().copied());
+    out.push_str(&text[cursor..]);
     out
 }
 
 /// `[A-Za-z0-9_]`: the JavaScript `\w` set, and ASCII-only like it.
-fn is_word_char(current: char) -> bool {
-    current.is_ascii_alphanumeric() || current == '_'
+fn is_word_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
 /// JavaScript `\b` at `index`.
 ///
-/// Zero-width and ASCII-only: true where exactly one side is a word character,
-/// which makes it true at a string edge adjacent to a word character and false
-/// at an edge adjacent to a non-word character.
-fn boundary_at(chars: &[char], index: usize) -> bool {
-    let before = index > 0 && is_word_char(chars[index - 1]);
-    let after = index < chars.len() && is_word_char(chars[index]);
+/// Zero-width and ASCII-only: true where exactly one side is a word byte, which
+/// makes it true at a string edge adjacent to a word byte and false at an edge
+/// adjacent to a non-word byte. A non-ASCII character is never a word byte and
+/// every byte of one is `>= 0x80`, so deciding this on bytes agrees with
+/// deciding it on decoded characters either side of any index.
+fn boundary_at(bytes: &[u8], index: usize) -> bool {
+    let before = index > 0 && is_word_byte(bytes[index - 1]);
+    let after = index < bytes.len() && is_word_byte(bytes[index]);
     before != after
 }
 
@@ -380,42 +387,62 @@ fn is_js_space(current: char) -> bool {
     )
 }
 
-/// Whether `chars[index..]` starts with `literal`.
-fn starts_with(chars: &[char], index: usize, literal: &str) -> bool {
-    literal
-        .chars()
-        .enumerate()
-        .all(|(offset, expected)| chars.get(index + offset) == Some(&expected))
+/// The byte length of the JavaScript `\s` character at `index`, or 0 where no
+/// such character begins there.
+///
+/// The ASCII members are decided from their own byte; every other member is a
+/// multi-byte scalar, so the scalar is decoded and handed to the predicate
+/// above, which stays the set's only definition.
+fn js_space_len(bytes: &[u8], index: usize) -> usize {
+    let first = bytes[index];
+    if first.is_ascii() {
+        return usize::from(is_js_space(char::from(first)));
+    }
+    let width = match first {
+        0xc2..=0xdf => 2,
+        0xe0..=0xef => 3,
+        0xf0..=0xf4 => 4,
+        _ => return 0,
+    };
+    let end = index + width;
+    if end > bytes.len() {
+        return 0;
+    }
+    match std::str::from_utf8(&bytes[index..end]) {
+        Ok(scalar) if scalar.chars().next().is_some_and(is_js_space) => width,
+        _ => 0,
+    }
+}
+
+/// Whether `bytes[index..]` starts with `literal`.
+fn starts_with(bytes: &[u8], index: usize, literal: &str) -> bool {
+    bytes.get(index..index + literal.len()) == Some(literal.as_bytes())
 }
 
 /// The same, case-insensitively: the reference gives `Bearer` the `i` flag.
-fn starts_with_ignore_case(
-    chars: &[char],
-    index: usize,
-    literal: &str,
-) -> bool {
-    literal.chars().enumerate().all(|(offset, expected)| {
-        chars
+fn starts_with_ignore_case(bytes: &[u8], index: usize, literal: &str) -> bool {
+    literal.bytes().enumerate().all(|(offset, expected)| {
+        bytes
             .get(index + offset)
             .is_some_and(|actual| actual.eq_ignore_ascii_case(&expected))
     })
 }
 
-/// Consume the longest `accept` run at `from`, then give characters back from
-/// its right end until the trailing `\b` holds, failing once it is shorter than
+/// Consume the longest `accept` run at `from`, then give bytes back from its
+/// right end until the trailing `\b` holds, failing once it is shorter than
 /// `minimum`. That is a greedy quantifier plus the reference's backtracking.
 fn class_run(
-    chars: &[char],
+    bytes: &[u8],
     from: usize,
     minimum: usize,
-    accept: fn(char) -> bool,
+    accept: fn(u8) -> bool,
 ) -> Option<usize> {
     let mut end = from;
-    while end < chars.len() && accept(chars[end]) {
+    while end < bytes.len() && accept(bytes[end]) {
         end += 1;
     }
     while end >= from + minimum {
-        if boundary_at(chars, end) {
+        if boundary_at(bytes, end) {
             return Some(end);
         }
         end -= 1;
@@ -424,32 +451,34 @@ fn class_run(
 }
 
 /// `[A-Za-z0-9_-]`: the `sk-` key body.
-fn is_key_body(current: char) -> bool {
-    current.is_ascii_alphanumeric() || current == '_' || current == '-'
+fn is_key_body(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'
 }
 
 /// `[A-Za-z0-9_]`: the `gh[pso]_` token body.
-fn is_token_body(current: char) -> bool {
-    current.is_ascii_alphanumeric() || current == '_'
+fn is_token_body(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
 /// `[A-Za-z0-9._~+/=-]`: the `Bearer` token body.
-fn is_bearer_body(current: char) -> bool {
-    current.is_ascii_alphanumeric()
-        || matches!(current, '.' | '_' | '~' | '+' | '/' | '=' | '-')
+fn is_bearer_body(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(byte, b'.' | b'_' | b'~' | b'+' | b'/' | b'=' | b'-')
 }
 
 /// `[A-Za-z0-9+/]`: the base64 body, which admits no `-`, `.` or `_`.
-fn is_base64_body(current: char) -> bool {
-    current.is_ascii_alphanumeric() || current == '+' || current == '/'
+fn is_base64_body(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'+' || byte == b'/'
 }
 
 /// The reference's first pattern, `\bsk-[A-Za-z0-9_-]{8,}\b`.
-fn find_sk_key(chars: &[char], from: usize) -> Option<Span> {
+fn find_sk_key(bytes: &[u8], from: usize) -> Option<Span> {
     let mut start = from;
-    while start + 3 <= chars.len() {
-        if boundary_at(chars, start) && starts_with(chars, start, "sk-") {
-            if let Some(end) = class_run(chars, start + 3, 8, is_key_body) {
+    while start + 3 <= bytes.len() {
+        // The literal is tested before `\b`: it rejects almost every index on
+        // its first byte, and `\b` can only matter at an index it accepts.
+        if starts_with(bytes, start, "sk-") && boundary_at(bytes, start) {
+            if let Some(end) = class_run(bytes, start + 3, 8, is_key_body) {
                 return Some((start, end));
             }
         }
@@ -462,16 +491,16 @@ fn find_sk_key(chars: &[char], from: usize) -> Option<Span> {
 ///
 /// The body is fixed-width, so there is no run to give back; `{16}` also means a
 /// longer uppercase run cannot match at all.
-fn find_aws_key(chars: &[char], from: usize) -> Option<Span> {
+fn find_aws_key(bytes: &[u8], from: usize) -> Option<Span> {
     let mut start = from;
-    while start + 20 <= chars.len() {
+    while start + 20 <= bytes.len() {
         let end = start + 20;
-        if boundary_at(chars, start)
-            && starts_with(chars, start, "AKIA")
-            && chars[start + 4..end].iter().all(|current| {
+        if starts_with(bytes, start, "AKIA")
+            && bytes[start + 4..end].iter().all(|current| {
                 current.is_ascii_digit() || current.is_ascii_uppercase()
             })
-            && boundary_at(chars, end)
+            && boundary_at(bytes, start)
+            && boundary_at(bytes, end)
         {
             return Some((start, end));
         }
@@ -481,15 +510,15 @@ fn find_aws_key(chars: &[char], from: usize) -> Option<Span> {
 }
 
 /// The reference's third pattern, `\bgh[pso]_[A-Za-z0-9_]{20,}\b`.
-fn find_github_token(chars: &[char], from: usize) -> Option<Span> {
+fn find_github_token(bytes: &[u8], from: usize) -> Option<Span> {
     let mut start = from;
-    while start + 4 <= chars.len() {
-        if boundary_at(chars, start)
-            && starts_with(chars, start, "gh")
-            && matches!(chars[start + 2], 'p' | 's' | 'o')
-            && chars[start + 3] == '_'
+    while start + 4 <= bytes.len() {
+        if starts_with(bytes, start, "gh")
+            && matches!(bytes[start + 2], b'p' | b's' | b'o')
+            && bytes[start + 3] == b'_'
+            && boundary_at(bytes, start)
         {
-            if let Some(end) = class_run(chars, start + 4, 20, is_token_body) {
+            if let Some(end) = class_run(bytes, start + 4, 20, is_token_body) {
                 return Some((start, end));
             }
         }
@@ -503,19 +532,26 @@ fn find_github_token(chars: &[char], from: usize) -> Option<Span> {
 /// `\s+` is greedy, and giving a space back cannot help: the token class admits
 /// no whitespace, so a shorter run would have to start on a character the class
 /// rejects.
-fn find_bearer_token(chars: &[char], from: usize) -> Option<Span> {
+fn find_bearer_token(bytes: &[u8], from: usize) -> Option<Span> {
     let literal = "Bearer".len();
     let mut start = from;
-    while start + literal <= chars.len() {
-        if boundary_at(chars, start)
-            && starts_with_ignore_case(chars, start, "Bearer")
+    while start + literal <= bytes.len() {
+        // As above, candidate first: one byte rejects nearly every index, the
+        // case-insensitive literal follows, and `\b` is tested last.
+        if bytes[start].eq_ignore_ascii_case(&b'B')
+            && starts_with_ignore_case(bytes, start, "Bearer")
+            && boundary_at(bytes, start)
         {
             let mut cursor = start + literal;
-            while cursor < chars.len() && is_js_space(chars[cursor]) {
-                cursor += 1;
+            while cursor < bytes.len() {
+                let width = js_space_len(bytes, cursor);
+                if width == 0 {
+                    break;
+                }
+                cursor += width;
             }
             if cursor > start + literal {
-                if let Some(end) = class_run(chars, cursor, 12, is_bearer_body)
+                if let Some(end) = class_run(bytes, cursor, 12, is_bearer_body)
                 {
                     return Some((start, end));
                 }
@@ -527,11 +563,15 @@ fn find_bearer_token(chars: &[char], from: usize) -> Option<Span> {
 }
 
 /// The reference's fifth pattern, `\b[0-9a-fA-F]{32,}\b`.
-fn find_long_hex_run(chars: &[char], from: usize) -> Option<Span> {
+fn find_long_hex_run(bytes: &[u8], from: usize) -> Option<Span> {
+    // The run is at least 32 bytes, so a shorter tail holds no match.
+    if bytes.len() < from + 32 {
+        return None;
+    }
     let mut start = from;
-    while start < chars.len() {
-        if boundary_at(chars, start) {
-            if let Some(end) = class_run(chars, start, 32, |current| {
+    while start < bytes.len() {
+        if boundary_at(bytes, start) {
+            if let Some(end) = class_run(bytes, start, 32, |current| {
                 current.is_ascii_hexdigit()
             }) {
                 return Some((start, end));
@@ -547,22 +587,26 @@ fn find_long_hex_run(chars: &[char], from: usize) -> Option<Span> {
 /// The class run is greedy, then the padding is greedy, then the trailing `\b`
 /// decides; a failure gives padding back first and shortens the run only after
 /// every padding count has failed.
-fn find_long_base64_run(chars: &[char], from: usize) -> Option<Span> {
+fn find_long_base64_run(bytes: &[u8], from: usize) -> Option<Span> {
+    // The class run is at least 40 bytes, so a shorter tail holds no match.
+    if bytes.len() < from + 40 {
+        return None;
+    }
     let mut start = from;
-    while start < chars.len() {
-        if boundary_at(chars, start) && is_base64_body(chars[start]) {
+    while start < bytes.len() {
+        if boundary_at(bytes, start) && is_base64_body(bytes[start]) {
             let mut end = start;
-            while end < chars.len() && is_base64_body(chars[end]) {
+            while end < bytes.len() && is_base64_body(bytes[end]) {
                 end += 1;
             }
             while end >= start + 40 {
                 for padding in (0..=2).rev() {
                     let candidate = end + padding;
-                    if candidate <= chars.len()
-                        && chars[end..candidate]
+                    if candidate <= bytes.len()
+                        && bytes[end..candidate]
                             .iter()
-                            .all(|byte| *byte == '=')
-                        && boundary_at(chars, candidate)
+                            .all(|byte| *byte == b'=')
+                        && boundary_at(bytes, candidate)
                     {
                         return Some((start, candidate));
                     }
@@ -877,7 +921,7 @@ mod tests {
 #[cfg(test)]
 mod secret_corpus {
     use super::sanitize_safe_doctor_text;
-    use super::{SECRET_REPLACEMENT, is_word_char, redact_secrets};
+    use super::{SECRET_REPLACEMENT, is_word_byte, redact_secrets};
 
     /// `(label, input, expected)`, in the order the oracle emitted them.
     const CASES: &[(&str, &str, &str)] = &[
@@ -1148,13 +1192,14 @@ mod secret_corpus {
         // must be inert. Its longest word run is `secret`, far below the shortest
         // minimum (`sk-` plus eight), and it carries none of the rule literals.
         let longest = SECRET_REPLACEMENT
-            .split(|current| !is_word_char(current))
-            .map(str::len)
+            .as_bytes()
+            .split(|byte| !is_word_byte(*byte))
+            .map(<[u8]>::len)
             .max()
             .unwrap_or(0);
         assert!(
             longest < 8,
-            "`{SECRET_REPLACEMENT}` carries a {longest}-character word run"
+            "`{SECRET_REPLACEMENT}` carries a {longest}-byte word run"
         );
         assert_eq!(redact_secrets(SECRET_REPLACEMENT), SECRET_REPLACEMENT);
     }
