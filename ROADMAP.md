@@ -594,23 +594,30 @@ later session needs must appear here or in a commit.
    - **Error text shape.** The shared `run_chat_pipeline` builds the openai and
      anthropic HTTP-error text from a 512-character control-filtered snippet and
      embeds `reqwest`'s full status line (`openai error 400 Bad Request: ...`) at
-     `provider/mod.rs:276`, while `generic.rs:832` builds
+     `provider/mod.rs:280`, while `generic.rs:832` builds
      `response failed: <code> at <url> - <body>`, cut at the first `<` to 240
      characters, and appends `RATE_LIMIT_HINT` on 429 only.
    - **No shared converter.** `openai.rs` and `anthropic.rs` never call
      `replay::completion_events_from_body`; only `generic.rs:530` and `:698` do.
-   - **A duplicated response loop in `anthropic.rs` — duplicated code, not
-     duplicated work.** Its parse walks `value["content"]` twice: the first block
-     inline at `:255`, then `skip(1)` in a second pass at `:302`. The slices are
-     disjoint, so the second pass is not redundant; what is written out twice is
-     the `tool_use` extraction. The sharp edge is an asymmetry between the two
-     passes: a `text` field carried on a `tool_use` block reaches the event stream
-     only when that block is **first**, because the first-block pass reads `text`
-     without checking the type while the later-block pass takes `tool_use` in
-     preference to `text`. Text on ordinary blocks is collected wherever it sits,
-     so "text is first-block-only" would be the wrong reading — verified by
-     driving the real path at a loopback fixture with two- and three-block
-     bodies. Recorded by
+   - **A response walk that stated an asymmetry — now one pass.** `anthropic.rs`
+     used to walk `value["content"]` twice: the first block inline, then `skip(1)`
+     over the rest, with the `tool_use` extraction written out in both arms. It is
+     now a single pass over the array (`anthropic.rs:258`) that states the
+     asymmetry at a named `index == 0` branch (`:269`), with the extraction written
+     once (`tool_call_event`, `:311`). **The asymmetry itself is unchanged, because
+     it is behaviour:** a `text` field carried on a `tool_use` block reaches the
+     event stream only when that block is **first** — the first block is read for
+     `text` before its type is considered, while a later `tool_use` block takes the
+     tool-use branch and never falls through to the text arm. Text on ordinary
+     blocks is collected wherever it sits, so "text is first-block-only" would be
+     the wrong reading. Five probe cases pin it —
+     `probe_records_first_block_text_before_its_tool_call`,
+     `probe_records_the_tool_use_guard_dropping_only_the_push`,
+     `probe_records_a_tool_call_with_no_input_key`,
+     `probe_records_every_later_tool_use_block` and
+     `probe_records_the_skip_first_boundary` — all five passing against the two-arm
+     walk before the rewrite and against the single pass after it, unchanged; they
+     join the round-4
      `probe_records_the_text_field_of_a_tool_use_block_only_when_it_is_first`.
    - **Auth follows the provider NAME, not the declared protocol.**
      `generic.rs:429` dispatches on `provider == "anthropic"`, so two requests
@@ -622,18 +629,21 @@ later session needs must appear here or in a commit.
      into user text.
      A sixth reported drift **did not reproduce**: all three chat paths embed the
      same 512-character snippet in their parse-failure text — the shared pair at
-     `provider/mod.rs:293`, the generic chat path at `generic.rs:513`. The
+     `provider/mod.rs:297`, the generic chat path at `generic.rs:513`. The
      genuinely different message is the models-listing probe at `generic.rs:784`,
      which carries no body text at all.
-     The two micro-duplications recorded here as out of scope have since been
-     consolidated: the `"2023-06-01"` literal is now
-     `provider/mod.rs:80` (`ANTHROPIC_VERSION`) and the `"no provider response
-observed yet"` literal `provider/mod.rs:86`
-     (`NO_PROVIDER_RESPONSE_OBSERVED`), with those literals surviving only in test
-     assertions.
+     The literals recorded here as out of scope have since been consolidated into
+     constants in `provider/mod.rs`: `"2023-06-01"` at `:84`
+     (`ANTHROPIC_VERSION`), `"no provider response observed yet"` at `:90`
+     (`NO_PROVIDER_RESPONSE_OBSERVED`), and
+     `"Host cancelled the turn before provider start"` at `:68`
+     (`CANCELLED_BEFORE_PROVIDER_START`) — the last was not listed in this entry,
+     because nothing here had flagged it — now owning all four of its sites,
+     including `provider/replay.rs:253`. The first two literals survive only in
+     test assertions; the third is referenced only through its constant.
      Step two then extracted the send-onward region the two chat clients shared —
      send, post-response cancellation, bounded read, non-success mapping and JSON
-     parse — into `provider::run_chat_pipeline` (`provider/mod.rs:228`), leaving
+     parse — into `provider::run_chat_pipeline` (`provider/mod.rs:232`), leaving
      each caller its own request construction and its own parse. The two
      asymmetries recorded above (`safe`/`text` on the error path,
      `snippet`/`text` on the parse-failure path) were preserved exactly, and every
