@@ -656,6 +656,20 @@ later session needs must appear here or in a commit.
   path from digest-bound evidence — so deleting tickets is a history decision, and
   for the linked one a corpus amendment, never a cleanup.
 
+- **One JavaScript string-order rule.** `crate::js_string::cmp` now owns the
+  UTF-16 code-unit comparison that `language::diagnostic::utf16_cmp` and
+  `projection::segments::js_string_cmp` each implemented — two copies of a rule
+  whose subtle case (an astral scalar's lead surrogate sorts below a BMP scalar
+  above U+E000) is silent when it is wrong. The module is a leaf: it imports
+  nothing, so it adds no edge between `language` and `projection`, which reach
+  each other nowhere. Both copies are deleted and both call sites moved; the
+  three contract tests moved with the rule, and the crate's test set is unchanged
+  at 626 names, one of them renamed to drop the deleted function's name.
+  Differential parity held at 352/352 with no corpus row moved. It is **not** an
+  optimization: the largest segment set anywhere in the pinned corpus is three,
+  so the second site's defect was never measurable, and the numbers recorded in
+  `docs/development/performance-baseline.md` belong to the first site alone.
+
 ### Remaining
 
 1. **W5.2 — `/cost`.** Reconciles to the accounting inputs on a fixture; the
@@ -770,6 +784,6 @@ closed.
 `npm run check` is green on the current working tree: differential parity at 352/352
 applicable required scenarios with four explicit platform skips, the eight
 adversarial supersession lists refused with their named codes, the reachability
-ratchet holding over 70 of 176 product modules, and clippy, tests, and every
+ratchet holding over 70 of 177 product modules, and clippy, tests, and every
 documentation gate clean. CI remains `unknown` — see the retraction at the top of
 this file — and the release workflow has never executed.

@@ -263,12 +263,29 @@ corpus asserts the orders this function feeds.
   key once rather than once per comparison, but it restructures a
   parity-critical comparator to save time on a bounded path, so it was not
   taken.
-- `projection/segments.rs::js_string_cmp` carries the identical defect — two
-  `Vec<u16>` allocations per comparison — and the identical rule already exists
-  in `language/diagnostic.rs`, which is one rule written twice. It is left
-  alone because it was not measured: its only caller sorts context segments, a
-  smaller domain than 10,000 diagnostics, and a change there belongs with the
-  same measure-first discipline this section follows.
+- The same defect in `projection/segments.rs::js_string_cmp` is not measured
+  here and no win is claimed for it: its only caller sorts context segments, and
+  the largest segment set anywhere in the pinned corpus is three
+  (`context-projection.segments.json`), where that sort makes about five
+  comparisons. A benchmark at a larger count would time a size the product never
+  reaches.
+
+### Consolidation (same session)
+
+The rule these measurements were taken on is now owned once, in
+`crate::js_string::cmp`. Its two copies — `language::diagnostic::utf16_cmp`,
+which the columns above were measured on, and
+`projection::segments::js_string_cmp` — are deleted, and both call sites moved
+with them. The three contract tests that pinned the ordering (`astral` before
+`bmp_high`, prefix-before-extension, the supplementary-scalar pair) moved to the
+owner, and the antisymmetry property test calls it directly; the crate's test
+set is unchanged at 626 names, one of them renamed to drop the deleted
+function's name.
+
+The module is a leaf: it imports nothing, so it adds no edge between `language`
+and `projection`. The mentions of `utf16_cmp` above name it as it was when those
+columns were measured, and none of these numbers are attributed to the
+consolidation.
 
 ## Future workloads
 
