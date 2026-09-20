@@ -1,7 +1,13 @@
 # Domain ABI decision spike (assurance contract Parts 16–19)
 
-Two minimal prototypes were built, exercised, and measured on the same
-host (Windows 11, x86_64-pc-windows-gnu, release builds):
+Two minimal prototypes were built, exercised, and measured on one host,
+release builds. That host is recorded as `x86_64-pc-windows-gnu`, and the
+record **cannot be reproduced or verified from this repository**: the pinned
+toolchain carries no target and no host, and no GNU toolchain is installed
+in the environment that checked it. The measurements below are therefore
+retained with unverified host provenance. They were deliberately not
+re-labelled to the host in use today, because nobody re-measured them on it;
+treat them as indicative only and re-measure before relying on them:
 
 | Measurement                  | WIT/Component (measured with wasmtime 31)            | IPC (JSON-lines subprocess)          |
 | ---------------------------- | ---------------------------------------------------- | ------------------------------------ |
