@@ -34,10 +34,14 @@ macro expansion is reported unreachable when it is not, which over-lists. It is
 **module-level**: it says nothing about individual items inside a reachable module.
 And reachability here is **direct**: a module imported only by another unreachable module is not
 listed, so this catalogue is a lower bound on the unreachable set, not an exact
-enumeration. The module set excludes test-only modules but the reference scan does
-not: a reference from test-only code still counts as a reference, so a module the
-product reaches only through its tests is not catalogued. That under-lists, and
-this check does not strip `#[cfg(test)]` regions out of the scan to compensate.
+enumeration. The module set and the reference scan agree on test-only module
+_files_ — the same predicate decides both, so a test-only file is not a production
+referencer, and a module only a test suite imports is catalogued rather than counted
+as reached. Neither direction strips `#[cfg(test)]` regions that sit inside a
+product file, so a reference from an inline test module still counts: that can still
+hide a module imported only from an inline test region, while a module imported only
+from a test-only file is now catalogued — over-listing, the direction this check
+tolerates.
 What it does guarantee is the direction that matters — a product module nothing
 imports must be listed, so unreachable product code cannot arrive unlisted — and
 it never proves that a listed module is genuinely dead.
