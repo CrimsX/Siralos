@@ -100,9 +100,12 @@ What that buys you:
 - Rust, pinned by `rust-toolchain.toml`
 - Node.js 24 and npm 11.13.0 (`.nvmrc`) for the repository quality gate
 - Git
-- On Windows, a modern MinGW-w64 toolchain on `PATH` for the pinned
-  `x86_64-pc-windows-gnu` Rust host, including GNU `dlltool` and `as`
-  ([Rust platform requirements](https://doc.rust-lang.org/rustc/platform-support/windows-gnu.html))
+- On Windows, the MSVC build tools and the Windows SDK, because the pinned
+  channel resolves to its default host toolchain —
+  `x86_64-pc-windows-msvc`, which is what `rustup show active-toolchain`
+  reports. `rust-toolchain.toml` pins the channel and no target, so nothing
+  here builds for `x86_64-pc-windows-gnu` and no MinGW-w64 toolchain is
+  needed on `PATH`.
 
 ## Quickstart
 

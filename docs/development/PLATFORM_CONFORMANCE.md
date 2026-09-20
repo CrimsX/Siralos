@@ -19,9 +19,17 @@ runs fmt, clippy, documentation, differential, ratchets, the supply
 chain gate, and the core-only check. Every Tier-1 runner executes the
 default-feature `siralos` binary for both identity and help behavior.
 
-Local development hosts: Windows uses the GNU host target with
-MinGW-w64 (the CI Windows runner uses the default MSVC host, which
-provides the Windows SDK); Linux/macOS use the default host.
+Local hosts resolve the toolchain the same way CI does: `rust-toolchain.toml`
+pins the channel only, so every platform uses that channel's default host —
+`x86_64-pc-windows-msvc` on Windows, which is what `rustup show
+active-toolchain` reports here — and the CI Windows runner installs no target
+either, so it resolves to the same host. This file previously recorded Windows
+local development as using the GNU host target with MinGW-w64. **Nothing
+implements that**: no `--target x86_64-pc-windows-gnu` is passed anywhere in the
+repository, the toolchain file carries no `targets` entry and no host override,
+and no `.cargo/config.toml` exists. It is unimplemented direction rather than
+current behaviour, and adopting it needs its own decision; today the MSVC host is
+what runs, and linking therefore needs the MSVC build tools and the Windows SDK.
 
 ## Platform-sensitive Stage 1–3 behavior
 

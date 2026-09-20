@@ -87,8 +87,13 @@ Behavioral parity does not require structural parity.
 - The declared MSRV (`[workspace.package] rust-version`) is the floor;
   the pinned toolchain is what gates are run with. Bumping either
   requires passing the full Rust gate.
-- On Windows, the GNU host target is used with an explicit MinGW-w64
-  toolchain; see `rust-toolchain.toml` and the repository README.
+- On Windows the pinned channel's default host toolchain is what runs the
+  gates, reported by `rustup show active-toolchain` as
+  `x86_64-pc-windows-msvc`. `rust-toolchain.toml` pins the channel and no
+  target, so nothing in this repository selects `x86_64-pc-windows-gnu` and
+  no MinGW-w64 toolchain is required on `PATH`; linking needs the MSVC
+  build tools and the Windows SDK instead. See the repository README for
+  the platform requirements.
 
 ## Formatting
 
