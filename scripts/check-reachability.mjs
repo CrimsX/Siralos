@@ -20,7 +20,10 @@
  * crate root), never from the file name, so a genuinely unreferenced non-test
  * module called `tests` cannot hide here. A declaration that cannot be located
  * leaves the module in the set: failing to recognise a test-only module
- * over-lists, which is the direction this check tolerates.
+ * over-lists, which is the direction this check tolerates. The same predicate
+ * decides the reference scan, so the two cannot disagree: a test-only module file
+ * is not a production referencer either, and a module only a test suite imports is
+ * catalogued rather than counted as reached.
  *
  * LIMITS, stated so they cannot become hiding places:
  *   - it is textual and import-shaped: a module reached only through a glob
@@ -38,10 +41,12 @@
  *   - it is conservative in the direction that matters — a product module nothing
  *     imports must be listed, so unreachable product code cannot arrive unlisted.
  *     It does not prove that a listed module is truly unreachable;
- *   - the module set excludes test-only modules but the reference scan does not: a
- *     reference from test-only code still counts as a reference, so a module the
- *     product reaches only through its tests is not catalogued. That under-lists,
- *     and the scan does not strip `#[cfg(test)]` regions to compensate.
+ *   - the module set and the reference scan agree on test-only module *files*, but
+ *     neither strips `#[cfg(test)]` regions inside a product file: a reference from
+ *     an inline test module still counts as a reference. That can still hide a
+ *     module imported only from an inline test region, while a module imported only
+ *     from a test-only file is now catalogued — over-listing, the direction this
+ *     check tolerates.
  *
  * It also refuses a stale report: a listed module that the product references
  * again, or a stamp that no longer matches the corpus manifest digest, must be
@@ -152,26 +157,50 @@ function isTestOnlyModule(file, identifier) {
 }
 
 /** Every module of a product crate, with the identifier that references it. */
+/** The identifier a source file declares as a module, read from its path. */
+function moduleIdentifier(sourceRoot, file) {
+  const withinCrate = relative(sourceRoot, file).split("\\").join("/");
+  const stem = withinCrate.replace(/\.rs$/u, "");
+  const parts = stem.split("/");
+  return parts[parts.length - 1] === "mod" ? parts[parts.length - 2] : parts[parts.length - 1];
+}
+
+/** Whether a scanned file is itself a test-only module file. */
+const testOnlyFiles = new Map();
+
+function isTestOnlyFile(sourceRoot, file) {
+  const known = testOnlyFiles.get(file);
+  if (known !== undefined) {
+    return known;
+  }
+  const identifier = moduleIdentifier(sourceRoot, file);
+  // `lib.rs` and `main.rs` are crate roots, never test-only modules, and the
+  // reference scan must keep reading them.
+  const isTest =
+    identifier !== undefined &&
+    identifier !== "lib" &&
+    identifier !== "main" &&
+    isTestOnlyModule(file, identifier);
+  testOnlyFiles.set(file, isTest);
+  return isTest;
+}
+
 function productModules() {
   const modules = [];
   for (const crate of PRODUCT_CRATES) {
     const sourceRoot = join(REPO_ROOT, ...crate.split("/"), "src");
     for (const file of rustFiles(sourceRoot)) {
-      const withinCrate = relative(sourceRoot, file).split("\\").join("/");
-      const stem = withinCrate.replace(/\.rs$/u, "");
-      const parts = stem.split("/");
-      const identifier =
-        parts[parts.length - 1] === "mod" ? parts[parts.length - 2] : parts[parts.length - 1];
+      const identifier = moduleIdentifier(sourceRoot, file);
       if (identifier === undefined || identifier === "lib" || identifier === "main") {
         continue;
       }
-      if (isTestOnlyModule(file, identifier)) {
+      if (isTestOnlyFile(sourceRoot, file)) {
         continue;
       }
       modules.push({
         crate,
         identifier,
-        path: crate + "/src/" + withinCrate,
+        path: crate + "/src/" + relative(sourceRoot, file).split("\\").join("/"),
         ownFile: file,
         ownDirectory: dirname(file),
       });
@@ -188,6 +217,11 @@ function isReferenced(module) {
     const sourceRoot = join(REPO_ROOT, ...crate.split("/"), "src");
     for (const file of rustFiles(sourceRoot)) {
       if (file === module.ownFile || dirname(file) === module.ownDirectory) {
+        continue;
+      }
+      // A test-only module file is not a production referencer; the module set
+      // uses the same predicate, so the two directions cannot disagree.
+      if (isTestOnlyFile(sourceRoot, file)) {
         continue;
       }
       for (const line of readFileSync(file, "utf8").split("\n")) {
