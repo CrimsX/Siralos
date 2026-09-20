@@ -41,3 +41,26 @@ Ticket [115](../tickets/115-optional-api-key.md) · entry review
 
 The optional api key is complete: empty skips the credential, public
 endpoints work end-to-end, and the config omits the credential key.
+
+## 5. Correction — the I1 evidence and the teaching error (round 23)
+
+Two cells above cite the teaching error as evidence that is unchanged:
+
+- **I1** cites `nonempty_public_rejected_with_teaching_message` alongside
+  `empty_api_key_advances_without_credential`. The first name exists nowhere in
+  the repository.
+- The criteria row "The env-only policy … the teaching error unchanged" records
+  as passing something that no longer exists. The teaching text was deleted in
+  the round-3 consolidation, and neither live ApiKey handler validates the field:
+  the advance (`crates/siralos-cli/src/tui.rs:3510`) stores a non-`env:` value
+  verbatim as `key:<value>`, and that field's validator is
+  `// Verbatim credential: no validation.` followed by `Ok(())`
+  (`crates/siralos-cli/src/tui.rs:3771`).
+
+`empty_api_key_advances_without_credential` and
+`write_profile_config_omits_credential_when_none` both survive
+(`crates/siralos-cli/src/tui/tests.rs:2308`,
+`crates/siralos-cli/src/interactive/tests.rs:1094`), so the empty-skip and
+config-omission rows still rest on runnable evidence. Decision 135 §5 records the
+same correction; whether to restore validation and the teaching message is an
+owner decision in `ROADMAP.md` §10.

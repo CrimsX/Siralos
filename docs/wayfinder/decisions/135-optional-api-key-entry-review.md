@@ -42,3 +42,32 @@ Ticket [115](../tickets/115-optional-api-key.md) · entry review
 
 Entry review PASS: the api key is optional for public endpoints with the
 env-only credential policy untouched.
+
+## 5. Correction — the K1 evidence and the validation claim (round 23)
+
+Two statements in the K1 row above no longer describe the code:
+
+- The cited test `nonempty_public_rejected_with_teaching_message` does not exist:
+  no file in the repository contains that name, so the cell cites evidence that
+  cannot be run.
+- "Non-empty input validates as before (the human-readable + teaching errors
+  unchanged)" is not what the live handlers do. The ApiKey advance
+  (`crates/siralos-cli/src/tui.rs:3510`) maps empty input to `None`, keeps an
+  `env:` value, and stores anything else verbatim as `key:<value>`; the field
+  validator for ApiKey is the comment `// Verbatim credential: no validation.`
+  followed by `Ok(())` (`crates/siralos-cli/src/tui.rs:3771`). Neither handler
+  rejects a malformed credential, and the teaching error text is gone.
+
+The other three tests cited in the table survive and still cover what the row
+claims: `empty_api_key_advances_without_credential` and
+`public_flow_completes_with_no_credential`
+(`crates/siralos-cli/src/tui/tests.rs:2308`, `:2323`) and
+`write_profile_config_omits_credential_when_none`
+(`crates/siralos-cli/src/interactive/tests.rs:1094`). The empty-skip behaviour,
+the data model and the no-auth fetch are unaffected; only the validation claim is
+withdrawn.
+
+Whether the field should be validated at all — and whether the teaching message
+should be restored in the provider-add path — is a user-visible product change
+the owner has not made. It is recorded in `ROADMAP.md` §10 under "Owner decisions
+pending" (the O3/I3 credential teaching message).
