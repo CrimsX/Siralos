@@ -249,19 +249,6 @@ jobs:
       - name: Install Rust toolchain
         run: rustup show active-toolchain
 
-      # The windows-gnu host needs GNU dlltool/as for raw-dylib imports.
-      # Verify the runner image contract without coupling the workflow to one
-      # package manager's installation path.
-      - name: Verify MinGW-w64 host tools (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          foreach ($tool in @('dlltool.exe', 'as.exe')) {
-            if ($null -eq (Get-Command $tool -ErrorAction SilentlyContinue)) {
-              throw "required MinGW-w64 host tool is unavailable: $tool"
-            }
-          }
-
       - name: Install pinned Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
