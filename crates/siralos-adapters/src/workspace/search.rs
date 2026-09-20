@@ -407,15 +407,11 @@ fn compare_matches(a: &SearchMatch, b: &SearchMatch) -> std::cmp::Ordering {
 
 #[cfg(test)]
 mod tests {
-    fn unique() -> u64 {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    }
     use super::{
         SearchInput, SearchOutcome, TruncationReason, parse_search_input,
         search,
     };
+    use crate::test_support::unique;
     use siralos_core::workspace::bounds::WORKSPACE_LIMITS;
 
     fn workspace() -> std::path::PathBuf {

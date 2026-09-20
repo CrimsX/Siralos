@@ -145,3 +145,23 @@ impl std::error::Error for RuntimeError {}
 pub(crate) fn runtime_error(message: impl Into<String>) -> RuntimeError {
     RuntimeError { message: message.into() }
 }
+
+/// Test-only helpers shared by the runtime test modules.
+///
+/// `#[cfg(test)]`-gated: no production build contains this, so nothing here
+/// widens the crate's real surface.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use crate::runtime::budget::{
+        RuntimeBudget, RuntimeBudgetInput, create_runtime_budget,
+    };
+
+    /// A runtime budget with only `artifact_bytes` set.
+    #[must_use]
+    pub(crate) fn budget_with(artifact_bytes: u64) -> RuntimeBudget {
+        create_runtime_budget(&RuntimeBudgetInput {
+            artifact_bytes: Some(artifact_bytes),
+            ..RuntimeBudgetInput::default()
+        })
+    }
+}

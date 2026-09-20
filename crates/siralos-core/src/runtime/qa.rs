@@ -377,8 +377,8 @@ mod tests {
         is_identity_bound_qa_workflow_primitive_available,
         render_qa_workflow_evidence,
     };
-    use crate::runtime::budget::{RuntimeBudgetInput, create_runtime_budget};
     use crate::runtime::execution::RuntimeExecutionOutcome;
+    use crate::runtime::test_support::budget_with;
     use crate::tool::capability::CapabilityId;
     use crate::tool::permission::{
         PermissionPolicy, PermissionRule, PolicyRule,
@@ -402,15 +402,6 @@ mod tests {
                 .expect("valid capability"),
             rule: PermissionRule::Allow,
         }])
-    }
-
-    fn budget_with(
-        artifact_bytes: u64,
-    ) -> crate::runtime::budget::RuntimeBudget {
-        create_runtime_budget(&RuntimeBudgetInput {
-            artifact_bytes: Some(artifact_bytes),
-            ..RuntimeBudgetInput::default()
-        })
     }
 
     #[test]

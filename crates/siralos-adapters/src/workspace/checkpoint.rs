@@ -823,16 +823,12 @@ fn serialize_checkpoint(checkpoint: &FileCheckpoint) -> serde_json::Value {
 }
 #[cfg(test)]
 mod tests {
-    fn unique() -> u64 {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    }
     use super::{
         ReconciliationReport, is_valid_checkpoint_id, open_checkpoint_store,
         parse_metadata, read_workspace_file_state, reconcile_checkpoints,
         serialize_checkpoint,
     };
+    use crate::test_support::unique;
     use siralos_core::workspace::checkpoint::{
         CheckpointFileState, CheckpointOperation, CheckpointPreview,
         CheckpointState, FileCheckpoint, WorkspaceFileState,

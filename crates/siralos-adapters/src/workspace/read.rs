@@ -354,14 +354,10 @@ pub fn read_file(
 }
 #[cfg(test)]
 mod tests {
-    fn unique() -> u64 {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    }
     use super::{
         ReadInput, ReadMode, ReadOutcome, parse_read_input, read_file,
     };
+    use crate::test_support::unique;
     use siralos_core::workspace::bounds::WORKSPACE_LIMITS;
 
     fn workspace() -> std::path::PathBuf {

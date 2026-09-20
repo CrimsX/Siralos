@@ -459,7 +459,6 @@ fn read_input_error_message(error: ReadInputError) -> String {
 mod tests {
     use std::collections::BTreeMap;
     use std::fs;
-    use std::sync::atomic::{AtomicU64, Ordering};
 
     use serde_json::json;
     use siralos_core::provider::{CancellationToken, ToolExecutionResult};
@@ -467,10 +466,7 @@ mod tests {
 
     use super::{WorkspaceListTool, WorkspaceReadTool, WorkspaceSearchTool};
 
-    fn unique() -> u64 {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    }
+    use crate::test_support::unique;
 
     struct Fixture {
         root: std::path::PathBuf,

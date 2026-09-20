@@ -28,3 +28,25 @@ pub mod tool;
 pub mod workspace;
 
 pub use paths::state_dir;
+
+/// Test-only helpers shared by this crate's test modules.
+///
+/// `#[cfg(test)]`-gated: no production build contains this, so nothing here
+/// widens the crate's real surface, and a test-only module is outside the
+/// reachability census by construction.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// A process-local nonce for scratch names.
+    ///
+    /// One counter for the whole test binary: the five call sites used to keep
+    /// separate counters, which made the *values* differ between modules but
+    /// never collided, because each site prefixes its own name. Uniqueness is
+    /// what the callers rely on, and a shared counter preserves it.
+    #[must_use]
+    pub(crate) fn unique() -> u64 {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    }
+}

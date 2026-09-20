@@ -216,12 +216,8 @@ fn enumerate_bounded(
 }
 #[cfg(test)]
 mod tests {
-    fn unique() -> u64 {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    }
     use super::{EntryKind, ListOutcome, list_directory};
+    use crate::test_support::unique;
     use siralos_core::workspace::bounds::WORKSPACE_LIMITS;
 
     #[test]
