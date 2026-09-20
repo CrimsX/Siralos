@@ -204,6 +204,72 @@ across all 36 workloads (p = 0.00, intervals excluding zero) and a further
 Behaviour is unchanged: the 99-row executed-reference corpus passes as
 written, and the bench's own shape assertions hold at every size.
 
+## Stage 3R R5 language-normalization baseline and one measured fix
+
+`normalize_diagnostic_set` owns diagnostic aggregation: exact duplicates
+collapse on (path, line, column, code, message), the survivors sort in
+JavaScript string order, and the run-wide bound applies with explicit
+truncation. Its comparator, `utf16_cmp`, is also the ordering rule for symbol
+sorting, so a sort in either module paid the same cost.
+
+Command: `cargo bench -p siralos-core --locked --bench language_normalization`.
+Two workloads: `normalize_diagnostic_set/10000` (10,000 diagnostics, the
+`LANGUAGE_LIMITS.max_diagnostics_per_run` bound) and
+`build_structural_summary/64-functions`, which does not reach the changed
+function and is recorded as the control. This section is new: three of the four
+benches in `crates/siralos-core/benches/` had numbers recorded here and this one
+did not.
+
+Medians are criterion medians on Windows 11, `rustc 1.97.1` host
+`x86_64-pc-windows-msvc`, release/bench profile. The baseline column was
+measured on a clean tree at commit `b1da8a3`; the after column adds the change
+below, uncommitted when recorded.
+
+| Workload                                | Input size   | Baseline  | After     | Change |
+| --------------------------------------- | ------------ | --------- | --------- | ------ |
+| `normalize_diagnostic_set/10000`        | 10,000 diags | 68.428 ms | 24.477 ms | -64.2% |
+| `build_structural_summary/64-functions` | 64 functions | 4.6925 µs | 4.8571 µs | +3.5%  |
+
+### What changed
+
+`utf16_cmp` built a `Vec<u16>` for each side on every call, through a private
+`utf16_units` helper, so the comparator inside `sort_by` allocated twice per
+comparison — roughly 133,000 comparisons at n = 10,000, each one decoding and
+allocating rather than comparing.
+
+The vectors were never needed. `left.encode_utf16().cmp(right.encode_utf16())`
+compares the same code units in the same order, and `Iterator::cmp` returns
+`Less` for a proper prefix, which is what the trailing length comparison did.
+The one subtle case is preserved rather than reasoned away: an astral scalar's
+lead surrogate sorts below a BMP scalar above U+E000, which `language::tests`
+pins against `utf16_cmp` and which still passes. `utf16_units` is deleted with
+its only caller, and the ordering rule itself is unchanged — the differential
+corpus asserts the orders this function feeds.
+
+### Measurement limits
+
+- The machine is shared and unpinned, and each column is a single run. The
+  claimed row is claimed because criterion's intervals do not overlap:
+  66.942-70.149 ms against 24.070-24.980 ms.
+- The control row moved +3.5% with overlapping intervals (4.5824-4.8110 µs
+  against 4.7028-5.0422 µs) and does not reach the changed function. That is the
+  drift this run can produce, and no effect smaller than the claimed one is
+  asserted.
+
+### Not claimed
+
+- The workload still costs ~24 ms, and the sort still re-decodes each compared
+  string at every comparison. A decorate-sort-undecorate pass would encode each
+  key once rather than once per comparison, but it restructures a
+  parity-critical comparator to save time on a bounded path, so it was not
+  taken.
+- `projection/segments.rs::js_string_cmp` carries the identical defect — two
+  `Vec<u16>` allocations per comparison — and the identical rule already exists
+  in `language/diagnostic.rs`, which is one rule written twice. It is left
+  alone because it was not measured: its only caller sorts context segments, a
+  smaller domain than 10,000 diagnostics, and a change there belongs with the
+  same measure-first discipline this section follows.
+
 ## Future workloads
 
 Stage 1–3 operations that will gain benchmarks when their subsystems
