@@ -485,8 +485,12 @@ pub fn load_plugin_records(
 }
 
 /// Validate one stored record against the same shape rules the
-/// manifest uses, so a crafted `siralos.toml` cannot drive arbitrary
-/// rendering or a poisoned id.
+/// manifest uses: the id must parse, the path must be non-empty,
+/// NUL-free and not absolute, and the digest must be a
+/// `sha256:`-prefixed lowercase hex string. This bounds what a
+/// crafted `siralos.toml` can record. It neither resolves the path
+/// against the filesystem nor makes it safe to render; the terminal
+/// sanitizer owns the rendering boundary.
 fn validate_record(
     record: PluginRecord,
 ) -> Result<PluginRecord, PluginFailure> {
