@@ -194,27 +194,16 @@ pub fn normalize_diagnostic_payload(
     }
 }
 
-/// The UTF-16 code units of a string (JavaScript string order).
-fn utf16_units(text: &str) -> Vec<u16> {
-    let mut units = Vec::with_capacity(text.len());
-    let mut buffer = [0u16; 2];
-    for character in text.chars() {
-        units.extend_from_slice(character.encode_utf16(&mut buffer));
-    }
-    units
-}
-
 /// Compare two strings in JavaScript string order (UTF-16 code units),
 /// which is the reference ordering for deterministic sorts.
+///
+/// The code units are walked lazily. Materializing a `Vec<u16>` for each
+/// side first made every comparison in `normalize_diagnostic_set`'s sort
+/// allocate twice, which dominated that benchmark's 10,000-diagnostic
+/// workload; `Iterator::cmp` compares the same units, in the same order,
+/// without building them.
 pub fn utf16_cmp(left: &str, right: &str) -> Ordering {
-    let left_units = utf16_units(left);
-    let right_units = utf16_units(right);
-    for (left_unit, right_unit) in left_units.iter().zip(right_units.iter()) {
-        if left_unit != right_unit {
-            return left_unit.cmp(right_unit);
-        }
-    }
-    left_units.len().cmp(&right_units.len())
+    left.encode_utf16().cmp(right.encode_utf16())
 }
 
 /// Deterministic diagnostic aggregation: exact duplicates are collapsed
