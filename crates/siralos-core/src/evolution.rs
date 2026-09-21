@@ -610,7 +610,7 @@ pub struct ProposalEvidence {
 }
 
 /// Typed validation failure for a malformed proposal.
-pub type ProposalValidationError = CorpusValidationError;
+pub(crate) type ProposalValidationError = CorpusValidationError;
 
 impl Proposal {
     /// Validate bounds, NUL bytes, digest shape, kind, and Host-gating

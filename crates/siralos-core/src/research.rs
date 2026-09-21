@@ -38,7 +38,7 @@ pub(crate) const RESEARCH_LIMITS: ResearchLimitSet = ResearchLimitSet {
 
 /// Absolute limits mirrored from `RESEARCH_LIMITS`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ResearchLimitSet {
+pub(crate) struct ResearchLimitSet {
     /// Bound mirrored from the corresponding limits table.
     pub max_download_bytes: usize,
     /// Bound mirrored from the corresponding limits table.
