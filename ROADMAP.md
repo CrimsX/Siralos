@@ -721,6 +721,27 @@ later session needs must appear here or in a commit.
   `Delete` belong to the workspace mutation capability the fail-closed posture refuses to
   exercise, so deleting them would delete preparation, not redundancy.
 
+- **The fuzz crate had never been compiled, and two of its three targets were broken.**
+  Nothing builds `fuzz/`: it is excluded from the workspace and needs nightly, so no gate
+  and no workflow has ever compiled it. `cli_args` called
+  `OsString::from(String::from_utf8_lossy(..))` in its `#[cfg(not(unix))]` branch, which
+  does not type-check — and a Linux runner never compiles that branch, so CI would not have
+  caught it either. `corpus_scenario` imports `siralos_cli::harness::Scenario`, and
+  `harness` has not been a module of `siralos-cli` since the differential harness became
+  its own excluded workspace (ADR 0033). The first is fixed: a plain `cargo check` of the
+  fuzz manifest now builds `version_parse` and `cli_args`. The second is `corpus_scenario`
+  under "Owner decisions pending".
+
+- **The fuzz crate's lock file is stale too, and `--locked` refuses to build it.** It
+  records 53 packages where the manifest graph now resolves about 420, because the crate
+  depends on `siralos-cli` and the CLI gained the adapter and runtime trees since the lock
+  was written. `cargo check --manifest-path fuzz/Cargo.toml --locked` stops with "cannot
+  update the lock file ... because `--locked` was passed to prevent this". Refreshing it
+  writes 3,475 lines and 369 package entries, which is not a change this session should
+  make blind: a nightly toolchain is not installed here, so no fuzz build can confirm the
+  resolution, and the crate is unbuildable for the reason above anyway. The refresh belongs
+  in the same reviewed change that resolves `corpus_scenario`.
+
 ### Remaining
 
 1. **W5.2 — `/cost`.** Reconciles to the accounting inputs on a fixture; the
@@ -794,6 +815,15 @@ with setx YOUR_API_KEY_NAME "the-key" and enter YOUR_API_KEY_NAME here`. It coul
   `A credential env name must match [A-Z0-9_]{1,64} after "env:".`. Promoting that
   teaching branch into the provider-add path — and validating the field at all — is
   a user-visible product change the owner has not made.
+- **The `corpus_scenario` fuzz target.** Its subject is `siralos_harness::harness::Scenario`,
+  so the fuzz crate can only reach it by depending on the harness — which the workspace
+  excludes and which depends on the out-of-repo plugin by path, so the assurance job would
+  also have to clone the plugin. The alternatives are to wire both, or to delete the target
+  with its manifest entry and the `cargo fuzz run corpus_scenario` step in
+  `assurance.yml`. Leaving it as it is is the one option that is not honest: it has not
+  compiled since the harness left the CLI, so `cargo fuzz build` fails on its first run,
+  and the invariants it states are currently covered by the harness's own adversarial tests
+  instead. The duplicated freeze record below is the same shape of question.
 - **The duplicated freeze record.** The tracked
   `tests/differential/evidence/typescript-freeze-v32/candidate.json` is
   byte-identical to its sibling `oracle.json` (both `sha256 9f5f786…`);
