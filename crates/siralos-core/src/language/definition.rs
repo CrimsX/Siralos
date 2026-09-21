@@ -55,7 +55,7 @@ pub struct RawDefinitionEntry {
 /// The conservative external basename for an out-of-workspace URI,
 /// matching the reference (`uri.split("/")` last non-empty segment, or
 /// `"external"`).
-pub fn external_basename(uri: &str) -> String {
+pub(crate) fn external_basename(uri: &str) -> String {
     match uri.split('/').rfind(|part| !part.is_empty()) {
         Some(part) => sanitize_control_characters(part),
         None => "external".to_owned(),

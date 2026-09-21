@@ -249,7 +249,7 @@ pub fn canonicalize_events(events: Vec<AccessEvent>) -> Vec<AccessEvent> {
 /// Canonicalize events and return the number dropped beyond the 64 cap.
 /// Dropped counts only the truncation beyond 64 after dedupe, not duplicates.
 #[must_use]
-pub fn canonicalize_events_with_dropped(
+pub(crate) fn canonicalize_events_with_dropped(
     events: Vec<AccessEvent>,
 ) -> (Vec<AccessEvent>, usize) {
     let mut seen: BTreeSet<String> = BTreeSet::new();
@@ -301,7 +301,7 @@ pub fn canonicalize_search_scores(
 /// Canonicalize search scores and return the number dropped beyond the 64 cap.
 /// Dedupe keeps the highest score per node.
 #[must_use]
-pub fn canonicalize_search_scores_with_dropped(
+pub(crate) fn canonicalize_search_scores_with_dropped(
     scores: Vec<SearchScore>,
 ) -> (Vec<SearchScore>, usize) {
     let mut map: BTreeMap<String, i32> = BTreeMap::new();
@@ -510,7 +510,7 @@ impl WorkingSetState {
 
     /// Current tick value (via `TickRead::tick`).
     #[must_use]
-    pub fn tick_value(&self) -> u64 {
+    pub(crate) fn tick_value(&self) -> u64 {
         self.tick
     }
 
@@ -523,7 +523,7 @@ impl WorkingSetState {
     /// Whether this tick input would coalesce (A4 no-op) given current coalescing state.
     /// Search scores are NOT part of coalescing (they affect only assembly, not the tick pipeline).
     #[must_use]
-    pub fn is_coalesced_input(&self, input: &TickInput) -> bool {
+    pub(crate) fn is_coalesced_input(&self, input: &TickInput) -> bool {
         input.events.is_empty()
             && self.last_graph_revision.as_deref()
                 == Some(input.graph_revision.as_str())
@@ -624,7 +624,10 @@ impl WorkingSetState {
     /// Increment tick and re-tier all non-Archive entries.
     /// This is the inherent alias for the advancing tick; the canonical
     /// trait method is `SchedulerTick::tick`.
-    pub fn advance_tick(&mut self, _config: &SchedulerConfig) -> TickReport {
+    pub(crate) fn advance_tick(
+        &mut self,
+        _config: &SchedulerConfig,
+    ) -> TickReport {
         self.tick += 1;
         self.tick_view = TickView(self.tick);
         let mut promoted: Vec<String> = Vec::new();

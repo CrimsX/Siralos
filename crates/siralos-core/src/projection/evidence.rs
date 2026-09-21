@@ -101,7 +101,7 @@ fn is_control(code: u32) -> bool {
 }
 
 /// Strip ANSI CSI sequences and C0/DEL controls (preserving tab, LF, CR).
-pub fn strip_ansi_and_control(text: &str) -> String {
+pub(crate) fn strip_ansi_and_control(text: &str) -> String {
     // Work on chars to preserve Unicode, but detect CSI via byte pattern
     // on the UTF-8 representation which is valid since ESC and '[' are ASCII.
     let mut out = String::with_capacity(text.len());
@@ -155,7 +155,7 @@ pub fn strip_ansi_and_control(text: &str) -> String {
 }
 
 /// Collapse 3+ consecutive equal LF-delimited lines into `line ×N`.
-pub fn collapse_repeated_lines(text: &str) -> String {
+pub(crate) fn collapse_repeated_lines(text: &str) -> String {
     // Use JS semantics: split on "\n" keeping empty trailing parts.
     // Rust `split('\n')` already preserves trailing empties in the slice
     // length, but joining with "\n" must reconstruct them.
@@ -181,7 +181,7 @@ pub fn collapse_repeated_lines(text: &str) -> String {
 }
 
 /// Replace ordered non-empty secrets with the fixed placeholder.
-pub fn redact_secrets(text: &str, secrets: &[String]) -> String {
+pub(crate) fn redact_secrets(text: &str, secrets: &[String]) -> String {
     let mut out = text.to_owned();
     for secret in secrets {
         if secret.is_empty() {
@@ -215,7 +215,7 @@ fn scalar_boundaries(text: &str) -> Vec<usize> {
 
 /// Split LF-delimited lines that exceed `max_line_bytes` UTF-8, respecting
 /// scalar boundaries and the impossible-sub-scalar exception.
-pub fn bound_line_length(text: &str, max_line_bytes: usize) -> String {
+pub(crate) fn bound_line_length(text: &str, max_line_bytes: usize) -> String {
     let mut out_lines: Vec<String> = Vec::new();
     // Split on '\n' preserving empty trailing parts exactly like JS `split("\n")`.
     // `split('\n')` yields N+1 parts for N separators; that's the desired JS behavior.
@@ -264,7 +264,7 @@ pub fn bound_line_length(text: &str, max_line_bytes: usize) -> String {
 
 /// Truncate to `max_bytes` UTF-8 with the exact marker `\\n… [truncated]`,
 /// preserving scalar boundaries and the marker-only fallback.
-pub fn truncate_text(text: &str, max_bytes: usize) -> (String, bool) {
+pub(crate) fn truncate_text(text: &str, max_bytes: usize) -> (String, bool) {
     if text.len() <= max_bytes {
         return (text.to_owned(), false);
     }

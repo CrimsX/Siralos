@@ -103,12 +103,12 @@ pub struct ContextProjection {
 }
 
 /// Serialize one segment as `[Title]\\ncontent`.
-pub fn serialize_segment(segment: &ContextSegment) -> String {
+pub(crate) fn serialize_segment(segment: &ContextSegment) -> String {
     format!("[{}]\n{}", segment.title, segment.content)
 }
 
 /// Serialize a slice of segments joined by `\\n\\n`.
-pub fn serialize_segments(segments: &[ContextSegment]) -> String {
+pub(crate) fn serialize_segments(segments: &[ContextSegment]) -> String {
     segments.iter().map(serialize_segment).collect::<Vec<_>>().join("\n\n")
 }
 

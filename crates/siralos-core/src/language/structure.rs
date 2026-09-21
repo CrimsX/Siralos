@@ -195,7 +195,7 @@ pub struct StructuralDocument {
 
 impl StructuralDocument {
     /// Total declaration count across the whole bounded tree.
-    pub fn declaration_count(&self) -> usize {
+    pub(crate) fn declaration_count(&self) -> usize {
         fn walk(declarations: &[StructuralDeclaration], count: &mut usize) {
             for declaration in declarations {
                 *count += 1;
@@ -208,7 +208,7 @@ impl StructuralDocument {
     }
 
     /// Top-level (depth-1) declarations.
-    pub fn top_level(&self) -> &[StructuralDeclaration] {
+    pub(crate) fn top_level(&self) -> &[StructuralDeclaration] {
         &self.declarations
     }
 }

@@ -161,7 +161,7 @@ impl DocumentationBudget {
 pub const ARCHIVE_DOCUMENTATION_PREFIX: &str = "docs/archive/";
 
 /// Whether a path is archived documentation.
-pub fn is_archived_documentation_path(path: &str) -> bool {
+pub(crate) fn is_archived_documentation_path(path: &str) -> bool {
     path.starts_with(ARCHIVE_DOCUMENTATION_PREFIX)
         || path.starts_with(&format!("./{ARCHIVE_DOCUMENTATION_PREFIX}"))
 }

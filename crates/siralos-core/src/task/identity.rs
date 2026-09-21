@@ -144,7 +144,7 @@ pub fn compute_task_contract_delta(
 /// payload must be an object whose keys are the ten declared plan
 /// sections; callers building it from a typed model keep this function
 /// as the single identity seam.
-pub fn compute_plan_content_digest(
+pub(crate) fn compute_plan_content_digest(
     payload: &CanonicalValue,
 ) -> Result<ArtifactDigest, ArtifactIdentityError> {
     compute_artifact_digest("TaskPlan", TASK_PLAN_IDENTITY_SCHEMA, payload)

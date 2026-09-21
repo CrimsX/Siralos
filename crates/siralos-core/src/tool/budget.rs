@@ -46,7 +46,7 @@ impl RoundBudget {
     }
 
     /// The exact over-budget failure message for this normalized bound.
-    pub fn cap_message(&self) -> String {
+    pub(crate) fn cap_message(&self) -> String {
         format!(
             "Siralos reached the maximum of {} tool rounds; the requested tool round was not executed.",
             self.0

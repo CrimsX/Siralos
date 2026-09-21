@@ -41,7 +41,7 @@ pub struct ProjectInstruction {
 }
 
 /// Deterministic precedence of one source (deeper scopes rank lower).
-pub fn instruction_priority(
+pub(crate) fn instruction_priority(
     source_kind: &str,
     source_path: Option<&str>,
 ) -> i64 {
@@ -165,7 +165,7 @@ pub fn build_instruction(
 }
 
 /// True when `workspace_relative_path` equals the scope or lies beneath it.
-pub fn instruction_applies_to(
+pub(crate) fn instruction_applies_to(
     scope_path: Option<&str>,
     workspace_relative_path: &str,
 ) -> bool {

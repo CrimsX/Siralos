@@ -202,7 +202,7 @@ pub struct CorpusEvidence {
 ///
 /// Returns [`CorpusValidationError`] for malformed corpora or digest
 /// failures.
-pub fn create_corpus_evidence(
+pub(crate) fn create_corpus_evidence(
     corpus: &EvaluationCorpus,
     candidate: &BTreeMap<String, String>,
 ) -> Result<(CorpusEvidence, CorpusScore), CorpusValidationError> {
@@ -421,7 +421,7 @@ pub struct WorkflowEvidence {
 ///
 /// Returns [`CorpusValidationError`] for digest failures or unknown
 /// escalation.
-pub fn create_workflow_evidence(
+pub(crate) fn create_workflow_evidence(
     baseline: &CorpusEvidence,
     baseline_score: &CorpusScore,
     candidate: &CorpusEvidence,
@@ -697,7 +697,7 @@ impl Proposal {
 ///
 /// Returns [`ProposalValidationError`] for malformed proposals or digest
 /// failures.
-pub fn create_proposal_evidence(
+pub(crate) fn create_proposal_evidence(
     proposal: &Proposal,
 ) -> Result<ProposalEvidence, ProposalValidationError> {
     proposal.validate()?;
@@ -920,7 +920,7 @@ impl Release {
 ///
 /// Returns [`CorpusValidationError`] for malformed releases or digest
 /// failures.
-pub fn create_release_evidence(
+pub(crate) fn create_release_evidence(
     release: &Release,
 ) -> Result<ReleaseEvidence, CorpusValidationError> {
     release.validate()?;

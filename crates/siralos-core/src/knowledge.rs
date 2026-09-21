@@ -80,7 +80,7 @@ fn is_valid_subject_key(subject_key: &str) -> bool {
 }
 
 /// Deterministic fact id (`kf_` prefix, 24 hex digits).
-pub fn compute_fact_id(
+pub(crate) fn compute_fact_id(
     subject_key: Option<&str>,
     content: &str,
     revision: u64,
@@ -95,7 +95,7 @@ pub fn compute_fact_id(
 }
 
 /// Whitespace-churn-insensitive comparison form.
-pub fn normalize_fact_content(content: &str) -> String {
+pub(crate) fn normalize_fact_content(content: &str) -> String {
     let mut normalized = String::with_capacity(content.len());
     let mut previous_was_space = false;
     for character in content.replace("\r\n", "\n").chars() {
@@ -155,7 +155,7 @@ const STOPWORDS: [&str; 27] = [
 ];
 
 /// Lowercase keyword tokens with stopwords and single characters removed.
-pub fn tokenize_fact_text(text: &str) -> Vec<String> {
+pub(crate) fn tokenize_fact_text(text: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut current = String::new();
     for character in text.to_lowercase().chars() {
@@ -308,7 +308,9 @@ fn phrase_positions(
 /// classifier: only clear permission/capability/sandbox claims shaped
 /// like instructions are rejected, and knowledge never grants capability
 /// regardless.
-pub fn reject_policy_shaped_content(content: &str) -> Option<&'static str> {
+pub(crate) fn reject_policy_shaped_content(
+    content: &str,
+) -> Option<&'static str> {
     const REASON: &str = "Knowledge that claims permissions, capability grants, or sandbox/approval policy is not accepted; knowledge is factual context and can never grant capability.";
     let lower: Vec<u8> =
         normalize_fact_content(&content.to_lowercase()).into_bytes();
@@ -982,7 +984,7 @@ impl KnowledgeCoordinator {
     }
 
     /// All current active facts sorted by id.
-    pub fn active_facts(&self) -> Vec<Value> {
+    pub(crate) fn active_facts(&self) -> Vec<Value> {
         let mut facts: Vec<Value> = Vec::new();
         for (subject_key, entry) in &self.by_subject {
             let Some(index) = self.current.get(subject_key).copied() else {

@@ -396,7 +396,7 @@ fn step_id_pattern_ok(value: &str) -> bool {
 }
 
 /// Validate and detach step specifications (reference semantics).
-pub fn prepare_step_specs(
+pub(crate) fn prepare_step_specs(
     steps: Vec<TaskStepSpec>,
 ) -> Result<Vec<TaskStepSpec>, StepSpecError> {
     if steps.len() > limits::MAX_TASK_STEPS {
@@ -1451,7 +1451,7 @@ impl TaskHandle<'_> {
     }
 
     /// Record the host's planning-depth routing (deterministic policy).
-    pub fn route_planning(
+    pub(crate) fn route_planning(
         &mut self,
         depth: crate::planning::PlanningDepth,
         reason: &str,
@@ -1469,7 +1469,7 @@ impl TaskHandle<'_> {
     }
 
     /// Record a host-observed plan rejection (invalid candidate, denial).
-    pub fn reject_plan(&mut self, reason: &str) {
+    pub(crate) fn reject_plan(&mut self, reason: &str) {
         if self.record.terminal_reason().is_some() {
             return;
         }

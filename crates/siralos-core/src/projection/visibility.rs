@@ -119,7 +119,7 @@ impl ProjectionMode {
     }
 
     /// Whether this mode requires tool calling.
-    pub fn requires_tool_calling(self) -> bool {
+    pub(crate) fn requires_tool_calling(self) -> bool {
         matches!(
             self,
             Self::Development

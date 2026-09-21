@@ -139,7 +139,7 @@ impl EvidenceError {
 /// Canonical serialized bytes of a source; used for the byte bound.
 /// Key order never affects the total byte length, so the canonical form
 /// matches the reference's plain JSON.stringify length.
-pub fn source_canonical_bytes(source: &EvidenceSource) -> String {
+pub(crate) fn source_canonical_bytes(source: &EvidenceSource) -> String {
     let value = source_to_canonical(source);
     canonicalize(&value)
 }
@@ -302,7 +302,7 @@ fn source_kind_matches(kind: EvidenceKind, source: &EvidenceSource) -> bool {
 
 /// Validate the verification binding: check id and criterion id follow
 /// the binding pattern and the outcome is one of the typed values.
-pub fn validate_verification(
+pub(crate) fn validate_verification(
     verification: &EvidenceVerification,
 ) -> Result<(), EvidenceError> {
     if !binding_id_pattern_ok(&verification.check_id) {

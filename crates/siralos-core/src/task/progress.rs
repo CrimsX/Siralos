@@ -36,7 +36,7 @@ pub struct InternalProgress {
 }
 
 /// Create the initial internal progress state.
-pub fn create_internal_progress() -> InternalProgress {
+pub(crate) fn create_internal_progress() -> InternalProgress {
     InternalProgress {
         useful_observations: 0,
         repeated_actions: 0,
@@ -48,7 +48,7 @@ pub fn create_internal_progress() -> InternalProgress {
 }
 
 /// Snapshot of the internal progress state.
-pub fn progress_snapshot(progress: &InternalProgress) -> ProgressState {
+pub(crate) fn progress_snapshot(progress: &InternalProgress) -> ProgressState {
     ProgressState {
         state: progress.state,
         useful_observations: progress.useful_observations,

@@ -413,25 +413,25 @@ impl ProviderTurnCollector {
     /// emits exactly the text that push accepted -- without having to guess
     /// the event shape (`Raw` events are validated inside the collector).
     #[must_use]
-    pub fn text_delta_count(&self) -> usize {
+    pub(crate) fn text_delta_count(&self) -> usize {
         self.text_deltas.len()
     }
 
     /// The text of the delta at `index`, when it exists.
     #[must_use]
-    pub fn text_delta_at(&self, index: usize) -> Option<&str> {
+    pub(crate) fn text_delta_at(&self, index: usize) -> Option<&str> {
         self.text_deltas.get(index).map(String::as_str)
     }
 
     /// How many REASONING deltas have been accepted so far (S3).
     #[must_use]
-    pub fn reasoning_count(&self) -> usize {
+    pub(crate) fn reasoning_count(&self) -> usize {
         self.reasoning_deltas.len()
     }
 
     /// The reasoning text at `index`, when it exists.
     #[must_use]
-    pub fn reasoning_at(&self, index: usize) -> Option<&str> {
+    pub(crate) fn reasoning_at(&self, index: usize) -> Option<&str> {
         self.reasoning_deltas.get(index).map(String::as_str)
     }
 

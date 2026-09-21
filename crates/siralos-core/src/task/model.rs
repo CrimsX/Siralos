@@ -394,7 +394,7 @@ impl FindingSeverity {
     }
 
     /// Whether this severity blocks completion (critical/high).
-    pub fn is_blocking(self) -> bool {
+    pub(crate) fn is_blocking(self) -> bool {
         matches!(self, FindingSeverity::Critical | FindingSeverity::High)
     }
 }
@@ -443,7 +443,7 @@ impl TaskValidationStatus {
     }
 
     /// Whether this status satisfies the completion gate.
-    pub fn is_acceptable_for_completion(self) -> bool {
+    pub(crate) fn is_acceptable_for_completion(self) -> bool {
         matches!(
             self,
             TaskValidationStatus::Clean | TaskValidationStatus::Warnings

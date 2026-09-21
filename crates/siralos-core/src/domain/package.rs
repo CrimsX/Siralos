@@ -109,7 +109,7 @@ impl DomainAbi {
 
     /// Exact ABI compatibility. Hard-incompatible versions never
     /// match: there is no downgrade, guess, or partial match.
-    pub fn is_compatible_with(&self, other: &Self) -> bool {
+    pub(crate) fn is_compatible_with(&self, other: &Self) -> bool {
         self.0 == other.0
     }
 }

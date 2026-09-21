@@ -135,7 +135,7 @@ pub struct ActivationBinding {
 
 impl ActivationBinding {
     /// Build the binding for the exact request identity.
-    pub fn from_request(request: &ActivationRequest) -> Self {
+    pub(crate) fn from_request(request: &ActivationRequest) -> Self {
         Self {
             package_id: request.package_id.clone(),
             digest: request.digest.clone(),

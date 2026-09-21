@@ -11,7 +11,7 @@ use serde_json::Value;
 
 /// Digest any JSON payload through the domain-separated artifact
 /// primitive (`siralos:<type>:v<version>\0` + canonical JSON).
-pub fn digest_artifact_payload(
+pub(crate) fn digest_artifact_payload(
     artifact_type: &str,
     schema_version: u64,
     payload: &Value,

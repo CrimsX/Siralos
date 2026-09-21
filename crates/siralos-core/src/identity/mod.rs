@@ -79,7 +79,7 @@ pub use staleness::{
 pub const TASK_CONTRACT_IDENTITY_SCHEMA: u64 = 1;
 
 /// Hex SHA-256 digest of a domain-separated artifact payload.
-pub fn artifact_digest_hex(
+pub(crate) fn artifact_digest_hex(
     artifact_type: &str,
     schema_version: u64,
     payload: &str,

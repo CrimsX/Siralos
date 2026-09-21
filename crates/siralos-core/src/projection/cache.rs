@@ -29,7 +29,7 @@ impl<V: Clone> WatermarkCache<V> {
     }
 
     /// Create with explicit watermarks (0 <= low < high, high >= 1).
-    pub fn with_watermarks(high: usize, low: usize) -> Self {
+    pub(crate) fn with_watermarks(high: usize, low: usize) -> Self {
         assert!(
             high >= 1 && low < high,
             "invalid watermarks: need 0 <= low < high and high >=1"
@@ -124,7 +124,7 @@ impl<V: Clone> RevisionBoundCache<V> {
     }
 
     /// Ensure the bound revision is `revision`, clearing if it changed.
-    pub fn ensure_revision(&mut self, revision: Option<u64>) {
+    pub(crate) fn ensure_revision(&mut self, revision: Option<u64>) {
         if revision != self.bound_revision {
             self.inner.clear();
             self.bound_revision = revision;

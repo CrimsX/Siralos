@@ -90,7 +90,7 @@ pub enum ClockPolicy {
 impl ClockPolicy {
     /// Canonical JSON form matching the oracle's `{mode, fixedMs}`.
     #[must_use]
-    pub fn to_json(&self) -> Value {
+    pub(crate) fn to_json(&self) -> Value {
         match self {
             Self::System => json!({"mode": "system", "fixedMs": null}),
             Self::Fixed(ms) => json!({"mode": "fixed", "fixedMs": ms}),
@@ -113,7 +113,7 @@ pub enum RngPolicy {
 impl RngPolicy {
     /// Canonical JSON form matching the oracle's `{mode, seed}`.
     #[must_use]
-    pub fn to_json(&self) -> Value {
+    pub(crate) fn to_json(&self) -> Value {
         match self {
             Self::None => json!({"mode": "none", "seed": null}),
             Self::Seeded(seed) => json!({"mode": "seeded", "seed": seed}),

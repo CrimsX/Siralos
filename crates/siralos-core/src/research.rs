@@ -101,7 +101,9 @@ fn clamp(
 
 /// Normalize bounds exactly like `normalizeResearchBounds`.
 #[must_use]
-pub fn normalize_research_bounds(input: ResearchBounds) -> ResearchBounds {
+pub(crate) fn normalize_research_bounds(
+    input: ResearchBounds,
+) -> ResearchBounds {
     let timeout_ms = clamp(
         Some(input.timeout_ms as usize),
         RESEARCH_LIMITS.timeout_ms as usize,
@@ -468,7 +470,7 @@ pub enum ResearchOutcome {
 
 /// Structural validation of a source reference (id/label bounds).
 #[must_use]
-pub fn is_valid_research_source_ref(
+pub(crate) fn is_valid_research_source_ref(
     kind: &str,
     id: &str,
     label: &str,
@@ -526,7 +528,7 @@ fn is_valid_version(version: &str) -> bool {
 
 /// Validate an untrusted research request against the bounded model. The
 /// service runs this before any source port is invoked.
-pub fn validate_research_request(
+pub(crate) fn validate_research_request(
     input: &serde_json::Value,
 ) -> Result<ResearchRequest, String> {
     let record =
@@ -677,7 +679,7 @@ pub struct ResearchTaskBinding {
 
 #[must_use]
 /// is_valid_research_task_binding.
-pub fn is_valid_research_task_binding(
+pub(crate) fn is_valid_research_task_binding(
     binding: Option<&ResearchTaskBinding>,
 ) -> bool {
     const MAX_SAFE_INTEGER: u64 = (1u64 << 53) - 1;
@@ -707,7 +709,7 @@ fn same_research_task_binding(
 
 /// Deterministic request id bound to the exact request + task + sequence.
 #[must_use]
-pub fn create_research_request_id(
+pub(crate) fn create_research_request_id(
     request: &ResearchRequest,
     task: &ResearchTaskBinding,
     sequence: u64,
@@ -1208,7 +1210,7 @@ pub fn format_research_evidence_view(
 /// Minimal UTC ISO-8601 rendering of epoch milliseconds
 /// (`YYYY-MM-DDTHH:MM:SS.mmmZ`), matching `new Date(ms).toISOString()`.
 #[must_use]
-pub fn iso8601_from_epoch_ms(epoch_ms: i64) -> String {
+pub(crate) fn iso8601_from_epoch_ms(epoch_ms: i64) -> String {
     let days = epoch_ms.div_euclid(86_400_000);
     let ms_of_day = epoch_ms.rem_euclid(86_400_000);
     let (year, month, day) = civil_from_days(days);

@@ -621,7 +621,7 @@ fn find_long_base64_run(bytes: &[u8], from: usize) -> Option<Span> {
 
 /// Conservative sanitizer for doctor text: redacts absolute paths and
 /// credential-shaped tokens. Deterministic and bounded.
-pub fn sanitize_safe_doctor_text(text: &str) -> String {
+pub(crate) fn sanitize_safe_doctor_text(text: &str) -> String {
     let sanitized = apply_scanner(text, "<path>", drive_path_matcher);
     let sanitized = apply_scanner(&sanitized, "<path>", common_root_matcher);
     let sanitized = apply_scanner(&sanitized, "<path>", multi_segment_matcher);

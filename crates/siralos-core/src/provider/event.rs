@@ -56,7 +56,7 @@ impl ToolCallInput {
     }
 
     /// The source-ordered canonical JSON text, when the Host supplied it.
-    pub fn ordered_json(&self) -> Option<&str> {
+    pub(crate) fn ordered_json(&self) -> Option<&str> {
         self.ordered_json.as_deref()
     }
 
