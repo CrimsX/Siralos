@@ -670,6 +670,20 @@ later session needs must appear here or in a commit.
   so the second site's defect was never measurable, and the numbers recorded in
   `docs/development/performance-baseline.md` belong to the first site alone.
 
+- **59 core functions were public to no one.** `RUST_STYLE` asks for the narrowest
+  visibility that works, and a `pub fn` in a `pub mod` is nameable by path even when
+  nothing names it. Every `pub fn` in `siralos-core` was checked against the
+  identifiers that appear in the adapters, the CLI, the harness, `fuzz/` and the
+  external plugin: 186 of them are named by no consumer. The compiler then settled
+  what the names could not. 87 are re-exported with `pub use`, so they are the crate's
+  deliberate surface and stay `pub`. 40 are unused by every library build and also
+  stay `pub`, because withdrawing public API is the owner's decision and not a
+  cleanup — 15 of those are named exactly once in the entire repository, at their own
+  declaration, so nothing calls them at all. The remaining 59 are now `pub(crate)`.
+  Verified by compiling every consumer — the workspace, `harness/`, and the external
+  plugin with `--all-features` — with clippy across all targets reporting no
+  never-used item, and differential parity holding at 352/352.
+
 ### Remaining
 
 1. **W5.2 — `/cost`.** Reconciles to the accounting inputs on a fixture; the
