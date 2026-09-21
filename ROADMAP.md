@@ -793,6 +793,17 @@ later session needs must appear here or in a commit.
 
 ### Owner decisions pending
 
+- **The two visibility findings above are decisions, not history.**
+  [Settled by decision](#settled-by-decision) records the sweep, so the 40 core functions
+  no consumer names and the 20 dead members inside 17 public types are written up there —
+  but what both need is a decision: delete them, or keep them as intended surface. This is
+  the list a later session reads, so they are named here too.
+- **A regression budget for the measured workloads.**
+  `docs/development/performance-baseline.md` defines budgets for version parsing only, and
+  says enforceable gates need a stable same-machine history that does not exist yet. The
+  two measured optimizations — the secret-redaction byte scan and the diagnostic sort —
+  have before/after columns and no budget, so a regression in either would not be caught by
+  anything today.
 - **The hardlink-target refusal in `atomic.rs`.** Two options were weighed: refuse a
   target with more than one hard link (Unix-only, and disclosed as a behaviour
   change), or leave replacement as it is. Not implemented; roughly ten lines plus a
@@ -868,3 +879,11 @@ adversarial supersession lists refused with their named codes, the reachability
 ratchet holding over 70 of 177 product modules, and clippy, tests, and every
 documentation gate clean. CI remains `unknown` — see the retraction at the top of
 this file — and the release workflow has never executed.
+
+One further observation belongs here rather than in a session's memory. A differential run
+failed twice for environmental reasons rather than a parity deviation —
+`candidate TIMED_OUT for godot-runtime-launch.cancelled`, then `Windows Job runner exited
+with exit code 1073807364 before proving its managed range empty` — and the same code passed
+before and after; the only intervening change was to this file. Decision 17 already records
+a sibling spawn-timeout flake in the same machinery. Nothing corroborates or contradicts it
+yet, because no workflow has ever run.
