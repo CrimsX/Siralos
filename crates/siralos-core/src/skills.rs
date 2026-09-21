@@ -15,7 +15,7 @@ use crate::identity::{CanonicalValue, compute_artifact_digest};
 /// Maximum number of skills in one catalog.
 pub const MAX_SKILL_CATALOG: usize = 32;
 /// Maximum skill name length in UTF-8 bytes.
-pub const MAX_SKILL_NAME_BYTES: usize = 64;
+pub(crate) const MAX_SKILL_NAME_BYTES: usize = 64;
 /// Maximum skill content length in UTF-8 bytes.
 pub const MAX_SKILL_CONTENT_BYTES: usize = 64 * 1024;
 

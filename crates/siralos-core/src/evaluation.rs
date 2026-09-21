@@ -19,7 +19,7 @@ use crate::evolution::{CorpusValidationError, EvaluationCorpus};
 use crate::identity::{CanonicalValue, compute_artifact_digest};
 
 /// Maximum number of runs one comparison accepts.
-pub const MAX_COMPARISON_RUNS: usize = 16;
+pub(crate) const MAX_COMPARISON_RUNS: usize = 16;
 /// Maximum recorded failure summaries per run (the count is recorded in full).
 pub const MAX_RUN_FAILURES: usize = 8;
 /// Maximum length of one recorded failure summary in bytes.

@@ -24,10 +24,10 @@ pub const MAX_RUNTIME_EVIDENCE_STDERR_BYTES: usize = 1024 * 1024;
 pub const MAX_RUNTIME_EVIDENCE_TOTAL_BYTES: usize = 2 * 1024 * 1024;
 
 /// Maximum run-id length in bytes.
-pub const MAX_EVIDENCE_RUN_ID_BYTES: usize = 128;
+pub(crate) const MAX_EVIDENCE_RUN_ID_BYTES: usize = 128;
 
 /// Maximum operation-id length in bytes.
-pub const MAX_EVIDENCE_OPERATION_ID_BYTES: usize = 128;
+pub(crate) const MAX_EVIDENCE_OPERATION_ID_BYTES: usize = 128;
 
 /// Validated inputs for [`create_runtime_evidence`].
 #[derive(Debug, Clone, PartialEq, Eq)]

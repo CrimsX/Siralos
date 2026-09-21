@@ -23,41 +23,41 @@ pub struct ExecutorBriefLimits;
 
 impl ExecutorBriefLimits {
     /// Maximum request bytes.
-    pub const MAX_REQUEST_BYTES: usize = 1024;
+    pub(crate) const MAX_REQUEST_BYTES: usize = 1024;
     /// Maximum deliverables.
     pub const MAX_DELIVERABLES: usize = 8;
     /// Maximum deliverable bytes.
-    pub const MAX_DELIVERABLE_BYTES: usize = 512;
+    pub(crate) const MAX_DELIVERABLE_BYTES: usize = 512;
     /// Maximum touchpoints per list.
-    pub const MAX_TOUCHPOINTS: usize = 12;
+    pub(crate) const MAX_TOUCHPOINTS: usize = 12;
     /// Maximum invariants.
-    pub const MAX_INVARIANTS: usize = 12;
+    pub(crate) const MAX_INVARIANTS: usize = 12;
     /// Maximum invariant bytes.
-    pub const MAX_INVARIANT_BYTES: usize = 512;
+    pub(crate) const MAX_INVARIANT_BYTES: usize = 512;
     /// Maximum non-goals.
-    pub const MAX_NON_GOALS: usize = 12;
+    pub(crate) const MAX_NON_GOALS: usize = 12;
     /// Maximum acceptance ids.
-    pub const MAX_ACCEPTANCE_IDS: usize = 32;
+    pub(crate) const MAX_ACCEPTANCE_IDS: usize = 32;
     /// Maximum test requirements.
-    pub const MAX_TEST_REQUIREMENTS: usize = 8;
+    pub(crate) const MAX_TEST_REQUIREMENTS: usize = 8;
     /// Maximum architecture references.
-    pub const MAX_ARCHITECTURE_REFERENCES: usize = 4;
+    pub(crate) const MAX_ARCHITECTURE_REFERENCES: usize = 4;
     /// Maximum capability limits.
-    pub const MAX_CAPABILITY_LIMITS: usize = 8;
+    pub(crate) const MAX_CAPABILITY_LIMITS: usize = 8;
     /// Maximum instruction sources.
-    pub const MAX_INSTRUCTION_SOURCES: usize = 8;
+    pub(crate) const MAX_INSTRUCTION_SOURCES: usize = 8;
     /// Maximum rendered bytes.
     pub const MAX_RENDERED_BYTES: usize = 8 * 1024;
     /// Maximum documentation sources.
-    pub const MAX_DOCUMENTATION_SOURCES: usize = 12;
+    pub(crate) const MAX_DOCUMENTATION_SOURCES: usize = 12;
     /// Maximum working-set files.
-    pub const MAX_WORKING_SET_FILES: usize = 8;
+    pub(crate) const MAX_WORKING_SET_FILES: usize = 8;
     /// Maximum workspace verified files.
-    pub const MAX_WORKSPACE_VERIFIED_FILES: usize = 12;
+    pub(crate) const MAX_WORKSPACE_VERIFIED_FILES: usize = 12;
     /// Maximum scope warnings.
-    pub const MAX_SCOPE_WARNINGS: usize = 8;
+    pub(crate) const MAX_SCOPE_WARNINGS: usize = 8;
     /// Maximum new-file rationales.
-    pub const MAX_NEW_FILE_RATIONALES: usize = 8;
+    pub(crate) const MAX_NEW_FILE_RATIONALES: usize = 8;
 }
 
 /// Compiled executor brief.

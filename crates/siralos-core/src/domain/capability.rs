@@ -11,7 +11,7 @@ use crate::domain::failure::DomainFailure;
 use std::collections::BTreeSet;
 
 /// Maximum number of capability ids in one request or authority set.
-pub const MAX_CAPABILITIES: usize = 32;
+pub(crate) const MAX_CAPABILITIES: usize = 32;
 
 /// Maximum length of one capability identifier in bytes.
 pub const MAX_CAPABILITY_ID_BYTES: usize = 64;

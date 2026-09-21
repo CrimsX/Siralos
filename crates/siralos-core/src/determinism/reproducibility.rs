@@ -225,7 +225,7 @@ pub fn create_reproducibility_manifest(
 }
 
 /// Declared reproducibility sections in oracle order.
-pub const REPRODUCIBILITY_SECTIONS: [&str; 12] = [
+pub(crate) const REPRODUCIBILITY_SECTIONS: [&str; 12] = [
     "executionInput",
     "environment",
     "taskContract",

@@ -10,7 +10,7 @@ use super::{CanonicalValue, canonicalize, sha256_hex};
 use std::collections::BTreeMap;
 
 /// The only digest algorithm in the single-digest architecture.
-pub const ARTIFACT_DIGEST_ALGORITHM: &str = "sha256";
+pub(crate) const ARTIFACT_DIGEST_ALGORITHM: &str = "sha256";
 
 /// Validation failure at the artifact-identity boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]

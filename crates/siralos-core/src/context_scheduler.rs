@@ -104,17 +104,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Deref;
 
 /// Maximum number of scheduler nodes.
-pub const MAX_SCHEDULER_NODES: usize = 512;
+pub(crate) const MAX_SCHEDULER_NODES: usize = 512;
 /// Default hot threshold in relevance units (human-readable).
 pub const DEFAULT_HOT_THRESHOLD: u8 = 70;
 /// Default warm threshold in relevance units (human-readable).
 pub const DEFAULT_WARM_THRESHOLD: u8 = 30;
 /// Default working-set budget in tokens.
-pub const DEFAULT_BUDGET_TOKENS: usize = 4096;
+pub(crate) const DEFAULT_BUDGET_TOKENS: usize = 4096;
 /// Pinned HOT quota (decision 89 A3).
-pub const PINNED_HOT_BUDGET_TOKENS: usize = 1024;
+pub(crate) const PINNED_HOT_BUDGET_TOKENS: usize = 1024;
 /// Maximum canonical events per TickInput (A1).
-pub const MAX_TICK_EVENTS: usize = 64;
+pub(crate) const MAX_TICK_EVENTS: usize = 64;
 
 /// Score at or above which an entry is `Hot`.
 const HOT_SCORE_THRESHOLD: u64 = 280;
@@ -268,7 +268,7 @@ pub(crate) fn canonicalize_events_with_dropped(
 }
 
 /// Maximum canonical search-score entries per TickInput (decision 93).
-pub const MAX_SEARCH_SCORES: usize = 64;
+pub(crate) const MAX_SEARCH_SCORES: usize = 64;
 
 /// Host-observed search score for retention ordering (decision 92 score, 93 retention).
 /// Score is the integer decision-92 search score per hit; absent nodes are treated as 0.

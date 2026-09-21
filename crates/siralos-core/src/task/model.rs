@@ -845,23 +845,23 @@ pub struct TaskState {
 /// limits, UTF-8 byte lengths).
 pub mod limits {
     /// Maximum evidence source canonical JSON bytes.
-    pub const MAX_EVIDENCE_SOURCE_BYTES: usize = 4096;
+    pub(crate) const MAX_EVIDENCE_SOURCE_BYTES: usize = 4096;
     /// Maximum evidence records per task.
-    pub const MAX_TASK_EVIDENCE_RECORDS: usize = 256;
+    pub(crate) const MAX_TASK_EVIDENCE_RECORDS: usize = 256;
     /// Maximum step count per task.
-    pub const MAX_TASK_STEPS: usize = 128;
+    pub(crate) const MAX_TASK_STEPS: usize = 128;
     /// Maximum findings per task.
-    pub const MAX_TASK_FINDINGS: usize = 128;
+    pub(crate) const MAX_TASK_FINDINGS: usize = 128;
     /// Maximum step description UTF-8 bytes.
-    pub const MAX_TASK_STEP_DESCRIPTION_BYTES: usize = 4096;
+    pub(crate) const MAX_TASK_STEP_DESCRIPTION_BYTES: usize = 4096;
     /// Maximum finding field UTF-8 bytes.
-    pub const MAX_TASK_FINDING_FIELD_BYTES: usize = 4096;
+    pub(crate) const MAX_TASK_FINDING_FIELD_BYTES: usize = 4096;
     /// Maximum evidence id UTF-8 bytes.
-    pub const MAX_TASK_EVIDENCE_ID_BYTES: usize = 256;
+    pub(crate) const MAX_TASK_EVIDENCE_ID_BYTES: usize = 256;
     /// Progress observation window size.
-    pub const PROGRESS_WINDOW_SIZE: usize = 8;
+    pub(crate) const PROGRESS_WINDOW_SIZE: usize = 8;
     /// Repetitions before the progress state degrades.
-    pub const PROGRESS_DEGRADED_REPETITIONS: u64 = 3;
+    pub(crate) const PROGRESS_DEGRADED_REPETITIONS: u64 = 3;
     /// Repetitions before the progress state stalls.
-    pub const PROGRESS_STALLED_REPETITIONS: u64 = 5;
+    pub(crate) const PROGRESS_STALLED_REPETITIONS: u64 = 5;
 }

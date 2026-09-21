@@ -15,11 +15,11 @@ use crate::identity::CanonicalValue;
 use crate::identity::compute_artifact_digest;
 
 /// Maximum number of plugin identities in one lock.
-pub const MAX_LOCK_PLUGIN_IDENTITIES: usize = 16;
+pub(crate) const MAX_LOCK_PLUGIN_IDENTITIES: usize = 16;
 /// Maximum lock identity id length in UTF-8 bytes.
-pub const MAX_LOCK_ID_BYTES: usize = 64;
+pub(crate) const MAX_LOCK_ID_BYTES: usize = 64;
 /// Maximum lock identity path length in UTF-8 bytes.
-pub const MAX_LOCK_PATH_BYTES: usize = 256;
+pub(crate) const MAX_LOCK_PATH_BYTES: usize = 256;
 
 fn is_hex64(digest: &str) -> bool {
     digest.len() == 64

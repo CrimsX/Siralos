@@ -8,9 +8,9 @@
 use std::collections::{HashMap, VecDeque};
 
 /// High watermark.
-pub const HIGH_WATERMARK: usize = 64;
+pub(crate) const HIGH_WATERMARK: usize = 64;
 /// Low watermark.
-pub const LOW_WATERMARK: usize = 32;
+pub(crate) const LOW_WATERMARK: usize = 32;
 
 /// One disposable cache with insertion-order FIFO eviction.
 #[derive(Debug, Clone)]

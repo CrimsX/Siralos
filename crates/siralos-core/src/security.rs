@@ -13,7 +13,7 @@ use crate::tool::permission::PermissionRule;
 use crate::workspace::path::is_protected_behavioral_config_path;
 
 /// Every capability id, in canonical reference order.
-pub const CAPABILITY_IDS: [&str; 14] = [
+pub(crate) const CAPABILITY_IDS: [&str; 14] = [
     "workspace.read",
     "workspace.write",
     "git.inspect",

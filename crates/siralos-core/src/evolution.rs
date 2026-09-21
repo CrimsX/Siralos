@@ -19,15 +19,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::identity::{CanonicalValue, compute_artifact_digest};
 
 /// Maximum corpus id length in UTF-8 bytes.
-pub const MAX_CORPUS_ID_BYTES: usize = 64;
+pub(crate) const MAX_CORPUS_ID_BYTES: usize = 64;
 /// Maximum number of cases in one corpus.
-pub const MAX_CORPUS_CASES: usize = 64;
+pub(crate) const MAX_CORPUS_CASES: usize = 64;
 /// Maximum case id length in UTF-8 bytes.
-pub const MAX_CASE_ID_BYTES: usize = 64;
+pub(crate) const MAX_CASE_ID_BYTES: usize = 64;
 /// Maximum prompt length in UTF-8 bytes.
-pub const MAX_PROMPT_BYTES: usize = 1024;
+pub(crate) const MAX_PROMPT_BYTES: usize = 1024;
 /// Maximum expected output length in UTF-8 bytes.
-pub const MAX_EXPECTED_BYTES: usize = 1024;
+pub(crate) const MAX_EXPECTED_BYTES: usize = 1024;
 
 /// One evaluation case: the model prompt and the expected output that
 /// defines the deterministic baseline for scoring.
@@ -570,9 +570,9 @@ pub fn evaluate_workflow(
 }
 
 /// Maximum proposal id length in UTF-8 bytes.
-pub const MAX_PROPOSAL_ID_BYTES: usize = 64;
+pub(crate) const MAX_PROPOSAL_ID_BYTES: usize = 64;
 /// Maximum proposal description length in UTF-8 bytes.
-pub const MAX_PROPOSAL_DESCRIPTION_BYTES: usize = 512;
+pub(crate) const MAX_PROPOSAL_DESCRIPTION_BYTES: usize = 512;
 
 /// A typed proposal for an evolve improvement (Stage 6.3, decision 58 C2):
 /// `Skill` and `Plugin` proposals carry declarative guidance or plugin
@@ -790,9 +790,9 @@ pub fn evaluate_proposal(proposal: Option<Proposal>) -> ProposalEvaluation {
 }
 
 /// Maximum release id length in UTF-8 bytes.
-pub const MAX_RELEASE_ID_BYTES: usize = 64;
+pub(crate) const MAX_RELEASE_ID_BYTES: usize = 64;
 /// Maximum version string length in UTF-8 bytes.
-pub const MAX_VERSION_BYTES: usize = 32;
+pub(crate) const MAX_VERSION_BYTES: usize = 32;
 
 /// Compatibility level for a release (Stage 6.4).
 #[derive(Debug, Clone, PartialEq, Eq)]

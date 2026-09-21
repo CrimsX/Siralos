@@ -10,15 +10,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::{Value, json};
 
 /// Maximum number of nodes in a single graph.
-pub const MAX_NODES: usize = 512;
+pub(crate) const MAX_NODES: usize = 512;
 /// Maximum number of edges in a single graph.
-pub const MAX_EDGES: usize = 4096;
+pub(crate) const MAX_EDGES: usize = 4096;
 /// Maximum byte length of a node id.
 pub const MAX_ID_BYTES: usize = 256;
 /// Maximum byte length of a node summary.
-pub const MAX_SUMMARY_BYTES: usize = 2048;
+pub(crate) const MAX_SUMMARY_BYTES: usize = 2048;
 /// Maximum bindings per node.
-pub const MAX_SOURCE_BINDINGS: usize = 64;
+pub(crate) const MAX_SOURCE_BINDINGS: usize = 64;
 
 /// Kind of a context node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

@@ -26,17 +26,17 @@ impl ExecutionContractLimits {
     /// Maximum id bytes.
     pub const MAX_ID_BYTES: usize = 64;
     /// Maximum rules per group.
-    pub const MAX_RULES_PER_GROUP: usize = 24;
+    pub(crate) const MAX_RULES_PER_GROUP: usize = 24;
     /// Maximum rule-id bytes.
     pub const MAX_RULE_ID_BYTES: usize = 64;
     /// Maximum requirement bytes.
-    pub const MAX_REQUIREMENT_BYTES: usize = 512;
+    pub(crate) const MAX_REQUIREMENT_BYTES: usize = 512;
     /// Maximum enforced-by bytes.
-    pub const MAX_ENFORCED_BY_BYTES: usize = 256;
+    pub(crate) const MAX_ENFORCED_BY_BYTES: usize = 256;
     /// Maximum reporting requirements.
-    pub const MAX_REPORTING_REQUIREMENTS: usize = 12;
+    pub(crate) const MAX_REPORTING_REQUIREMENTS: usize = 12;
     /// Maximum reporting-requirement bytes.
-    pub const MAX_REPORTING_REQUIREMENT_BYTES: usize = 512;
+    pub(crate) const MAX_REPORTING_REQUIREMENT_BYTES: usize = 512;
 }
 
 /// Execution rule kind (also the rule group).

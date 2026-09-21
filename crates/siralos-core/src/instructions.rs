@@ -11,15 +11,15 @@ use serde_json::Value;
 use serde_json::json;
 
 /// Precedence slots; smaller is more authoritative.
-pub const INSTRUCTION_PRECEDENCE_MANAGED: i64 = 10;
+pub(crate) const INSTRUCTION_PRECEDENCE_MANAGED: i64 = 10;
 /// Reference-frozen constant.
-pub const INSTRUCTION_PRECEDENCE_USER: i64 = 20;
+pub(crate) const INSTRUCTION_PRECEDENCE_USER: i64 = 20;
 /// Reference-frozen constant.
-pub const INSTRUCTION_PRECEDENCE_TASK: i64 = 30;
+pub(crate) const INSTRUCTION_PRECEDENCE_TASK: i64 = 30;
 /// Reference-frozen constant.
-pub const INSTRUCTION_PRECEDENCE_PROJECT_ROOT: i64 = 30;
+pub(crate) const INSTRUCTION_PRECEDENCE_PROJECT_ROOT: i64 = 30;
 /// Reference-frozen constant.
-pub const INSTRUCTION_PRECEDENCE_PROJECT_DIRECTORY: i64 = 40;
+pub(crate) const INSTRUCTION_PRECEDENCE_PROJECT_DIRECTORY: i64 = 40;
 
 /// One file-backed or reserved-source instruction.
 #[derive(Debug, Clone)]

@@ -15,21 +15,21 @@ use crate::identity::{canonicalize_json, sha256_hex_str};
 use serde_json::json;
 
 /// The `session` catalog group.
-pub const COMMAND_CATALOG_GROUP_SESSION: &str = "session";
+pub(crate) const COMMAND_CATALOG_GROUP_SESSION: &str = "session";
 /// The `inspection` catalog group.
-pub const COMMAND_CATALOG_GROUP_INSPECTION: &str = "inspection";
+pub(crate) const COMMAND_CATALOG_GROUP_INSPECTION: &str = "inspection";
 /// The `workspace` catalog group.
-pub const COMMAND_CATALOG_GROUP_WORKSPACE: &str = "workspace";
+pub(crate) const COMMAND_CATALOG_GROUP_WORKSPACE: &str = "workspace";
 /// The `workflow` catalog group.
-pub const COMMAND_CATALOG_GROUP_WORKFLOW: &str = "workflow";
+pub(crate) const COMMAND_CATALOG_GROUP_WORKFLOW: &str = "workflow";
 /// The `godot` catalog group.
-pub const COMMAND_CATALOG_GROUP_GODOT: &str = "godot";
+pub(crate) const COMMAND_CATALOG_GROUP_GODOT: &str = "godot";
 /// The `knowledge` catalog group.
-pub const COMMAND_CATALOG_GROUP_KNOWLEDGE: &str = "knowledge";
+pub(crate) const COMMAND_CATALOG_GROUP_KNOWLEDGE: &str = "knowledge";
 /// The `domains` catalog group.
-pub const COMMAND_CATALOG_GROUP_DOMAINS: &str = "domains";
+pub(crate) const COMMAND_CATALOG_GROUP_DOMAINS: &str = "domains";
 /// The `doctor` catalog group.
-pub const COMMAND_CATALOG_GROUP_DOCTOR: &str = "doctor";
+pub(crate) const COMMAND_CATALOG_GROUP_DOCTOR: &str = "doctor";
 
 /// One catalogued command: id, human description, and group.
 #[derive(Debug, Clone, Copy)]

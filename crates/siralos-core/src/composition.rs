@@ -40,11 +40,11 @@ pub const MAX_PROFILE_NAME_BYTES: usize = 64;
 /// Maximum number of permission-overlay entries in one profile.
 pub const MAX_PROFILE_OVERLAY_ENTRIES: usize = 16;
 /// Maximum number of plugin ids in one profile selection.
-pub const MAX_PROFILE_PLUGIN_ENTRIES: usize = 16;
+pub(crate) const MAX_PROFILE_PLUGIN_ENTRIES: usize = 16;
 /// Maximum profile plugin id length in UTF-8 bytes.
-pub const MAX_PROFILE_PLUGIN_ID_BYTES: usize = 64;
+pub(crate) const MAX_PROFILE_PLUGIN_ID_BYTES: usize = 64;
 /// Maximum provider id length in UTF-8 bytes.
-pub const MAX_PROFILE_PROVIDER_BYTES: usize = 64;
+pub(crate) const MAX_PROFILE_PROVIDER_BYTES: usize = 64;
 /// Maximum model id length in UTF-8 bytes.
 pub const MAX_PROFILE_MODEL_BYTES: usize = 256;
 /// Maximum credential length in UTF-8 bytes for the `env:` and bare

@@ -18,10 +18,10 @@ pub struct ContextCapacity {
 }
 
 /// Default working maximum: 32,768 estimated tokens.
-pub const DEFAULT_WORKING_MAXIMUM: i64 = 32_768;
+pub(crate) const DEFAULT_WORKING_MAXIMUM: i64 = 32_768;
 
 /// Default max output tokens: 4,096.
-pub const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 4_096;
+pub(crate) const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 4_096;
 
 impl Default for ContextCapacity {
     fn default() -> Self {

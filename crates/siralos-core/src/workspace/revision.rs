@@ -16,10 +16,10 @@ use crate::identity::{CanonicalValue, canonicalize, sha256_hex};
 use std::collections::BTreeMap;
 
 /// Opaque revision handle prefix (`rev_`).
-pub const WORKSPACE_REVISION_HANDLE_PREFIX: &str = "rev_";
+pub(crate) const WORKSPACE_REVISION_HANDLE_PREFIX: &str = "rev_";
 
 /// Default registry entry limit (reference default).
-pub const DEFAULT_REVISION_REGISTRY_LIMIT: usize = 1024;
+pub(crate) const DEFAULT_REVISION_REGISTRY_LIMIT: usize = 1024;
 
 /// Read mode recorded by an observed read (protocol compatibility;
 /// structural/summary modes are generic language surfaces).

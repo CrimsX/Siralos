@@ -19,21 +19,21 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// Opaque reference-id prefix: `ref_` + 24 hex chars derived from the alias.
-pub const REFERENCE_ID_PREFIX: &str = "ref_";
+pub(crate) const REFERENCE_ID_PREFIX: &str = "ref_";
 
 /// MUTABLE_REF_REFUSAL.
-pub const MUTABLE_REF_REFUSAL: &str =
+pub(crate) const MUTABLE_REF_REFUSAL: &str =
     "mutable repository ref requires an explicit pinned commit/tag";
 /// WORKSPACE_CONTAINMENT_REFUSAL.
-pub const WORKSPACE_CONTAINMENT_REFUSAL: &str =
+pub(crate) const WORKSPACE_CONTAINMENT_REFUSAL: &str =
     "reference root must be outside the workspace namespace";
 /// Exact reference-failure reason.
-pub const DUPLICATE_ALIAS_REASON: &str = "duplicate alias";
+pub(crate) const DUPLICATE_ALIAS_REASON: &str = "duplicate alias";
 /// Exact reference-failure reason.
-pub const INVALID_ALIAS_REASON: &str = "invalid alias";
+pub(crate) const INVALID_ALIAS_REASON: &str = "invalid alias";
 
 /// Bounded limits mirrored from `REFERENCE_LIMITS`.
-pub const REFERENCE_LIMITS: ReferenceLimits = ReferenceLimits {
+pub(crate) const REFERENCE_LIMITS: ReferenceLimits = ReferenceLimits {
     max_references: 16,
     max_alias_length: 64,
     max_description_bytes: 512,
@@ -1399,7 +1399,7 @@ pub fn format_reference_evidence_line(view: &ReferenceEvidenceView) -> String {
 }
 
 /// Default bound for the two-line reference evidence view.
-pub const DEFAULT_REFERENCE_VIEW_MAX_BYTES: usize = 1024;
+pub(crate) const DEFAULT_REFERENCE_VIEW_MAX_BYTES: usize = 1024;
 
 /// Two-line bounded rendering:
 /// `@reference/<alias> @ <anchor> <path> (<operation>[, mode])\nEvidence: <id>`.

@@ -171,15 +171,15 @@ pub struct WorkspaceScopeLimits;
 
 impl WorkspaceScopeLimits {
     /// Maximum verified files.
-    pub const MAX_VERIFIED_FILES: usize = 64;
+    pub(crate) const MAX_VERIFIED_FILES: usize = 64;
     /// Maximum candidate files.
-    pub const MAX_CANDIDATE_FILES: usize = 64;
+    pub(crate) const MAX_CANDIDATE_FILES: usize = 64;
     /// Maximum create roots.
-    pub const MAX_CREATE_ROOTS: usize = 8;
+    pub(crate) const MAX_CREATE_ROOTS: usize = 8;
     /// Maximum excluded paths.
-    pub const MAX_EXCLUDED_PATHS: usize = 32;
+    pub(crate) const MAX_EXCLUDED_PATHS: usize = 32;
     /// Maximum promotions.
-    pub const MAX_PROMOTIONS: usize = 128;
+    pub(crate) const MAX_PROMOTIONS: usize = 128;
     /// Maximum path bytes.
     pub const MAX_PATH_BYTES: usize = 1024;
     /// Maximum evidence bytes.
@@ -275,9 +275,9 @@ pub struct ActiveWorkingSetLimits;
 
 impl ActiveWorkingSetLimits {
     /// Maximum files.
-    pub const MAX_FILES: usize = 8;
+    pub(crate) const MAX_FILES: usize = 8;
     /// Maximum step-id bytes.
-    pub const MAX_STEP_ID_BYTES: usize = 128;
+    pub(crate) const MAX_STEP_ID_BYTES: usize = 128;
 }
 
 const REVISION_HANDLE_PREFIX: &str = "rev_";

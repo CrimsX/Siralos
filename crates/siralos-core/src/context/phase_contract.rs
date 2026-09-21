@@ -268,7 +268,7 @@ pub struct PhaseAuthorityProfile {
 pub type PhaseContractId = &'static str;
 
 /// All eleven registry contract ids, in oracle declaration order.
-pub const PHASE_CONTRACT_IDS: [PhaseContractId; 11] = [
+pub(crate) const PHASE_CONTRACT_IDS: [PhaseContractId; 11] = [
     "planning",
     "inspection",
     "preparation",

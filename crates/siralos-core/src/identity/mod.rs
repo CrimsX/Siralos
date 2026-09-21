@@ -76,7 +76,7 @@ pub use staleness::{
 };
 
 /// Schema version of the R3 TaskContract canonical payload.
-pub const TASK_CONTRACT_IDENTITY_SCHEMA: u64 = 1;
+pub(crate) const TASK_CONTRACT_IDENTITY_SCHEMA: u64 = 1;
 
 /// Hex SHA-256 digest of a domain-separated artifact payload.
 pub(crate) fn artifact_digest_hex(

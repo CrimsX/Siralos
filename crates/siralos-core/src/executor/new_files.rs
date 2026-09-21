@@ -83,15 +83,15 @@ impl NewFileDisciplineLimits {
     /// Maximum reason bytes.
     pub const MAX_REASON_BYTES: usize = 1024;
     /// Maximum owners per rationale.
-    pub const MAX_OWNERS: usize = 8;
+    pub(crate) const MAX_OWNERS: usize = 8;
     /// Maximum owner-name bytes.
-    pub const MAX_OWNER_BYTES: usize = 256;
+    pub(crate) const MAX_OWNER_BYTES: usize = 256;
     /// Maximum signals.
-    pub const MAX_SIGNALS: usize = 32;
+    pub(crate) const MAX_SIGNALS: usize = 32;
     /// Maximum signal-message bytes.
-    pub const MAX_SIGNAL_MESSAGE_BYTES: usize = 512;
+    pub(crate) const MAX_SIGNAL_MESSAGE_BYTES: usize = 512;
     /// Maximum changed paths per diff evaluation.
-    pub const MAX_DIFF_ENTRIES: usize = 256;
+    pub(crate) const MAX_DIFF_ENTRIES: usize = 256;
 }
 
 /// Deterministic proliferation thresholds.
@@ -99,13 +99,13 @@ pub struct ProliferationHeuristics;
 
 impl ProliferationHeuristics {
     /// More than this many new production files is suspicious.
-    pub const MAX_NEW_PRODUCTION_FILES: usize = 5;
+    pub(crate) const MAX_NEW_PRODUCTION_FILES: usize = 5;
     /// More than this many tiny helper files is suspicious.
-    pub const MAX_TINY_HELPER_FILES: usize = 2;
+    pub(crate) const MAX_TINY_HELPER_FILES: usize = 2;
     /// Files below this size count as tiny helpers.
-    pub const TINY_FILE_BYTES: usize = 256;
+    pub(crate) const TINY_FILE_BYTES: usize = 256;
     /// More than this many changed files outside scope is suspicious.
-    pub const MAX_CHANGED_OUTSIDE_SCOPE: usize = 3;
+    pub(crate) const MAX_CHANGED_OUTSIDE_SCOPE: usize = 3;
 }
 
 fn validate_path(path: &str) -> Result<String, String> {

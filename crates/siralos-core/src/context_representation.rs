@@ -12,15 +12,15 @@ use std::collections::BTreeSet;
 use serde_json::{Value, json};
 
 /// Maximum number of representation sets in a store.
-pub const MAX_NODES: usize = 512;
+pub(crate) const MAX_NODES: usize = 512;
 /// Maximum byte length of a node id.
 pub const MAX_ID_BYTES: usize = 256;
 /// Maximum byte length of a representation's content.
-pub const MAX_CONTENT_BYTES: usize = 8192;
+pub(crate) const MAX_CONTENT_BYTES: usize = 8192;
 /// Maximum number of derived-from bindings per representation.
-pub const MAX_DERIVED_FROM: usize = 64;
+pub(crate) const MAX_DERIVED_FROM: usize = 64;
 /// Maximum number of representations per node (one per level).
-pub const MAX_REPRESENTATIONS_PER_SET: usize = 5;
+pub(crate) const MAX_REPRESENTATIONS_PER_SET: usize = 5;
 
 /// Representation layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

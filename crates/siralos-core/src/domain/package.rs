@@ -10,10 +10,10 @@ use crate::domain::capability::CapabilityRequest;
 use crate::domain::failure::DomainFailure;
 
 /// Maximum length of a package identifier in bytes.
-pub const MAX_PACKAGE_ID_BYTES: usize = 128;
+pub(crate) const MAX_PACKAGE_ID_BYTES: usize = 128;
 
 /// Maximum length of a canonical ABI string in bytes.
-pub const MAX_ABI_BYTES: usize = 128;
+pub(crate) const MAX_ABI_BYTES: usize = 128;
 
 fn valid_separated_identifier(value: &str) -> bool {
     if value.is_empty() || value.len() > MAX_PACKAGE_ID_BYTES {

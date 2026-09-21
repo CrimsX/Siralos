@@ -22,7 +22,7 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 /// RESEARCH_LIMITS.
-pub const RESEARCH_LIMITS: ResearchLimitSet = ResearchLimitSet {
+pub(crate) const RESEARCH_LIMITS: ResearchLimitSet = ResearchLimitSet {
     max_download_bytes: 2 * 1024 * 1024,
     max_document_bytes: 256 * 1024,
     max_sections: 64,

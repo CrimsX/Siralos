@@ -162,17 +162,17 @@ pub mod limits {
     /// Maximum TaskContract id bytes.
     pub const MAX_ID_BYTES: usize = 95;
     /// Maximum request UTF-8 bytes.
-    pub const MAX_REQUEST_BYTES: usize = 16 * 1024;
+    pub(crate) const MAX_REQUEST_BYTES: usize = 16 * 1024;
     /// Maximum context UTF-8 bytes.
-    pub const MAX_CONTEXT_BYTES: usize = 32 * 1024;
+    pub(crate) const MAX_CONTEXT_BYTES: usize = 32 * 1024;
     /// Maximum constraint count.
-    pub const MAX_CONSTRAINTS: usize = 32;
+    pub(crate) const MAX_CONSTRAINTS: usize = 32;
     /// Maximum acceptance criterion count.
-    pub const MAX_ACCEPTANCE_CRITERIA: usize = 64;
+    pub(crate) const MAX_ACCEPTANCE_CRITERIA: usize = 64;
     /// Maximum entry id bytes (criteria, constraints).
-    pub const MAX_ENTRY_ID_BYTES: usize = 64;
+    pub(crate) const MAX_ENTRY_ID_BYTES: usize = 64;
     /// Maximum entry description UTF-8 bytes.
-    pub const MAX_ENTRY_DESCRIPTION_BYTES: usize = 4096;
+    pub(crate) const MAX_ENTRY_DESCRIPTION_BYTES: usize = 4096;
 }
 
 fn task_id_pattern_ok(value: &str) -> bool {

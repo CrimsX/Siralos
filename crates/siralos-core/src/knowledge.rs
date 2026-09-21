@@ -15,7 +15,7 @@ use crate::identity::{canonicalize_json, sha256_hex_str};
 use serde_json::{Value, json};
 
 /// State-version tag for the knowledge snapshot digest.
-pub const KNOWLEDGE_STATE_VERSION: &str = "knowledge-1";
+pub(crate) const KNOWLEDGE_STATE_VERSION: &str = "knowledge-1";
 
 /// Reference limits for the exercised surface.
 pub struct KnowledgeLimits {

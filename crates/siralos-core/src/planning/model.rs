@@ -304,39 +304,39 @@ pub struct PlanningLimits;
 
 impl PlanningLimits {
     /// Maximum plan steps (full plans).
-    pub const MAX_STEPS: usize = 12;
+    pub(crate) const MAX_STEPS: usize = 12;
     /// Maximum plan steps (light plans).
-    pub const MAX_STEPS_LIGHT: usize = 6;
+    pub(crate) const MAX_STEPS_LIGHT: usize = 6;
     /// Maximum touchpoints.
-    pub const MAX_TOUCHPOINTS: usize = 24;
+    pub(crate) const MAX_TOUCHPOINTS: usize = 24;
     /// Maximum constraints.
-    pub const MAX_CONSTRAINTS: usize = 12;
+    pub(crate) const MAX_CONSTRAINTS: usize = 12;
     /// Maximum risks.
-    pub const MAX_RISKS: usize = 12;
+    pub(crate) const MAX_RISKS: usize = 12;
     /// Maximum non-goals.
-    pub const MAX_NON_GOALS: usize = 16;
+    pub(crate) const MAX_NON_GOALS: usize = 16;
     /// Maximum entries per scope direction.
-    pub const MAX_SCOPE_ENTRIES: usize = 16;
+    pub(crate) const MAX_SCOPE_ENTRIES: usize = 16;
     /// Maximum validation checks.
-    pub const MAX_VALIDATION_CHECKS: usize = 12;
+    pub(crate) const MAX_VALIDATION_CHECKS: usize = 12;
     /// Maximum validation requirements.
-    pub const MAX_VALIDATION_REQUIREMENTS: usize = 8;
+    pub(crate) const MAX_VALIDATION_REQUIREMENTS: usize = 8;
     /// Maximum expected-touchpoint refs per step.
-    pub const MAX_EXPECTED_TOUCHPOINTS_PER_STEP: usize = 12;
+    pub(crate) const MAX_EXPECTED_TOUCHPOINTS_PER_STEP: usize = 12;
     /// Maximum verification refs per step.
-    pub const MAX_VERIFICATION_REFS_PER_STEP: usize = 12;
+    pub(crate) const MAX_VERIFICATION_REFS_PER_STEP: usize = 12;
     /// Maximum serialized plan content bytes.
-    pub const MAX_PLAN_CONTENT_BYTES: usize = 32 * 1024;
+    pub(crate) const MAX_PLAN_CONTENT_BYTES: usize = 32 * 1024;
     /// Maximum objective bytes.
-    pub const MAX_OBJECTIVE_BYTES: usize = 2048;
+    pub(crate) const MAX_OBJECTIVE_BYTES: usize = 2048;
     /// Maximum statement bytes.
-    pub const MAX_STATEMENT_BYTES: usize = 512;
+    pub(crate) const MAX_STATEMENT_BYTES: usize = 512;
     /// Maximum step-title bytes.
-    pub const MAX_STEP_TITLE_BYTES: usize = 256;
+    pub(crate) const MAX_STEP_TITLE_BYTES: usize = 256;
     /// Maximum step-description bytes.
-    pub const MAX_STEP_DESCRIPTION_BYTES: usize = 1024;
+    pub(crate) const MAX_STEP_DESCRIPTION_BYTES: usize = 1024;
     /// Maximum rollback bytes.
-    pub const MAX_ROLLBACK_BYTES: usize = 1024;
+    pub(crate) const MAX_ROLLBACK_BYTES: usize = 1024;
     /// Maximum rationale bytes.
     pub const MAX_RATIONALE_BYTES: usize = 1024;
     /// Maximum touchpoint-path bytes.
@@ -344,7 +344,7 @@ impl PlanningLimits {
     /// Maximum evidence bytes.
     pub const MAX_EVIDENCE_BYTES: usize = 256;
     /// Maximum revision-handle bytes.
-    pub const MAX_REVISION_BYTES: usize = 128;
+    pub(crate) const MAX_REVISION_BYTES: usize = 128;
     /// Maximum note bytes.
     pub const MAX_NOTE_BYTES: usize = 512;
     /// Maximum plan revisions one task may accumulate.

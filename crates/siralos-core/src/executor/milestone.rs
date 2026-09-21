@@ -74,7 +74,8 @@ pub struct StandardAcceptanceDefinition {
 
 /// The fixed standard acceptance vocabulary (not an arbitrary policy
 /// language); definitions describe evidence kinds only and grant nothing.
-pub const STANDARD_ACCEPTANCE_DEFINITIONS: &[StandardAcceptanceDefinition] = &[
+pub(crate) const STANDARD_ACCEPTANCE_DEFINITIONS:
+    &[StandardAcceptanceDefinition] = &[
     StandardAcceptanceDefinition {
         id: StandardAcceptanceId::NoWorkspaceMutation,
         description: "No workspace mutation: no create/edit/delete/undo of workspace files.",
@@ -244,27 +245,27 @@ impl MilestoneManifestLimits {
     /// Maximum id bytes.
     pub const MAX_ID_BYTES: usize = 32;
     /// Maximum title bytes.
-    pub const MAX_TITLE_BYTES: usize = 256;
+    pub(crate) const MAX_TITLE_BYTES: usize = 256;
     /// Maximum goal bytes.
-    pub const MAX_GOAL_BYTES: usize = 2048;
+    pub(crate) const MAX_GOAL_BYTES: usize = 2048;
     /// Maximum prerequisites.
-    pub const MAX_PREREQUISITES: usize = 16;
+    pub(crate) const MAX_PREREQUISITES: usize = 16;
     /// Maximum deliverables.
     pub const MAX_DELIVERABLES: usize = 16;
     /// Maximum non-goals.
-    pub const MAX_NON_GOALS: usize = 16;
+    pub(crate) const MAX_NON_GOALS: usize = 16;
     /// Maximum invariants.
-    pub const MAX_INVARIANTS: usize = 16;
+    pub(crate) const MAX_INVARIANTS: usize = 16;
     /// Maximum acceptance requirements.
-    pub const MAX_ACCEPTANCE: usize = 32;
+    pub(crate) const MAX_ACCEPTANCE: usize = 32;
     /// Maximum required tests.
-    pub const MAX_REQUIRED_TESTS: usize = 16;
+    pub(crate) const MAX_REQUIRED_TESTS: usize = 16;
     /// Maximum entry bytes.
-    pub const MAX_ENTRY_BYTES: usize = 512;
+    pub(crate) const MAX_ENTRY_BYTES: usize = 512;
     /// Maximum concerns.
-    pub const MAX_CONCERNS: usize = 12;
+    pub(crate) const MAX_CONCERNS: usize = 12;
     /// Maximum concern bytes.
-    pub const MAX_CONCERN_BYTES: usize = 64;
+    pub(crate) const MAX_CONCERN_BYTES: usize = 64;
 }
 
 fn is_milestone_id(id: &str) -> bool {

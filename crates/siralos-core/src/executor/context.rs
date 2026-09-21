@@ -146,19 +146,19 @@ pub struct DocumentationBudget;
 
 impl DocumentationBudget {
     /// Maximum nested AGENTS.md files.
-    pub const MAX_NESTED_AGENTS: usize = 4;
+    pub(crate) const MAX_NESTED_AGENTS: usize = 4;
     /// Maximum architecture docs.
-    pub const MAX_ARCHITECTURE_DOCS: usize = 2;
+    pub(crate) const MAX_ARCHITECTURE_DOCS: usize = 2;
     /// Maximum ADRs.
-    pub const MAX_ADRS: usize = 4;
+    pub(crate) const MAX_ADRS: usize = 4;
     /// Maximum development docs.
-    pub const MAX_DEVELOPMENT_DOCS: usize = 2;
+    pub(crate) const MAX_DEVELOPMENT_DOCS: usize = 2;
     /// Maximum total selection.
     pub const MAX_SELECTED: usize = 12;
 }
 
 /// Archived documentation is excluded from ordinary selection.
-pub const ARCHIVE_DOCUMENTATION_PREFIX: &str = "docs/archive/";
+pub(crate) const ARCHIVE_DOCUMENTATION_PREFIX: &str = "docs/archive/";
 
 /// Whether a path is archived documentation.
 pub(crate) fn is_archived_documentation_path(path: &str) -> bool {
@@ -453,27 +453,27 @@ pub struct ExecutorContextPackLimits;
 
 impl ExecutorContextPackLimits {
     /// Maximum instructions.
-    pub const MAX_INSTRUCTIONS: usize = 8;
+    pub(crate) const MAX_INSTRUCTIONS: usize = 8;
     /// Maximum instruction-summary bytes.
-    pub const MAX_INSTRUCTION_SUMMARY_BYTES: usize = 1024;
+    pub(crate) const MAX_INSTRUCTION_SUMMARY_BYTES: usize = 1024;
     /// Maximum architecture entries.
-    pub const MAX_ARCHITECTURE_ENTRIES: usize = 4;
+    pub(crate) const MAX_ARCHITECTURE_ENTRIES: usize = 4;
     /// Maximum findings.
-    pub const MAX_FINDINGS: usize = 16;
+    pub(crate) const MAX_FINDINGS: usize = 16;
     /// Maximum acceptance entries.
-    pub const MAX_ACCEPTANCE: usize = 32;
+    pub(crate) const MAX_ACCEPTANCE: usize = 32;
     /// Maximum workspace verified files.
-    pub const MAX_WORKSPACE_VERIFIED_FILES: usize = 12;
+    pub(crate) const MAX_WORKSPACE_VERIFIED_FILES: usize = 12;
     /// Maximum workspace candidate files.
-    pub const MAX_WORKSPACE_CANDIDATE_FILES: usize = 12;
+    pub(crate) const MAX_WORKSPACE_CANDIDATE_FILES: usize = 12;
     /// Maximum working-set files.
-    pub const MAX_WORKING_SET_FILES: usize = 8;
+    pub(crate) const MAX_WORKING_SET_FILES: usize = 8;
     /// Maximum scope signals.
-    pub const MAX_SCOPE_SIGNALS: usize = 8;
+    pub(crate) const MAX_SCOPE_SIGNALS: usize = 8;
     /// Maximum new files.
-    pub const MAX_NEW_FILES: usize = 8;
+    pub(crate) const MAX_NEW_FILES: usize = 8;
     /// Maximum documentation entries per list.
-    pub const MAX_DOCUMENTATION_ENTRIES: usize = 12;
+    pub(crate) const MAX_DOCUMENTATION_ENTRIES: usize = 12;
 }
 
 /// Lightweight instruction input mirroring the fields the pack consumes.

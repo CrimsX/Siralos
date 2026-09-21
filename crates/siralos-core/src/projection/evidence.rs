@@ -9,9 +9,9 @@
 //! and the terminal marker is the narrow second line-bound exception).
 
 /// Default evidence budget: 32 KiB UTF-8.
-pub const DEFAULT_MAX_TOTAL_BYTES: usize = 32 * 1024;
+pub(crate) const DEFAULT_MAX_TOTAL_BYTES: usize = 32 * 1024;
 /// Default per-line budget: 1 KiB UTF-8.
-pub const DEFAULT_MAX_LINE_BYTES: usize = 1_024;
+pub(crate) const DEFAULT_MAX_LINE_BYTES: usize = 1_024;
 
 /// The exact truncation marker (LF + ellipsis + " [truncated]").
 pub const TRUNCATION_MARKER: &str = "\n… [truncated]";
@@ -19,18 +19,18 @@ pub const TRUNCATION_MARKER: &str = "\n… [truncated]";
 pub const TRUNCATION_MARKER_BYTES: usize = 16; // "\n" 1 + "…" 3 + " [truncated]" 12
 
 /// Transformation labels (ordered, as emitted by the oracle).
-pub const TRANSFORM_STRIP_ANSI: &str = "strip-ansi-control";
+pub(crate) const TRANSFORM_STRIP_ANSI: &str = "strip-ansi-control";
 /// Transformation label for secret redaction.
-pub const TRANSFORM_REDACT_SECRETS: &str = "redact-secrets";
+pub(crate) const TRANSFORM_REDACT_SECRETS: &str = "redact-secrets";
 /// Transformation label for repeat-line collapse.
-pub const TRANSFORM_COLLAPSE: &str = "collapse-repeated-lines";
+pub(crate) const TRANSFORM_COLLAPSE: &str = "collapse-repeated-lines";
 /// Transformation label for mandatory line bounding.
-pub const TRANSFORM_BOUND_LINES: &str = "bound-lines";
+pub(crate) const TRANSFORM_BOUND_LINES: &str = "bound-lines";
 /// Transformation label for final truncation.
-pub const TRANSFORM_TRUNCATE: &str = "truncate";
+pub(crate) const TRANSFORM_TRUNCATE: &str = "truncate";
 
 /// Fixed secret placeholder (the frozen `███[REDACTED]███` token).
-pub const REDACTED_PLACEHOLDER: &str = "███[REDACTED]███";
+pub(crate) const REDACTED_PLACEHOLDER: &str = "███[REDACTED]███";
 
 /// Model-visible detached view.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -21,17 +21,17 @@ use crate::task::TaskContract;
 use std::collections::BTreeMap;
 
 /// Schema version of the contract canonical payload.
-pub const TASK_CONTRACT_IDENTITY_SCHEMA: u64 = 1;
+pub(crate) const TASK_CONTRACT_IDENTITY_SCHEMA: u64 = 1;
 
 /// Schema version of the plan canonical payload.
-pub const TASK_PLAN_IDENTITY_SCHEMA: u64 = 1;
+pub(crate) const TASK_PLAN_IDENTITY_SCHEMA: u64 = 1;
 
 /// Declared contract sections in oracle order.
-pub const CONTRACT_SECTION_KEYS: [&str; 5] =
+pub(crate) const CONTRACT_SECTION_KEYS: [&str; 5] =
     ["request", "context", "constraints", "acceptanceCriteria", "pausePolicy"];
 
 /// Declared plan sections in oracle order.
-pub const PLAN_SECTION_KEYS: [&str; 10] = [
+pub(crate) const PLAN_SECTION_KEYS: [&str; 10] = [
     "objective",
     "scope",
     "nonGoals",
