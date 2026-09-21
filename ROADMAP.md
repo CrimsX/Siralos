@@ -684,6 +684,15 @@ later session needs must appear here or in a commit.
   plugin with `--all-features` — with clippy across all targets reporting no
   never-used item, and differential parity holding at 352/352.
 
+- **178 core constants were public to no one.** The same sweep, run over `pub const`
+  rather than `pub fn`: 281 declarations, of which 52 are re-exported and 31 are named
+  by a consumer, leaving 198. The compiler reported 20 of those unused by every library
+  build, and they stay `pub` for the same reason the functions above do. The remaining
+  178 are now `pub(crate)`. Verified by the same route — every consumer compiled, clippy
+  across all targets clean, differential parity at 352/352 — and with the same caveat
+  the whole exercise carries: it narrows a declared surface, it does not change
+  behaviour. The struct, enum, trait and type classes are not swept.
+
 ### Remaining
 
 1. **W5.2 — `/cost`.** Reconciles to the accounting inputs on a fixture; the
