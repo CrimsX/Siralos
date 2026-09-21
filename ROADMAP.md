@@ -691,7 +691,35 @@ later session needs must appear here or in a commit.
   178 are now `pub(crate)`. Verified by the same route — every consumer compiled, clippy
   across all targets clean, differential parity at 352/352 — and with the same caveat
   the whole exercise carries: it narrows a declared surface, it does not change
-  behaviour. The struct, enum, trait and type classes are not swept.
+  behaviour.
+
+- **Two core types could be narrowed; the other 83 teach the sweep's limits.** 652 type
+  declarations: 456 are re-exported and 111 are named by a consumer, leaving 85. Only
+  `ProposalValidationError` and `ResearchLimitSet` survived narrowing, and the compiler
+  restored the rest — some of them for more than one reason:
+
+  - 2 leak into a public interface (`TickView`, `VersionParseError`);
+  - 17 have members no code reads — fields (`group`, `revision`, `reference_id`, `sha256`,
+    `state`, `idempotent`, `classification`, `reason`), methods (`binding`,
+    `requested_capabilities`, `provisional_grant`, `as_str`, `kind`, `is_empty`, `clear`,
+    `has_evidence`), associated constants (`MAX_SELECTED`, `MAX_ID_BYTES`,
+    `MAX_RULE_ID_BYTES`) and enum variants (`InvalidOperation`, and `Create`/`Edit`/
+    `Delete`);
+  - 21 are reached from `siralos-adapters` only when the `differential-harness` feature is
+    on, which is how the harness builds it;
+  - 26 are used by the harness itself, which lives outside the workspace, so only a build
+    of `harness/` proves it. The harness holds values of those types without naming them;
+  - 16 appear in the signature of a `pub` item, so narrowing the type narrows that
+    signature; `cargo check` reports those as warnings and the gate's clippy, with
+    warnings denied, is what makes them fail.
+
+  Together those are the sweep's limits, and they are why this pass is recorded rather
+  than quietly dropped: a check over names sees a `pub use`, but not a type reached by
+  inference, nor one reached through a feature gate, nor one reached from the crate the
+  workspace excludes, nor one that leaks through a public signature. The members are
+  recorded rather than removed, and at least some are dead by decision: `Create`/`Edit`/
+  `Delete` belong to the workspace mutation capability the fail-closed posture refuses to
+  exercise, so deleting them would delete preparation, not redundancy.
 
 ### Remaining
 
