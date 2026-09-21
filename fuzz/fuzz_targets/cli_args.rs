@@ -27,7 +27,7 @@ fuzz_target!(|data: &[u8]| {
             OsString::from_vec(chunk.to_vec())
         };
         #[cfg(not(unix))]
-        let arg = OsString::from(String::from_utf8_lossy(chunk));
+        let arg = OsString::from(String::from_utf8_lossy(chunk).into_owned());
         args.push(arg);
         let _ = parse_args(args.clone());
     }
