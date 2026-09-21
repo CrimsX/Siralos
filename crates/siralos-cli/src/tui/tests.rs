@@ -1336,6 +1336,157 @@ fn thinking_block_is_absent_collapsed_and_expands_in_place() {
     assert_eq!(state.reasoning_block_lines().len(), 1);
 }
 
+/// The painted rows of a headless frame, one string per terminal row.
+fn frame_rows(state: &TuiState, width: u16, height: u16) -> Vec<String> {
+    let buf = render_to_buffer(state, width, height);
+    let row_width = width as usize;
+    let cells: Vec<String> =
+        buf.content().iter().map(|c| c.symbol().to_owned()).collect();
+    cells
+        .chunks(row_width)
+        .map(|row| row.concat().trim_end().to_owned())
+        .collect()
+}
+
+#[test]
+fn thinking_renders_above_the_models_output() {
+    // Owner bug report: the thinking sat BELOW the model's output -- the
+    // answer's completed lines went into the transcript while the thinking
+    // block was appended after them, so the words the model wrote appeared
+    // first and the thinking drifted underneath (and the answer's in-flight
+    // line rendered below the block, jumping over it as each line
+    // completed). Thinking is what the model produced FIRST, so it renders
+    // ABOVE the answer it explains.
+    let mut state = TuiState::new();
+    state.push_line("> what is 2+2".to_owned());
+    state.begin_turn(std::time::Instant::now());
+    state.push_reasoning("weighing the options");
+    state.stream_buffer.push_str("the answer is four\nand it is exact\n");
+    while state.reveal_pending() {
+        state.reveal_char();
+    }
+    let rows = frame_rows(&state, 60, 12);
+    let prompt = rows
+        .iter()
+        .position(|row| row.contains("what is 2+2"))
+        .unwrap_or_else(|| panic!("the prompt renders: {rows:?}"));
+    let thinking = rows
+        .iter()
+        .position(|row| row.contains("thinking"))
+        .unwrap_or_else(|| panic!("the thinking row renders: {rows:?}"));
+    let answer = rows
+        .iter()
+        .position(|row| row.contains("the answer is four"))
+        .unwrap_or_else(|| panic!("the answer renders: {rows:?}"));
+    assert!(
+        prompt < thinking,
+        "the block opens below the prompt that asked for it: {rows:?}"
+    );
+    assert!(
+        thinking < answer,
+        "thinking must render above the model's output: {rows:?}"
+    );
+}
+
+#[test]
+fn the_block_stays_with_the_turn_that_produced_it() {
+    // S3d: the anchor moves only when a turn actually streams thinking. A turn
+    // that reasons re-anchors the block above ITS answer; a turn that does not
+    // leaves the block above the answer it explains instead of dragging an
+    // older trace down the conversation.
+    let run = |state: &mut TuiState, prompt: &str, answer: &str| {
+        state.push_line(prompt.to_owned());
+        state.begin_turn(std::time::Instant::now());
+        state.stream_buffer.push_str(answer);
+        while state.reveal_pending() {
+            state.reveal_char();
+        }
+        state.end_turn();
+    };
+    let mut state = TuiState::new();
+    state.push_line("> first".to_owned());
+    state.begin_turn(std::time::Instant::now());
+    state.push_reasoning("turn one thinking");
+    state.stream_buffer.push_str("turn one answer\n");
+    while state.reveal_pending() {
+        state.reveal_char();
+    }
+    state.end_turn();
+    let rows = frame_rows(&state, 80, 16);
+    let block = rows
+        .iter()
+        .position(|row| row.contains("thinking"))
+        .unwrap_or_else(|| panic!("the block opens: {rows:?}"));
+    let first = rows
+        .iter()
+        .position(|row| row.contains("turn one answer"))
+        .unwrap_or_else(|| panic!("turn one renders: {rows:?}"));
+    assert!(block < first, "the block opens above its own answer: {rows:?}");
+
+    // Turn two streams no thinking at all.
+    run(&mut state, "> second", "turn two answer\n");
+    let rows = frame_rows(&state, 80, 16);
+    let block = rows
+        .iter()
+        .position(|row| row.contains("thinking"))
+        .unwrap_or_else(|| panic!("the block survives: {rows:?}"));
+    let first = rows
+        .iter()
+        .position(|row| row.contains("turn one answer"))
+        .unwrap_or_else(|| panic!("turn one renders: {rows:?}"));
+    let second = rows
+        .iter()
+        .position(|row| row.contains("turn two answer"))
+        .unwrap_or_else(|| panic!("turn two renders: {rows:?}"));
+    assert!(block < first, "the block keeps its turn: {rows:?}");
+    assert!(first < second, "the conversation keeps its order: {rows:?}");
+
+    // Turn three reasons again, so the block re-anchors -- below everything
+    // already read, above the answer it explains.
+    state.push_line("> third".to_owned());
+    state.begin_turn(std::time::Instant::now());
+    state.push_reasoning("turn three thinking");
+    state.stream_buffer.push_str("turn three answer\n");
+    while state.reveal_pending() {
+        state.reveal_char();
+    }
+    state.end_turn();
+    let rows = frame_rows(&state, 80, 16);
+    let block = rows
+        .iter()
+        .position(|row| row.contains("thinking"))
+        .unwrap_or_else(|| panic!("the block renders: {rows:?}"));
+    let second = rows
+        .iter()
+        .position(|row| row.contains("turn two answer"))
+        .unwrap_or_else(|| panic!("turn two renders: {rows:?}"));
+    let third = rows
+        .iter()
+        .position(|row| row.contains("turn three answer"))
+        .unwrap_or_else(|| panic!("turn three renders: {rows:?}"));
+    assert!(second < block, "the block re-anchors forward: {rows:?}");
+    assert!(block < third, "and above the answer it explains: {rows:?}");
+}
+
+#[test]
+fn thinking_is_released_before_the_answer_it_sits_above() {
+    // S3d: the block renders above the answer, so the reveal releases it
+    // FIRST -- the reader meets the model's output in the order the model
+    // produced it. Both buffers are owed here, so the priority is the only
+    // thing that can decide which character comes out.
+    let mut state = TuiState::new();
+    state.push_reasoning("why");
+    state.stream_buffer.push_str("hi");
+    state.reveal_char();
+    assert_eq!(state.reasoning_shown, 1, "the thinking goes first");
+    assert!(state.stream_tail.is_empty(), "the answer has not started");
+    state.reveal_char();
+    state.reveal_char();
+    assert_eq!(state.reasoning_shown, 3, "one character per call");
+    state.reveal_char();
+    assert_eq!(state.stream_tail, "h", "then the answer it explains");
+}
+
 #[test]
 fn sink_requests_a_coalesced_redraw_after_it_changes_the_transcript() {
     // S2 chunk 4: without this hook a streamed answer arrives in one
@@ -3724,35 +3875,42 @@ fn the_visible_window_matches_the_whole_transcript_window() {
     // scroll offset.
     fn reference(
         transcript: &[TranscriptEntry],
-        extras: &[(&str, Option<&str>)],
+        above: &[(&str, Option<&str>)],
+        above_at: usize,
+        below: &[(&str, Option<&str>)],
         width: usize,
         height: usize,
         offset: u16,
     ) -> Vec<(String, Style)> {
         let mut rows: Vec<(String, Style)> = Vec::new();
-        for entry in transcript {
-            let style = style_for_transcript_line(&entry.text);
-            for row in wrap_line_to_width(&entry.text, width) {
-                rows.push((row, style));
-            }
-            if let Some(ts) = &entry.timestamp {
-                let dim = Style::default().fg(Color::DarkGray);
-                for row in wrap_line_to_width(ts, width) {
-                    rows.push((row, dim));
-                }
-            }
-        }
-        for (text, ts) in extras {
+        let one = |rows: &mut Vec<(String, Style)>,
+                   text: &str,
+                   timestamp: Option<&str>| {
             let style = style_for_transcript_line(text);
             for row in wrap_line_to_width(text, width) {
                 rows.push((row, style));
             }
-            if let Some(ts) = ts {
+            if let Some(ts) = timestamp {
                 let dim = Style::default().fg(Color::DarkGray);
                 for row in wrap_line_to_width(ts, width) {
                     rows.push((row, dim));
                 }
             }
+        };
+        // Reading order: everything before the block, the block, the stored
+        // entries after it, then the trailing rows.
+        let at = above_at.min(transcript.len());
+        for entry in &transcript[..at] {
+            one(&mut rows, &entry.text, entry.timestamp.as_deref());
+        }
+        for (text, ts) in above {
+            one(&mut rows, text, *ts);
+        }
+        for entry in &transcript[at..] {
+            one(&mut rows, &entry.text, entry.timestamp.as_deref());
+        }
+        for (text, ts) in below {
+            one(&mut rows, text, *ts);
         }
         let total = rows.len();
         let max_scroll = total.saturating_sub(height);
@@ -3775,27 +3933,42 @@ fn the_visible_window_matches_the_whole_transcript_window() {
         for width in [12usize, 21, 40, 100] {
             for height in [1usize, 3, 24] {
                 for offset in [0u16, 1, 7, 100, 5000] {
-                    let extras: Vec<(&str, Option<&str>)> =
-                        vec![("thinking row", None), ("partial answer", None)];
-                    let bounded = visible_transcript_rows(
-                        &state.transcript,
-                        &state.transcript_lines,
-                        &extras,
-                        width,
-                        height,
-                        offset,
-                    );
-                    let whole = reference(
-                        &state.transcript,
-                        &extras,
-                        width,
-                        height,
-                        offset,
-                    );
-                    assert_eq!(
-                        bounded, whole,
-                        "count={count} width={width} height={height} offset={offset}"
-                    );
+                    // S3d: the block is anchored somewhere in the stored
+                    // transcript -- the start, the middle, the end, and past
+                    // the end, which must clamp rather than panic.
+                    for above_at in [0usize, 1, count / 2, count, count + 7] {
+                        let above: Vec<(&str, Option<&str>)> = vec![
+                            ("thinking row", None),
+                            ("second thinking row", None),
+                        ];
+                        let below: Vec<(&str, Option<&str>)> =
+                            vec![("partial answer", None), ("", None)];
+                        let bounded = visible_transcript_rows(
+                            &state.transcript,
+                            &state.transcript_lines,
+                            &FrameRows {
+                                above: &above,
+                                above_at,
+                                below: &below,
+                            },
+                            width,
+                            height,
+                            offset,
+                        );
+                        let whole = reference(
+                            &state.transcript,
+                            &above,
+                            above_at,
+                            &below,
+                            width,
+                            height,
+                            offset,
+                        );
+                        assert_eq!(
+                            bounded, whole,
+                            "count={count} width={width} height={height} offset={offset} above_at={above_at}"
+                        );
+                    }
                 }
             }
         }
@@ -3823,13 +3996,18 @@ fn a_long_session_does_not_make_a_frame_expensive() {
     };
     let long = build(5000);
     let short = build(24);
-    let extras: Vec<(&str, Option<&str>)> = vec![("thinking row", None)];
+    let above: Vec<(&str, Option<&str>)> = vec![("thinking row", None)];
+    let below: Vec<(&str, Option<&str>)> = vec![("partial answer", None)];
 
     let start = Instant::now();
     let rows = visible_transcript_rows(
         &long.transcript,
         &long.transcript_lines,
-        &extras,
+        &FrameRows {
+            above: &above,
+            above_at: long.transcript.len() / 2,
+            below: &below,
+        },
         100,
         24,
         0,

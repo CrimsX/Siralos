@@ -4403,10 +4403,16 @@ pub fn run_interactive_tui_with_options(
                                 // that state.
                                 let base = "";
                                 // The pulsing `working` line renders above
-                                // the input, timed from the turn start.
-                                tui_state.borrow_mut().busy_since = pending
-                                    .as_ref()
-                                    .map(|_| std::time::Instant::now());
+                                // the input, timed from the turn start; the
+                                // same call arms the thinking block's anchor
+                                // (S3d) above this turn's answer.
+                                if pending.is_some() {
+                                    tui_state
+                                        .borrow_mut()
+                                        .begin_turn(std::time::Instant::now());
+                                } else {
+                                    tui_state.borrow_mut().end_turn();
+                                }
                                 let composed = transient_status(
                                     &tui_state.borrow(),
                                     base,
@@ -4659,8 +4665,9 @@ pub fn run_interactive_tui_with_options(
                     &mut progress,
                     &mut reasoning_sink,
                 )?;
-                // The turn is over: the indicator above the input stops.
-                tui_state.borrow_mut().busy_since = None;
+                // The turn is over: the indicator above the input stops, and
+                // the thinking block stays where this turn anchored it.
+                tui_state.borrow_mut().end_turn();
                 if should_exit {
                     break;
                 }

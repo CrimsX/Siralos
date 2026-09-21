@@ -405,13 +405,28 @@ pub fn wrap_line_to_width(text: &str, width: usize) -> Vec<String> {
     rows
 }
 
+/// The rows a frame paints that are NOT stored transcript, and where they
+/// belong (S3d).
+///
+/// Named fields because the placement IS the meaning: `above` renders above
+/// the stored entry at `above_at` (the thinking block, which belongs above the
+/// answer it explains), and `below` trails the last stored entry (the answer's
+/// growing line, the gap that separates the indicator). Empty slices
+/// reproduce the plain stored transcript exactly, which is what keeps every
+/// reasoning-free frame byte-identical.
+struct FrameRows<'a> {
+    above: &'a [(&'a str, Option<&'a str>)],
+    above_at: usize,
+    below: &'a [(&'a str, Option<&'a str>)],
+}
+
 /// The transcript rows the viewport shows, wrapped from the TAIL.
 ///
 /// Returns owned `(row, style)` pairs for exactly the rows a frame paints, in
 /// order. One stored line expands to one or more rows via [`wrap_line_to_width`];
 /// timestamps wrap the same way (short in practice, one row) and keep the dim
-/// stamp style per row; `extras` are the rows that are not stored transcript
-/// (the thinking block, the answer's growing line, the indicator gap).
+/// stamp style per row. `rows` carries the non-stored rows and their placement
+/// ([`FrameRows`]).
 ///
 /// This exists because the previous shape cloned and wrapped the WHOLE
 /// transcript every frame, so a frame cost grew with the session -- measured at
@@ -422,7 +437,7 @@ pub fn wrap_line_to_width(text: &str, width: usize) -> Vec<String> {
 fn visible_transcript_rows(
     transcript: &[TranscriptEntry],
     fallback_lines: &[String],
-    extras: &[(&str, Option<&str>)],
+    rows: &FrameRows<'_>,
     inner_width: usize,
     height: usize,
     scroll_offset: u16,
@@ -458,18 +473,39 @@ fn visible_transcript_rows(
             tail.push(row);
         }
     };
-    for (text, timestamp) in extras.iter().rev() {
+    // The harness and the older tests assign `transcript_lines` directly.
+    let stored_len = if transcript.is_empty() {
+        fallback_lines.len()
+    } else {
+        transcript.len()
+    };
+    // A stale anchor must never point past the end: the block then renders at
+    // the tail, which is where it used to live, instead of panicking.
+    let at = rows.above_at.min(stored_len);
+    let stored = |index: usize| -> (&str, Option<&str>) {
+        if transcript.is_empty() {
+            (fallback_lines[index].as_str(), None)
+        } else {
+            let entry = &transcript[index];
+            (entry.text.as_str(), entry.timestamp.as_deref())
+        }
+    };
+    // Reading order: `below`, then the stored entries after the anchor, then
+    // `above`, then everything the reader has already read. Collected in
+    // reverse, so the loops run backwards from the last row painted.
+    for (text, timestamp) in rows.below.iter().rev() {
         push_entry(text, *timestamp, &mut tail);
     }
-    if transcript.is_empty() {
-        // The harness and the older tests assign `transcript_lines` directly.
-        for line in fallback_lines.iter().rev() {
-            push_entry(line, None, &mut tail);
-        }
-    } else {
-        for entry in transcript.iter().rev() {
-            push_entry(&entry.text, entry.timestamp.as_deref(), &mut tail);
-        }
+    for index in (at..stored_len).rev() {
+        let (text, timestamp) = stored(index);
+        push_entry(text, timestamp, &mut tail);
+    }
+    for (text, timestamp) in rows.above.iter().rev() {
+        push_entry(text, *timestamp, &mut tail);
+    }
+    for index in (0..at).rev() {
+        let (text, timestamp) = stored(index);
+        push_entry(text, timestamp, &mut tail);
     }
     // The same slice the whole-transcript version produced: skip what the
     // reader scrolled past (clamped exactly as that version clamped it), take
@@ -481,6 +517,42 @@ fn visible_transcript_rows(
     let start = scroll;
     let end = (scroll + height).min(len);
     tail[start..end].iter().rev().cloned().collect()
+}
+
+/// The rows of the transcript area for one frame (S3d).
+///
+/// The thinking block renders ABOVE the stored entry it is anchored to --
+/// this turn's model output -- and the answer's in-flight line trails the
+/// stored transcript. Both painters call this, so the two render paths cannot
+/// disagree about where the block goes.
+fn transcript_frame_rows(
+    state: &TuiState,
+    inner_width: usize,
+    height: usize,
+) -> Vec<(String, Style)> {
+    let thinking = state.reasoning_block_lines();
+    let above: Vec<(&str, Option<&str>)> =
+        thinking.iter().map(|line| (line.as_str(), None)).collect();
+    let mut below: Vec<(&str, Option<&str>)> = Vec::with_capacity(2);
+    if !state.stream_tail.is_empty() {
+        below.push((state.stream_tail.as_str(), None));
+    }
+    if !thinking.is_empty() && state.busy_since.is_some() {
+        // Keep the indicator visually SEPARATE from the block.
+        below.push(("", None));
+    }
+    visible_transcript_rows(
+        &state.transcript,
+        &state.transcript_lines,
+        &FrameRows {
+            above: &above,
+            above_at: state.reasoning_anchor,
+            below: &below,
+        },
+        inner_width,
+        height,
+        state.scroll_offset,
+    )
 }
 
 /// Truncate a line to `max_chars` characters on a char boundary (bounded
@@ -993,6 +1065,21 @@ pub struct TuiState {
     pub reasoning: String,
     /// Whether the thinking block is expanded.
     pub reasoning_expanded: bool,
+    /// The stored-transcript index the thinking block renders ABOVE (S3d).
+    ///
+    /// Thinking is what the model produced FIRST and the answer is what it
+    /// produced FROM it, so the block sits above the answer. Appending it
+    /// after the transcript instead -- where it used to live -- put it below
+    /// every answer line the reveal had already committed, which is the
+    /// inversion the owner reported.
+    pub reasoning_anchor: usize,
+    /// The anchor the CURRENT turn takes when its thinking arrives (S3d).
+    ///
+    /// [`TuiState::begin_turn`] arms it with the transcript as it stands after
+    /// the submitted prompt; the first streamed delta consumes it. It stays
+    /// `None` between turns, so a turn that never reasons leaves the block
+    /// exactly where the turn that produced it put it.
+    pub pending_reasoning_anchor: Option<usize>,
     /// When the current turn started, for the pulsing `working` line.
     pub busy_since: Option<std::time::Instant>,
     /// Answer text received but not yet revealed (S3c).
@@ -1039,6 +1126,8 @@ impl Default for TuiState {
             mouse_capture: false,
             reasoning: String::new(),
             reasoning_expanded: false,
+            reasoning_anchor: 0,
+            pending_reasoning_anchor: None,
             busy_since: None,
             stream_buffer: String::new(),
             stream_tail: String::new(),
@@ -1104,15 +1193,53 @@ impl TuiState {
         }
     }
 
+    /// Open a turn (S1/S3d): start the `working` clock and ARM the thinking
+    /// block's anchor.
+    ///
+    /// The anchor is the transcript as it stands AFTER the submitted prompt,
+    /// and the turn's first streamed thinking takes it. Anchoring at the turn's
+    /// start -- rather than at that first delta -- is what keeps the block
+    /// above the answer's FIRST line: the reveal commits answer lines into the
+    /// transcript while it runs, so a later anchor would leave the earliest of
+    /// them above the block, which is the inversion the owner reported.
+    pub fn begin_turn(&mut self, now: std::time::Instant) {
+        self.busy_since = Some(now);
+        self.pending_reasoning_anchor = Some(self.effective_transcript_len());
+    }
+
+    /// Close a turn (S3d): stop the `working` clock and disarm the anchor.
+    ///
+    /// Disarming -- not re-anchoring -- is what keeps the block with the turn
+    /// that produced it: a later turn that streams no thinking leaves it
+    /// exactly where it was, instead of dragging an older trace down the
+    /// conversation.
+    pub fn end_turn(&mut self) {
+        self.busy_since = None;
+        self.pending_reasoning_anchor = None;
+    }
+
     /// Release the next character owed to the reader, if any (S3c).
     ///
     /// ONE character per call, by construction: the text is rendered a
     /// character at a time, so the character rate IS the frame rate. The paint
     /// path is the only caller -- one call, one painted frame, one character --
     /// which is why there is no timer, no rate budget and no catch-up here. The
-    /// painters own the cadence ([`paint_interval`]); this owns the ORDER:
-    /// the answer first, the thinking after it.
+    /// painters own the cadence ([`paint_interval`]); this owns the ORDER.
+    ///
+    /// S3d: the THINKING is released first, because the block renders above the
+    /// answer -- a reader meets the model's output in the order the model
+    /// produced it. That costs the answer nothing in practice: the reveal is
+    /// limited by the frame cost, several times faster than a reasoning stream,
+    /// so it has already drained the thinking by the time answer text arrives.
     pub fn reveal_char(&mut self) {
+        if self.reasoning_shown < self.reasoning.len() {
+            let ch = self.reasoning[self.reasoning_shown..]
+                .chars()
+                .next()
+                .expect("an index below the length starts a character");
+            self.reasoning_shown += ch.len_utf8();
+            return;
+        }
         if let Some(ch) = self.stream_buffer.chars().next() {
             self.stream_buffer.remove(0);
             if ch == '\n' {
@@ -1121,14 +1248,6 @@ impl TuiState {
             } else {
                 self.stream_tail.push(ch);
             }
-            return;
-        }
-        if self.reasoning_shown < self.reasoning.len() {
-            let ch = self.reasoning[self.reasoning_shown..]
-                .chars()
-                .next()
-                .expect("an index below the length starts a character");
-            self.reasoning_shown += ch.len_utf8();
         }
     }
 
@@ -1152,6 +1271,12 @@ impl TuiState {
     /// buffer therefore exceeds the bound while a backlog exists and settles
     /// back to it once the reveal has caught up.
     pub fn push_reasoning(&mut self, text: &str) {
+        if let Some(at) = self.pending_reasoning_anchor.take() {
+            // The turn's thinking has arrived: take the anchor the turn opened
+            // with. Clamped, because the transcript can only have grown since
+            // then and a stale index must never point past the end.
+            self.reasoning_anchor = at.min(self.effective_transcript_len());
+        }
         self.reasoning.push_str(text);
         let excess = self.reasoning.len().saturating_sub(REASONING_BYTES);
         let droppable = excess.min(self.reasoning_shown);
@@ -1746,38 +1871,12 @@ pub fn draw_with_pane(
     // stored text is never mutated. Scroll windows over rows, so the tail
     // of a long line stays readable instead of clipping off-screen.
     let height = transcript_area.height as usize;
-    // S3b: the thinking block renders as the last transcript rows, so it
-    // scrolls with the conversation and needs no layout surgery. The answer's
-    // current line is appended the same way: it is what makes the answer read
-    // left to right instead of appearing whole.
-    let reasoning_rows = state.reasoning_block_lines();
-    let has_reasoning = !reasoning_rows.is_empty();
-    let blank = String::new();
-    let mut extras: Vec<(&str, Option<&str>)> =
-        Vec::with_capacity(reasoning_rows.len() + 2);
-    for line in &reasoning_rows {
-        extras.push((line.as_str(), None));
-    }
-    if !state.stream_tail.is_empty() {
-        extras.push((state.stream_tail.as_str(), None));
-    }
-    if has_reasoning && state.busy_since.is_some() {
-        // Keep the indicator visually SEPARATE from the thinking block.
-        extras.push((blank.as_str(), None));
-    }
-
-    // Only the rows the viewport shows are built (see
-    // [`visible_transcript_rows`]): the previous shape cloned and wrapped the
-    // WHOLE transcript every frame, so a frame cost grew with the session and a
-    // per-character reveal could not stay smooth.
-    let wrapped = visible_transcript_rows(
-        &state.transcript,
-        &state.transcript_lines,
-        &extras,
-        transcript_area.width as usize,
-        height,
-        state.scroll_offset,
-    );
+    // S3d: the thinking block renders ABOVE this turn's model output and the
+    // answer's current line trails it; both scroll with the conversation and
+    // need no layout surgery. The answer's growing line is what makes the
+    // answer read left to right instead of appearing whole.
+    let wrapped =
+        transcript_frame_rows(state, transcript_area.width as usize, height);
     let expanded: Vec<Line<'_>> = wrapped
         .iter()
         .map(|(row, style)| Line::from(row.as_str()).style(*style))
@@ -2466,28 +2565,8 @@ pub fn render_to_buffer_with_pane(
     let h = transcript_area.height as usize;
     // The same rows the `Frame` path builds, and the same bounded work: see
     // [`visible_transcript_rows`].
-    let reasoning_rows = state.reasoning_block_lines();
-    let has_reasoning = !reasoning_rows.is_empty();
-    let blank = String::new();
-    let mut extras: Vec<(&str, Option<&str>)> =
-        Vec::with_capacity(reasoning_rows.len() + 2);
-    for line in &reasoning_rows {
-        extras.push((line.as_str(), None));
-    }
-    if !state.stream_tail.is_empty() {
-        extras.push((state.stream_tail.as_str(), None));
-    }
-    if has_reasoning && state.busy_since.is_some() {
-        extras.push((blank.as_str(), None));
-    }
-    let wrapped = visible_transcript_rows(
-        &state.transcript,
-        &state.transcript_lines,
-        &extras,
-        transcript_area.width as usize,
-        h,
-        state.scroll_offset,
-    );
+    let wrapped =
+        transcript_frame_rows(state, transcript_area.width as usize, h);
     let expanded: Vec<Line<'_>> = wrapped
         .iter()
         .map(|(row, style)| Line::from(row.as_str()).style(*style))
