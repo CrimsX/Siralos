@@ -29,6 +29,8 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
+use siralos_adapters::profile_config::WorkspaceProfileWriteToken;
+
 /// Zero-timeout drain poll — only already-queued events, NEVER waits (P1).
 pub const TUI_DRAIN_POLL: Duration = Duration::ZERO;
 
@@ -40,6 +42,8 @@ pub const CONTEXT_BUDGET_TOKENS: usize = 4096;
 
 /// Maximum number of transcript lines retained (bounded ring).
 pub const MAX_TRANSCRIPT_LINES: usize = 1000;
+/// Maximum bytes retained in one transcript line (the ring is also bounded).
+pub const MAX_TRANSCRIPT_LINE_BYTES: usize = 64 * 1024;
 
 /// Maximum number of lines shown in the approval modal (bounded).
 pub const MAX_APPROVAL_LINES: usize = 30;
@@ -70,6 +74,12 @@ pub const REASONING_ROWS: usize = 8;
 
 /// How much of the newest thinking line the COLLAPSED row previews.
 pub const THINKING_TAIL_CHARS: usize = 60;
+/// Maximum bytes accepted in the main prompt or provider-add form input.
+pub const MAX_INPUT_BYTES: usize = 64 * 1024;
+/// Maximum buffered answer bytes retained by the TUI sink.
+pub const MAX_STREAM_BYTES: usize = 1024 * 1024;
+/// Maximum unrevealed reasoning bytes retained before a visible bound.
+pub const MAX_REASONING_BUFFER_BYTES: usize = 64 * 1024;
 
 /// How long a painter waits before it paints the next frame.
 ///
@@ -345,62 +355,81 @@ pub fn build_context_pane(
     })
 }
 
-/// Wrap one stored transcript line over `width` columns (render layer only).
+/// Return the terminal cell width used by ratatui. Keeping this calculation
+/// in one place prevents byte/character cursor placement from disagreeing
+/// with the widget that actually paints the text (especially for CJK and
+/// emoji).
+fn display_width(text: &str) -> usize {
+    ratatui::text::Line::from(text).width()
+}
+
+/// Wrap one stored transcript line over `width` terminal columns.
 ///
-/// Word-boundary wrap with hard-break for tokens exceeding the width (URLs,
-/// JSON bodies). The stored text is never mutated: this expands one line
-/// into one or more display rows for the transcript pane's inner width.
-/// Char-count based, consistent with the header layout and
-/// `truncate_to_width`. Deterministic: same text + same width ->
-/// byte-identical rows.
+/// Word-boundary wrapping is retained, but all decisions use display width
+/// rather than UTF-8 bytes or scalar count. The stored text is never mutated.
 #[must_use]
 pub fn wrap_line_to_width(text: &str, width: usize) -> Vec<String> {
     if width == 0 {
         return vec![text.to_owned()];
     }
-    let chars: Vec<char> = text.chars().collect();
-    let len = chars.len();
-    if len <= width {
+    if display_width(text) <= width {
         return vec![text.to_owned()];
     }
+    // Compute scalar display widths once. The previous implementation rebuilt
+    // `chars[start..=end]` and recalculated its terminal width for every
+    // candidate, which made a bounded 64 KiB line quadratic.
+    let cells: Vec<(usize, char, usize)> = text
+        .char_indices()
+        .map(|(index, ch)| {
+            let cell = display_width(&ch.to_string()).max(1);
+            (index, ch, cell)
+        })
+        .collect();
     let mut rows = Vec::new();
-    let mut start = 0;
-    while start < len {
-        if len - start <= width {
-            rows.push(chars[start..].iter().collect());
-            break;
-        }
-        let window_end = start + width;
-        // Exact fit: the window ends at a word boundary (the next char is
-        // the break space) — take the whole window and skip that space.
-        if chars[window_end] == ' ' {
-            rows.push(chars[start..window_end].iter().collect());
-            start = window_end + 1;
-            continue;
-        }
-        // Otherwise break at the last space inside the window (word
-        // boundary) and skip that single space onto the next row. With no
-        // space in the window the token exceeds the width — hard-break at
-        // `width` (URLs, JSON bodies).
-        let mut break_at: Option<usize> = None;
-        for i in (start..window_end).rev() {
-            if chars[i] == ' ' {
-                break_at = Some(i);
+    let mut start = 0usize;
+    while start < cells.len() {
+        let mut end = start;
+        let mut used = 0usize;
+        let mut last_space = None;
+        while end < cells.len() {
+            let (_, ch, cell_width) = cells[end];
+            if used.saturating_add(cell_width) > width {
                 break;
             }
-        }
-        match break_at {
-            // Guard `i > start`: a leading space must not produce an empty
-            // row — hard-break instead.
-            Some(i) if i > start => {
-                rows.push(chars[start..i].iter().collect());
-                start = i + 1;
+            used = used.saturating_add(cell_width);
+            if ch == ' ' {
+                last_space = Some(end);
             }
-            _ => {
-                rows.push(chars[start..window_end].iter().collect());
-                start = window_end;
-            }
+            end += 1;
         }
+        if end == start {
+            // A wide scalar is wider than the viewport; keep it visible.
+            end += 1;
+        } else if end < cells.len() && cells[end].1 == ' ' {
+            let byte_start = cells[start].0;
+            let byte_end = cells[end].0;
+            // The break space is a separator, not rendered content.
+            rows.push(
+                text[byte_start..byte_end].trim_end_matches(' ').to_owned(),
+            );
+            start = end + 1;
+            continue;
+        } else if let Some(break_at) =
+            last_space.filter(|index| *index > start && end < cells.len())
+        {
+            let byte_start = cells[start].0;
+            let byte_end = cells[break_at].0;
+            rows.push(
+                text[byte_start..byte_end].trim_end_matches(' ').to_owned(),
+            );
+            start = break_at + 1;
+            continue;
+        }
+        let byte_start = cells[start].0;
+        let byte_end =
+            if end < cells.len() { cells[end].0 } else { text.len() };
+        rows.push(text[byte_start..byte_end].to_owned());
+        start = end;
     }
     rows
 }
@@ -455,16 +484,18 @@ fn visible_transcript_rows(
         if tail.len() >= want {
             return;
         }
-        let text_style = style_for_transcript_line(text);
+        let safe_text = crate::sanitize::sanitize_for_display(text);
+        let text_style = style_for_transcript_line(&safe_text);
         let mut rows: Vec<(String, Style)> =
-            wrap_line_to_width(text, inner_width)
+            wrap_line_to_width(&safe_text, inner_width)
                 .into_iter()
                 .map(|row| (row, text_style))
                 .collect();
         if let Some(ts) = timestamp {
             let dim = Style::default().fg(Color::DarkGray);
+            let safe_timestamp = crate::sanitize::sanitize_for_display(ts);
             rows.extend(
-                wrap_line_to_width(ts, inner_width)
+                wrap_line_to_width(&safe_timestamp, inner_width)
                     .into_iter()
                     .map(|row| (row, dim)),
             );
@@ -555,13 +586,22 @@ fn transcript_frame_rows(
     )
 }
 
-/// Truncate a line to `max_chars` characters on a char boundary (bounded
-/// pane lines never overflow the fixed 40-column pane).
-fn truncate_to_width(line: &str, max_chars: usize) -> String {
-    if line.chars().count() <= max_chars {
+/// Truncate a line to `max_cells` terminal cells on a scalar boundary.
+fn truncate_to_width(line: &str, max_cells: usize) -> String {
+    if display_width(line) <= max_cells {
         return line.to_owned();
     }
-    line.chars().take(max_chars).collect()
+    let mut result = String::new();
+    let mut used: usize = 0;
+    for character in line.chars() {
+        let width = display_width(&character.to_string());
+        if used.saturating_add(width) > max_cells {
+            break;
+        }
+        result.push(character);
+        used += width;
+    }
+    result
 }
 
 /// Render the full pane line list: counters block, ring block, tool
@@ -677,14 +717,11 @@ impl ProviderPicker {
 /// Parse host from an endpoint URL (strip scheme, take up to `/`).
 #[must_use]
 pub fn host_from_endpoint(endpoint: &str) -> String {
-    let without_scheme = if let Some(rest) = endpoint.strip_prefix("https://")
-    {
-        rest
-    } else if let Some(rest) = endpoint.strip_prefix("http://") {
-        rest
-    } else {
-        endpoint
-    };
+    if !siralos_core::composition::is_valid_http_endpoint(endpoint) {
+        return "—".to_owned();
+    }
+    let without_scheme =
+        endpoint.split_once("://").map(|(_, rest)| rest).unwrap_or(endpoint);
     let host = without_scheme.split('/').next().unwrap_or(without_scheme);
     if host.is_empty() {
         "—".to_owned()
@@ -706,11 +743,10 @@ pub fn provider_entries_from_session(
             let host = endpoint
                 .map(host_from_endpoint)
                 .unwrap_or_else(|| "—".to_owned());
-            let model_disp = model
-                .map(crate::sanitize::sanitize_for_display)
-                .unwrap_or_else(|| "—".to_owned());
+            let model_disp =
+                model.map(safe_model_id).unwrap_or_else(|| "—".to_owned());
             return vec![ProviderEntry {
-                name: crate::sanitize::sanitize_for_display(name),
+                name: safe_display_label(name),
                 host,
                 model: model_disp,
             }];
@@ -772,12 +808,25 @@ impl ProviderAddField {
 /// Model picker state — opened after successful fetch, part of the form modal (S2).
 /// Also opened by bare `/model` as the live switch picker: the same struct
 /// (decision 138), never a second picker.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ModelPicker {
     /// Fetched model ids in server order.
     pub items: Vec<String>,
     /// Currently selected index (Up/Down wraps).
     pub selected: usize,
+}
+
+impl std::fmt::Debug for ModelPicker {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        formatter
+            .debug_struct("ModelPicker")
+            .field("item_count", &self.items.len())
+            .field("selected", &self.selected)
+            .finish()
+    }
 }
 
 impl ModelPicker {
@@ -849,7 +898,10 @@ pub fn model_picker_lines(picker: &ModelPicker) -> Vec<Line<'static>> {
         } else {
             Style::default().fg(Color::White)
         };
-        lines.push(Line::from(format!("    {prefix}{item}")).style(style));
+        lines.push(
+            Line::from(format!("    {prefix}{}", safe_model_id(item)))
+                .style(style),
+        );
     }
     lines.push(
         Line::from(
@@ -870,7 +922,7 @@ pub struct ProtocolPicker {
 }
 
 /// Completed add-flow data — the validated values to write as `[profile]` (S3/S4).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ProviderAddData {
     /// Provider id (display name) validated `[a-z0-9_-]{1,64}`.
     pub provider: String,
@@ -889,7 +941,7 @@ pub struct ProviderAddData {
 }
 
 /// Sequential add-provider form — six fields, fetching + picker integrated (S1/S2).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ProviderAddForm {
     /// Validated url (endpoint) — set after Url advance.
     pub endpoint: Option<String>,
@@ -920,6 +972,262 @@ pub struct ProviderAddForm {
     pub fetch_note: Option<String>,
     /// Protocol picker state — Some when ApiProtocol field picker is open.
     pub protocol_picker: Option<ProtocolPicker>,
+}
+
+fn safe_form_endpoint_for_credential(
+    value: &str,
+    credential: Option<&str>,
+) -> String {
+    if credential.is_some() {
+        "[credential-bearing endpoint]".to_owned()
+    } else {
+        safe_form_endpoint(value)
+    }
+}
+
+fn safe_form_endpoint(value: &str) -> String {
+    if siralos_core::composition::is_valid_http_endpoint(value) {
+        siralos_adapters::provider::safe_endpoint_for_output(value)
+    } else if value.contains("://")
+        || value.contains('@')
+        || value.contains('?')
+        || value.contains('#')
+        || value.to_ascii_lowercase().contains("key:")
+    {
+        "[invalid endpoint]".to_owned()
+    } else {
+        crate::sanitize::sanitize_for_display(value)
+            .chars()
+            .take(512)
+            .collect()
+    }
+}
+
+fn has_line_control(value: &str) -> bool {
+    value.chars().any(|character| {
+        matches!(character, '\n' | '\r' | '\t')
+            || ((character as u32) >= 0x80 && character.is_control())
+    })
+}
+
+fn safe_form_message(value: &str) -> String {
+    if has_line_control(value)
+        || value.contains("key:")
+        || value.contains('@')
+        || value.contains("://")
+    {
+        "[provider detail redacted]".to_owned()
+    } else {
+        crate::sanitize::sanitize_for_display(value)
+    }
+}
+
+/// Project an untrusted provider/model label into a bounded display value.
+/// The terminal sanitizer removes control sequences, but it does not know
+/// whether a label is shaped like a credential; do that check at the final
+/// render boundary as well as at provider ingestion.
+fn safe_display_label(value: &str) -> String {
+    let lower = value.to_ascii_lowercase();
+    if has_line_control(value)
+        || lower.starts_with("sk-")
+        || lower.starts_with("akia")
+        || lower.contains("key:")
+        || lower.contains("secret")
+        || lower.contains("token")
+    {
+        return "[REDACTED]".to_owned();
+    }
+    crate::sanitize::sanitize_for_display(value).chars().take(256).collect()
+}
+
+fn safe_model_id(value: &str) -> String {
+    let lower = value.to_ascii_lowercase();
+    if lower.starts_with("sk-")
+        || lower.starts_with("akia")
+        || lower.contains("key:")
+        || lower.contains("token")
+        || lower.contains("secret")
+    {
+        "[MODEL REDACTED]".to_owned()
+    } else {
+        safe_form_message(value).chars().take(256).collect()
+    }
+}
+
+fn safe_form_message_for_credential(
+    value: &str,
+    credential: Option<&str>,
+) -> String {
+    if credential.is_some() {
+        "[provider detail redacted]".to_owned()
+    } else {
+        safe_form_message(value)
+    }
+}
+
+fn redacted_form_credential(value: Option<&str>) -> Option<String> {
+    value.map(|value| {
+        if value.starts_with("key:") {
+            "key:***".to_owned()
+        } else if value.starts_with("env:") {
+            value.to_owned()
+        } else {
+            "[REDACTED]".to_owned()
+        }
+    })
+}
+
+/// Preserve explicit `key:VALUE` and `env:NAME` forms. A bare legacy
+/// environment name follows the add-form help and is normalized to `env:`;
+/// all other text is a literal key and is retained byte-for-byte.
+fn normalize_credential_input(value: &str) -> Option<String> {
+    if value.is_empty() {
+        None
+    } else if value.starts_with("env:") || value.starts_with("key:") {
+        Some(value.to_owned())
+    } else if siralos_core::composition::is_credential_env_name(value) {
+        Some(format!("env:{value}"))
+    } else {
+        Some(format!("key:{value}"))
+    }
+}
+
+impl std::fmt::Debug for ProviderAddData {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        formatter
+            .debug_struct("ProviderAddData")
+            .field(
+                "provider",
+                &safe_form_message_for_credential(
+                    &self.provider,
+                    self.credential_env.as_deref(),
+                ),
+            )
+            .field(
+                "model",
+                &safe_form_message_for_credential(
+                    &self.model,
+                    self.credential_env.as_deref(),
+                ),
+            )
+            .field(
+                "credential_env",
+                &redacted_form_credential(self.credential_env.as_deref()),
+            )
+            .field(
+                "endpoint",
+                &self.endpoint.as_deref().map(|value| {
+                    safe_form_endpoint_for_credential(
+                        value,
+                        self.credential_env.as_deref(),
+                    )
+                }),
+            )
+            .field("protocol", &self.protocol)
+            .field(
+                "model_display_name",
+                &self.model_display_name.as_deref().map(|value| {
+                    safe_form_message_for_credential(
+                        value,
+                        self.credential_env.as_deref(),
+                    )
+                }),
+            )
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for ProviderAddForm {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        let input = match self.field {
+            ProviderAddField::ApiKey => "key:***".to_owned(),
+            ProviderAddField::Url => safe_form_endpoint_for_credential(
+                &self.input,
+                self.credential_env.as_deref(),
+            ),
+            _ => safe_form_message_for_credential(
+                &self.input,
+                self.credential_env.as_deref(),
+            ),
+        };
+        formatter
+            .debug_struct("ProviderAddForm")
+            .field(
+                "endpoint",
+                &self.endpoint.as_deref().map(|value| {
+                    safe_form_endpoint_for_credential(
+                        value,
+                        self.credential_env.as_deref(),
+                    )
+                }),
+            )
+            .field(
+                "credential_env",
+                &redacted_form_credential(self.credential_env.as_deref()),
+            )
+            .field(
+                "provider",
+                &self.provider.as_deref().map(|value| {
+                    safe_form_message_for_credential(
+                        value,
+                        self.credential_env.as_deref(),
+                    )
+                }),
+            )
+            .field("protocol", &self.protocol)
+            .field(
+                "model",
+                &self.model.as_deref().map(|value| {
+                    safe_form_message_for_credential(
+                        value,
+                        self.credential_env.as_deref(),
+                    )
+                }),
+            )
+            .field(
+                "model_display_name",
+                &self.model_display_name.as_deref().map(|value| {
+                    safe_form_message_for_credential(
+                        value,
+                        self.credential_env.as_deref(),
+                    )
+                }),
+            )
+            .field("field", &self.field)
+            .field("input", &input)
+            .field(
+                "error",
+                &self.error.as_deref().map(|value| {
+                    safe_form_message_for_credential(
+                        value,
+                        self.credential_env.as_deref(),
+                    )
+                }),
+            )
+            .field("completed", &self.completed)
+            .field("fetching_models", &self.fetching_models)
+            .field(
+                "model_picker_count",
+                &self.model_picker.as_ref().map(|picker| picker.items.len()),
+            )
+            .field(
+                "fetch_note",
+                &self.fetch_note.as_deref().map(|value| {
+                    safe_form_message_for_credential(
+                        value,
+                        self.credential_env.as_deref(),
+                    )
+                }),
+            )
+            .field("protocol_picker", &self.protocol_picker)
+            .finish()
+    }
 }
 
 impl Default for ProviderAddForm {
@@ -980,7 +1288,7 @@ impl ProviderAddForm {
 ///
 /// `Eq` is deliberately absent: the reveal debt (S3c) is a float, and `f64`
 /// has no total equality. `PartialEq` is what the tests compare with.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct TuiState {
     /// Transcript entries — bounded ring, oldest dropped when full. Each entry
     /// is a single sanitized line plus an optional local stamp.
@@ -999,9 +1307,12 @@ pub struct TuiState {
     pub pending_approval: Option<ApprovalModal>,
     /// When `true`, the pending approval modal is a provider-removal
     /// confirmation (armed by the "- Remove provider" picker row or
-    /// `/provider remove`): `y` removes via `remove_profile_config`,
+    /// `/provider remove`): `y` removes via `remove_profile_config_at`,
     /// `n`/`Esc` cancels. `false` for ordinary tool approvals.
     pub confirming_provider_removal: bool,
+    /// Secret-free profile revision observed when provider removal was armed.
+    /// It keeps a confirmation prompt from turning into a stale merge.
+    pub pending_profile_write_token: Option<WorkspaceProfileWriteToken>,
     /// Command palette popup (I2): when `Some`, the input starts with `/` and
     /// this holds the filtered catalog entries (case-insensitive prefix filter).
     pub palette: Option<Vec<(String, String)>>,
@@ -1024,6 +1335,11 @@ pub struct TuiState {
     /// this today and the frontend cannot recompute it, so the worker answers
     /// it as a fact (never the value).
     pub credential_resolved: bool,
+    /// Whether `/model <id>` can move the live model for this composition.
+    /// The frontend persists the profile BEFORE the worker applies the switch,
+    /// so it needs this fact to refuse a switch it cannot finish -- otherwise
+    /// the file would claim a model the session never adopted.
+    pub live_model_switchable: bool,
     /// The context-usage suffix the worker's status line carries
     /// (` | ctx N/4096`), empty when the subsystem is off. Cached because a
     /// TRANSIENT status (the add-flow's "fetching models...") must keep the
@@ -1084,11 +1400,52 @@ pub struct TuiState {
     pub busy_since: Option<std::time::Instant>,
     /// Answer text received but not yet revealed (S3c).
     pub stream_buffer: String,
+    /// Byte cursor into `stream_buffer`; avoids shifting the remaining buffer
+    /// once per revealed scalar.
+    stream_cursor: usize,
     /// The revealed text of the INCOMPLETE line, rendered as a growing row
     /// so a long answer appears left to right instead of popping in whole.
     pub stream_tail: String,
     /// How much of `reasoning` has been revealed.
     pub reasoning_shown: usize,
+    /// Monotonic turn identity used to reset turn-scoped output sanitizers.
+    pub turn_epoch: u64,
+}
+
+impl std::fmt::Debug for TuiState {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        formatter
+            .debug_struct("TuiState")
+            .field("input", &"[REDACTED]")
+            .field("prompt_history_len", &self.prompt_history.len())
+            .field(
+                "provider",
+                &self.provider.as_deref().map(|value| {
+                    safe_form_message_for_credential(
+                        value,
+                        self.credential_display.as_deref(),
+                    )
+                }),
+            )
+            .field(
+                "model",
+                &self.model.as_deref().map(|value| {
+                    safe_form_message_for_credential(
+                        value,
+                        self.credential_display.as_deref(),
+                    )
+                }),
+            )
+            .field("endpoint", &self.endpoint.as_ref().map(|_| "[PROJECTED]"))
+            .field("credential_display", &self.credential_display)
+            .field("status", &self.status)
+            .field("stream_buffer_len", &self.stream_buffer.len())
+            .field("reasoning_len", &self.reasoning.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Default for TuiState {
@@ -1101,6 +1458,7 @@ impl Default for TuiState {
             scroll_offset: 0,
             pending_approval: None,
             confirming_provider_removal: false,
+            pending_profile_write_token: None,
             palette: None,
             palette_selected: None,
             provider: None,
@@ -1109,6 +1467,7 @@ impl Default for TuiState {
             protocol: String::new(),
             credential_display: None,
             credential_resolved: false,
+            live_model_switchable: true,
             context_suffix: String::new(),
             provider_picker: None,
             provider_add_form: None,
@@ -1130,8 +1489,10 @@ impl Default for TuiState {
             pending_reasoning_anchor: None,
             busy_since: None,
             stream_buffer: String::new(),
+            stream_cursor: 0,
             stream_tail: String::new(),
             reasoning_shown: 0,
+            turn_epoch: 0,
         }
     }
 }
@@ -1203,6 +1564,7 @@ impl TuiState {
     /// transcript while it runs, so a later anchor would leave the earliest of
     /// them above the block, which is the inversion the owner reported.
     pub fn begin_turn(&mut self, now: std::time::Instant) {
+        self.turn_epoch = self.turn_epoch.wrapping_add(1);
         self.busy_since = Some(now);
         self.pending_reasoning_anchor = Some(self.effective_transcript_len());
     }
@@ -1216,6 +1578,12 @@ impl TuiState {
     pub fn end_turn(&mut self) {
         self.busy_since = None;
         self.pending_reasoning_anchor = None;
+    }
+
+    /// Current turn identity for turn-scoped stream sanitizers.
+    #[must_use]
+    pub fn turn_epoch(&self) -> u64 {
+        self.turn_epoch
     }
 
     /// Release the next character owed to the reader, if any (S3c).
@@ -1240,13 +1608,53 @@ impl TuiState {
             self.reasoning_shown += ch.len_utf8();
             return;
         }
-        if let Some(ch) = self.stream_buffer.chars().next() {
-            self.stream_buffer.remove(0);
+        if self.stream_cursor > self.stream_buffer.len() {
+            self.stream_cursor = 0;
+        }
+        if let Some(ch) =
+            self.stream_buffer[self.stream_cursor..].chars().next()
+        {
+            self.stream_cursor += ch.len_utf8();
+            if self.stream_cursor >= self.stream_buffer.len() {
+                self.stream_buffer.clear();
+                self.stream_cursor = 0;
+            } else if self.stream_cursor > 64 * 1024 {
+                // Split rather than `drain`: draining shifts the entire
+                // remaining buffer for every character after the threshold.
+                let remainder =
+                    self.stream_buffer.split_off(self.stream_cursor);
+                self.stream_buffer = remainder;
+                self.stream_cursor = 0;
+            }
             if ch == '\n' {
                 let line = std::mem::take(&mut self.stream_tail);
                 self.push_line(line);
             } else {
-                self.stream_tail.push(ch);
+                const TAIL_MARKER: &str = "...[truncated]";
+                if self.stream_tail.len() >= MAX_STREAM_BYTES {
+                    if !self.stream_tail.ends_with(TAIL_MARKER) {
+                        let mut keep = MAX_STREAM_BYTES - TAIL_MARKER.len();
+                        while keep > 0
+                            && !self.stream_tail.is_char_boundary(keep)
+                        {
+                            keep -= 1;
+                        }
+                        self.stream_tail.truncate(keep);
+                        self.stream_tail.push_str(TAIL_MARKER);
+                    }
+                } else if ch.len_utf8()
+                    <= MAX_STREAM_BYTES - self.stream_tail.len()
+                {
+                    self.stream_tail.push(ch);
+                } else if !self.stream_tail.ends_with(TAIL_MARKER) {
+                    let mut keep = MAX_STREAM_BYTES - TAIL_MARKER.len();
+                    while keep > 0 && !self.stream_tail.is_char_boundary(keep)
+                    {
+                        keep -= 1;
+                    }
+                    self.stream_tail.truncate(keep);
+                    self.stream_tail.push_str(TAIL_MARKER);
+                }
             }
         }
     }
@@ -1277,7 +1685,17 @@ impl TuiState {
             // then and a stale index must never point past the end.
             self.reasoning_anchor = at.min(self.effective_transcript_len());
         }
-        self.reasoning.push_str(text);
+        let remaining =
+            MAX_REASONING_BUFFER_BYTES.saturating_sub(self.reasoning.len());
+        if text.len() <= remaining {
+            self.reasoning.push_str(text);
+        } else {
+            self.reasoning.push_str(
+                &siralos_core::language::truncate_utf8_bytes(text, remaining),
+            );
+            self.status =
+                "reasoning truncated at the TUI buffer bound".to_owned();
+        }
         let excess = self.reasoning.len().saturating_sub(REASONING_BYTES);
         let droppable = excess.min(self.reasoning_shown);
         if droppable == 0 {
@@ -1365,6 +1783,21 @@ impl TuiState {
         line: String,
         timestamp: Option<String>,
     ) {
+        let line = if line.len() > MAX_TRANSCRIPT_LINE_BYTES {
+            let marker = "... (line truncated)";
+            let content_limit =
+                MAX_TRANSCRIPT_LINE_BYTES.saturating_sub(marker.len());
+            format!(
+                "{}{}",
+                siralos_core::language::truncate_utf8_bytes(
+                    &line,
+                    content_limit
+                ),
+                marker
+            )
+        } else {
+            line
+        };
         // Keep both storages in lockstep.
         if self.transcript.len() >= MAX_TRANSCRIPT_LINES {
             let drain = self.transcript.len() - MAX_TRANSCRIPT_LINES + 1;
@@ -1436,10 +1869,16 @@ impl TuiState {
         if self.prompt_history.last().is_some_and(|last| last == &prompt) {
             return;
         }
+        let prompt = siralos_core::language::truncate_utf8_bytes(
+            &prompt,
+            MAX_INPUT_BYTES,
+        );
         self.prompt_history.push(prompt);
-        if self.prompt_history.len() > 100 {
-            let drain = self.prompt_history.len() - 100;
-            self.prompt_history.drain(0..drain);
+        while self.prompt_history.len() > 100
+            || self.prompt_history.iter().map(String::len).sum::<usize>()
+                > MAX_INPUT_BYTES
+        {
+            self.prompt_history.remove(0);
         }
         self.history_index = None;
         self.history_draft = None;
@@ -1509,13 +1948,11 @@ pub fn compose_status_line(
 ) -> String {
     let prefix = match (provider, model) {
         (Some(p), Some(m)) if !p.is_empty() && !m.is_empty() => {
-            let sp = crate::sanitize::sanitize_for_display(p);
-            let sm = crate::sanitize::sanitize_for_display(m);
+            let sp = safe_display_label(p);
+            let sm = safe_display_label(m);
             format!("{sp} / {sm}")
         }
-        (Some(p), _) if !p.is_empty() => {
-            crate::sanitize::sanitize_for_display(p)
-        }
+        (Some(p), _) if !p.is_empty() => safe_display_label(p),
         _ => "no provider configured".to_owned(),
     };
     if base_status.is_empty() {
@@ -1623,12 +2060,12 @@ pub fn is_working_status(base_status: &str) -> bool {
 pub fn header_text(provider: Option<&str>, model: Option<&str>) -> String {
     match (provider, model) {
         (Some(p), Some(m)) if !p.is_empty() && !m.is_empty() => {
-            let sp = crate::sanitize::sanitize_for_display(p);
-            let sm = crate::sanitize::sanitize_for_display(m);
+            let sp = safe_display_label(p);
+            let sm = safe_display_label(m);
             format!(" Siralos  {sp} / {sm}")
         }
         (Some(p), _) if !p.is_empty() => {
-            let sp = crate::sanitize::sanitize_for_display(p);
+            let sp = safe_display_label(p);
             format!(" Siralos  {sp}")
         }
         _ => " Siralos ".to_owned(),
@@ -1831,18 +2268,20 @@ pub fn draw_with_pane(
     {
         let left = " Siralos ";
         let right_opt: Option<String> = match (&state.provider, &state.model) {
-            (Some(p), Some(m)) if !p.is_empty() && !m.is_empty() => Some(
-                crate::sanitize::sanitize_for_display(&format!("{p} / {m}")),
-            ),
-            (Some(p), _) if !p.is_empty() => {
-                Some(crate::sanitize::sanitize_for_display(p))
+            (Some(p), Some(m)) if !p.is_empty() && !m.is_empty() => {
+                Some(format!(
+                    "{} / {}",
+                    safe_display_label(p),
+                    safe_display_label(m)
+                ))
             }
+            (Some(p), _) if !p.is_empty() => Some(safe_display_label(p)),
             _ => None,
         };
         let width = header_area.width as usize;
-        let left_len = left.chars().count();
+        let left_len = display_width(left);
         let header_string = if let Some(ref right) = right_opt {
-            let right_len = right.chars().count();
+            let right_len = display_width(right);
             let middle = width.saturating_sub(left_len + right_len);
             format!("{}{}{}", left, " ".repeat(middle), right)
         } else {
@@ -2031,8 +2470,10 @@ pub fn draw_with_pane(
         }
     }
 
-    // Input line: `> <input>`
-    let input_text = format!("> {}", state.input);
+    // Input line: `> <input>`. Sanitize at the final render boundary as
+    // well as upstream; pasted control bytes must never reach a widget.
+    let safe_input = crate::sanitize::sanitize_for_display(&state.input);
+    let input_text = format!("> {safe_input}");
     let input = Paragraph::new(input_text.as_str())
         .style(Style::default().fg(Color::Yellow));
     frame.render_widget(input, input_area);
@@ -2047,9 +2488,13 @@ pub fn draw_with_pane(
     // When a modal is pending or the add-form is open, hide the cursor behind
     // the dimmed backdrop (no typing through a modal).
     if state.pending_approval.is_none() && state.provider_add_form.is_none() {
-        let cursor_x = input_area.x + 2 + state.input.len() as u16;
-        let cursor_x =
-            cursor_x.min(input_area.x + input_area.width.saturating_sub(1));
+        let input_width =
+            u16::try_from(display_width(&safe_input)).unwrap_or(u16::MAX);
+        let cursor_x = input_area
+            .x
+            .saturating_add(2)
+            .saturating_add(input_width)
+            .min(input_area.x + input_area.width.saturating_sub(1));
         frame.set_cursor_position((cursor_x, input_area.y));
     }
 
@@ -2081,14 +2526,15 @@ pub fn draw_with_pane(
 
     // Status line — H5: "working" styled distinctly (yellow bold) so the frozen state is unmistakable.
     {
-        let is_working = is_working_status(&state.status);
+        let status = safe_display_label(&state.status);
+        let is_working = is_working_status(&status);
         let status_widget = if is_working {
-            let lower = state.status.to_ascii_lowercase();
+            let lower = status.to_ascii_lowercase();
             if let Some(pos) = lower.find("working") {
                 let end = pos + "working".len();
-                let before = state.status[..pos].to_owned();
-                let mid = state.status[pos..end].to_owned();
-                let after = state.status[end..].to_owned();
+                let before = status[..pos].to_owned();
+                let mid = status[pos..end].to_owned();
+                let after = status[end..].to_owned();
                 let mut spans: Vec<Span<'_>> = Vec::new();
                 if !before.is_empty() {
                     spans.push(Span::styled(
@@ -2110,11 +2556,11 @@ pub fn draw_with_pane(
                 }
                 Paragraph::new(Line::from(spans))
             } else {
-                Paragraph::new(state.status.as_str())
+                Paragraph::new(status.as_str())
                     .style(Style::default().fg(Color::Cyan))
             }
         } else {
-            Paragraph::new(state.status.as_str())
+            Paragraph::new(status.as_str())
                 .style(Style::default().fg(Color::Cyan))
         };
         frame.render_widget(status_widget, status_area);
@@ -2251,8 +2697,11 @@ pub fn draw_with_pane(
             .style(Style::default().bg(Color::Black).fg(Color::Yellow));
         let inner = modal_block.inner(modal_area);
         frame.render_widget(modal_block, modal_area);
-        let text: Vec<Line<'_>> =
-            modal.lines.iter().map(|s| Line::from(s.as_str())).collect();
+        let text: Vec<Line<'_>> = modal
+            .lines
+            .iter()
+            .map(|line| Line::from(safe_form_message(line)))
+            .collect();
         let paragraph = Paragraph::new(Text::from(text))
             .style(Style::default().fg(Color::White).bg(Color::Black))
             .wrap(ratatui::widgets::Wrap { trim: false });
@@ -2285,14 +2734,45 @@ fn provider_add_form_lines(form: &ProviderAddForm) -> Vec<Line<'static>> {
                     && form.protocol_picker.is_some())
             {
                 format!("> {label}:")
+            } else if field == ProviderAddField::ApiKey {
+                "> api key: key:***█".to_owned()
+            } else if field == ProviderAddField::Url {
+                format!(
+                    "> {}: {}█",
+                    label,
+                    safe_form_endpoint_for_credential(
+                        &form.input,
+                        form.credential_env.as_deref(),
+                    )
+                )
             } else {
-                format!("> {}: {}█", label, form.input)
+                format!(
+                    "> {}: {}█",
+                    label,
+                    safe_form_message_for_credential(
+                        &form.input,
+                        form.credential_env.as_deref(),
+                    )
+                )
             }
         } else if let Some(val) = stored {
             if val.is_empty() {
                 format!("  {label}: —")
             } else {
-                format!("  {label}: {val}")
+                let rendered = if field == ProviderAddField::ApiKey {
+                    redacted_form_credential(Some(val)).unwrap_or_default()
+                } else if field == ProviderAddField::Url {
+                    safe_form_endpoint_for_credential(
+                        val,
+                        form.credential_env.as_deref(),
+                    )
+                } else {
+                    safe_form_message_for_credential(
+                        val,
+                        form.credential_env.as_deref(),
+                    )
+                };
+                format!("  {label}: {rendered}")
             }
         } else {
             format!("  {label}:")
@@ -2348,7 +2828,11 @@ fn provider_add_form_lines(form: &ProviderAddForm) -> Vec<Line<'static>> {
                         Style::default().fg(Color::White)
                     };
                     lines.push(
-                        Line::from(format!("    {prefix}{item}")).style(style),
+                        Line::from(format!(
+                            "    {prefix}{}",
+                            safe_model_id(item)
+                        ))
+                        .style(style),
                     );
                 }
                 lines.push(
@@ -2370,7 +2854,7 @@ fn provider_add_form_lines(form: &ProviderAddForm) -> Vec<Line<'static>> {
                 );
             } else if let Some(note) = &form.fetch_note {
                 lines.push(
-                    Line::from(format!("    {note}"))
+                    Line::from(format!("    {}", safe_form_message(note)))
                         .style(Style::default().fg(Color::DarkGray)),
                 );
             }
@@ -2382,7 +2866,7 @@ fn provider_add_form_lines(form: &ProviderAddForm) -> Vec<Line<'static>> {
     );
     if let Some(err) = &form.error {
         lines.push(
-            Line::from(format!("    error: {err}"))
+            Line::from(format!("    error: {}", safe_form_message(err)))
                 .style(Style::default().fg(Color::Red)),
         );
     }
@@ -2535,18 +3019,20 @@ pub fn render_to_buffer_with_pane(
     {
         let left = " Siralos ";
         let right_opt: Option<String> = match (&state.provider, &state.model) {
-            (Some(p), Some(m)) if !p.is_empty() && !m.is_empty() => Some(
-                crate::sanitize::sanitize_for_display(&format!("{p} / {m}")),
-            ),
-            (Some(p), _) if !p.is_empty() => {
-                Some(crate::sanitize::sanitize_for_display(p))
+            (Some(p), Some(m)) if !p.is_empty() && !m.is_empty() => {
+                Some(format!(
+                    "{} / {}",
+                    safe_display_label(p),
+                    safe_display_label(m)
+                ))
             }
+            (Some(p), _) if !p.is_empty() => Some(safe_display_label(p)),
             _ => None,
         };
         let width = header_area.width as usize;
-        let left_len = left.chars().count();
+        let left_len = display_width(left);
         let header_string = if let Some(ref right) = right_opt {
-            let right_len = right.chars().count();
+            let right_len = display_width(right);
             let middle = width.saturating_sub(left_len + right_len);
             format!("{}{}{}", left, " ".repeat(middle), right)
         } else {
@@ -2708,7 +3194,8 @@ pub fn render_to_buffer_with_pane(
         }
     }
 
-    let input_text = format!("> {}", state.input);
+    let safe_input = crate::sanitize::sanitize_for_display(&state.input);
+    let input_text = format!("> {safe_input}");
     let input = Paragraph::new(input_text.as_str())
         .style(Style::default().fg(Color::Yellow));
     input.render(input_area, &mut buf);
@@ -2740,14 +3227,15 @@ pub fn render_to_buffer_with_pane(
 
     // Status line — H5 distinct "working" style.
     {
-        let is_working = is_working_status(&state.status);
+        let status = safe_display_label(&state.status);
+        let is_working = is_working_status(&status);
         let status_widget: Paragraph<'_> = if is_working {
-            let lower = state.status.to_ascii_lowercase();
+            let lower = status.to_ascii_lowercase();
             if let Some(pos) = lower.find("working") {
                 let end = pos + "working".len();
-                let before = state.status[..pos].to_owned();
-                let mid = state.status[pos..end].to_owned();
-                let after = state.status[end..].to_owned();
+                let before = status[..pos].to_owned();
+                let mid = status[pos..end].to_owned();
+                let after = status[end..].to_owned();
                 let mut spans: Vec<Span<'_>> = Vec::new();
                 if !before.is_empty() {
                     spans.push(Span::styled(
@@ -2769,11 +3257,11 @@ pub fn render_to_buffer_with_pane(
                 }
                 Paragraph::new(Line::from(spans))
             } else {
-                Paragraph::new(state.status.as_str())
+                Paragraph::new(status.as_str())
                     .style(Style::default().fg(Color::Cyan))
             }
         } else {
-            Paragraph::new(state.status.as_str())
+            Paragraph::new(status.as_str())
                 .style(Style::default().fg(Color::Cyan))
         };
         status_widget.render(status_area, &mut buf);
@@ -2886,8 +3374,11 @@ pub fn render_to_buffer_with_pane(
             .style(Style::default().bg(Color::Black).fg(Color::Yellow));
         let inner = modal_block.inner(modal_area);
         modal_block.render(modal_area, &mut buf);
-        let text: Vec<Line<'_>> =
-            modal.lines.iter().map(|s| Line::from(s.as_str())).collect();
+        let text: Vec<Line<'_>> = modal
+            .lines
+            .iter()
+            .map(|line| Line::from(safe_form_message(line)))
+            .collect();
         let paragraph = Paragraph::new(Text::from(text))
             .style(Style::default().fg(Color::White).bg(Color::Black))
             .wrap(ratatui::widgets::Wrap { trim: false });
@@ -2911,12 +3402,22 @@ pub struct TuiSink {
     redraw: Option<Rc<dyn Fn()>>,
     /// Last time the hook ran, for throttling a fast stream.
     last_redraw: std::cell::Cell<Option<std::time::Instant>>,
+    /// Defense-in-depth terminal sanitizer for callers that write directly
+    /// through the sink rather than through the session's relay.
+    sanitizer: crate::sanitize::TerminalSanitizer,
+    pending_utf8: Vec<u8>,
 }
 
 impl TuiSink {
     /// Create a sink sharing `state`.
     pub fn new(state: Rc<RefCell<TuiState>>) -> Self {
-        Self { state, redraw: None, last_redraw: std::cell::Cell::new(None) }
+        Self {
+            state,
+            redraw: None,
+            last_redraw: std::cell::Cell::new(None),
+            sanitizer: crate::sanitize::TerminalSanitizer::new(),
+            pending_utf8: Vec::new(),
+        }
     }
 
     /// Install the live loop's redraw hook.
@@ -2950,7 +3451,28 @@ impl TuiSink {
 
 impl Write for TuiSink {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        let text = String::from_utf8_lossy(bytes);
+        // Bound the caller buffer BEFORE UTF-8 decoding. Provider output is
+        // untrusted and a direct sink caller must not make the terminal
+        // allocate an unbounded replacement string.
+        let take = bytes.len().min(MAX_STREAM_BYTES);
+        let mut combined = std::mem::take(&mut self.pending_utf8);
+        combined.extend_from_slice(&bytes[..take]);
+        let decoded = match std::str::from_utf8(&combined) {
+            Ok(text) => {
+                self.pending_utf8.clear();
+                text.to_owned()
+            }
+            Err(error) if error.error_len().is_none() => {
+                let valid = error.valid_up_to();
+                self.pending_utf8 = combined[valid..].to_vec();
+                String::from_utf8_lossy(&combined[..valid]).into_owned()
+            }
+            Err(_) => {
+                self.pending_utf8.clear();
+                String::from_utf8_lossy(&combined).into_owned()
+            }
+        };
+        let text = self.sanitizer.push(&decoded);
         {
             let mut state = self.state.borrow_mut();
             // S3c: hand the text to the REVEAL rather than the transcript, so a
@@ -2958,17 +3480,50 @@ impl Write for TuiSink {
             // time, and an unfinished line is visible as it grows. The
             // CHARACTER is released by the paint (one per frame), never here:
             // this only buffers and asks for the frame that will release it.
-            state.stream_buffer.push_str(&text);
+            if take < bytes.len() {
+                state.status =
+                    "response truncated at the TUI stream bound".to_owned();
+            }
+            let remaining =
+                MAX_STREAM_BYTES.saturating_sub(state.stream_buffer.len());
+            if remaining == 0 && !text.is_empty() {
+                state.status =
+                    "response truncated at the TUI stream bound".to_owned();
+                drop(state);
+                self.redraw_due();
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "TUI stream byte bound reached",
+                ));
+            }
+            if text.len() <= remaining {
+                state.stream_buffer.push_str(&text);
+            } else {
+                let accepted = siralos_core::language::truncate_utf8_bytes(
+                    &text, remaining,
+                );
+                state.stream_buffer.push_str(&accepted);
+                state.status =
+                    "response truncated at the TUI stream bound".to_owned();
+                drop(state);
+                self.redraw_due();
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "TUI stream byte bound reached",
+                ));
+            }
         }
         self.redraw_due();
-        Ok(bytes.len())
+        Ok(take)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        // Do not automatically flush partial — the session's `drain_events`
-        // writes complete lines with newlines. We expose `flush_partial` for
-        // callers that need it, but `Write::flush` is a no-op to avoid
-        // injecting half-lines.
+        // Do not emit a dangling escape fragment, but do reset the
+        // stateful parser so the next turn cannot inherit an unfinished
+        // escape/OSC sequence. Likewise, discard an incomplete UTF-8 scalar
+        // at the turn boundary rather than joining it to the next turn.
+        self.pending_utf8.clear();
+        let _ = self.sanitizer.flush();
         Ok(())
     }
 }
@@ -3245,6 +3800,12 @@ fn validate_endpoint_value(value: &str) -> Result<(), String> {
                 .to_owned(),
         );
     }
+    if !siralos_core::composition::is_valid_http_endpoint(value) {
+        return Err(
+            "Endpoint must have a valid HTTP(S) authority without userinfo, query, fragment, or controls."
+                .to_owned(),
+        );
+    }
     Ok(())
 }
 
@@ -3336,9 +3897,17 @@ pub fn apply_turn_key(
     key: crossterm::event::KeyEvent,
 ) -> bool {
     use crossterm::event::{KeyCode, KeyModifiers};
+    if key.kind != crossterm::event::KeyEventKind::Press {
+        return false;
+    }
     // A chorded key belongs to the loop, not to the type-ahead: Ctrl+C is
     // the exit key, and folding it into the prompt would kill it for the
     // whole turn.
+    if key.code == KeyCode::Char('c')
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+    {
+        return true;
+    }
     if key.modifiers.contains(KeyModifiers::CONTROL)
         || key.modifiers.contains(KeyModifiers::ALT)
     {
@@ -3347,7 +3916,9 @@ pub fn apply_turn_key(
     match key.code {
         KeyCode::Esc => true,
         KeyCode::Char(ch) => {
-            state.input.push(ch);
+            if state.input.len() + ch.len_utf8() <= MAX_INPUT_BYTES {
+                state.input.push(ch);
+            }
             false
         }
         KeyCode::Backspace => {
@@ -3486,6 +4057,11 @@ pub fn handle_key(
                 let current = form.input.clone();
                 let trimmed = current.trim().to_owned();
                 let field = form.field;
+                let field_value = if field == ProviderAddField::ApiKey {
+                    current.clone()
+                } else {
+                    trimmed.clone()
+                };
                 // Validate current field and advance or error.
                 // Picker interception for Protocol field: Enter selects highlighted protocol.
                 if form.field == ProviderAddField::ApiProtocol
@@ -3587,35 +4163,29 @@ pub fn handle_key(
                         form.input.clear();
                     }
                     ProviderAddField::ApiKey => {
-                        let credential_opt = if trimmed.is_empty() {
-                            None
-                        } else if trimmed.starts_with("env:") {
-                            Some(trimmed.clone())
-                        } else {
-                            Some(format!("key:{}", trimmed))
-                        };
+                        let credential_opt =
+                            normalize_credential_input(&field_value);
                         form.credential_env = credential_opt;
                         form.field = ProviderAddField::ApiProtocol;
                         // Open protocol picker with pre-selected item
                         open_protocol_picker(form);
-                        // S2 fetch: trigger only when url is non-empty — blocking with freeze documented.
-                        let url_opt = form.endpoint.clone();
-                        if let Some(ep) = url_opt.as_deref() {
-                            if !ep.is_empty() {
-                                form.fetching_models = true;
-                                form.fetch_note = None;
-                                form.model_picker = None;
-                            } else {
-                                form.fetching_models = false;
-                            }
-                        } else {
-                            form.fetching_models = false;
-                        }
+                        // Model discovery is deferred until the protocol is
+                        // selected; the route shape is part of the probe.
+                        form.fetching_models = false;
                     }
                     ProviderAddField::ApiProtocol => {
                         form.protocol = Some(trimmed);
                         form.protocol_picker = None;
                         form.field = ProviderAddField::Model;
+                        if form
+                            .endpoint
+                            .as_deref()
+                            .is_some_and(|endpoint| !endpoint.is_empty())
+                        {
+                            form.fetching_models = true;
+                            form.fetch_note = None;
+                            form.model_picker = None;
+                        }
                         // When entering Model field, if picker already populated (fetch completed while on prior fields),
                         // it will render inline; otherwise free text.
                         form.input.clear();
@@ -3653,15 +4223,36 @@ pub fn handle_key(
                         if let (Some(provider), Some(model)) =
                             (form.provider.clone(), form.model.clone())
                         {
-                            let protocol =
+                            let named_provider = provider.to_ascii_lowercase();
+                            let is_named = matches!(
+                                named_provider.as_str(),
+                                "openai" | "anthropic"
+                            );
+                            let protocol = if named_provider == "openai" {
+                                "openai-completions".to_owned()
+                            } else if named_provider == "anthropic" {
+                                "anthropic-messages".to_owned()
+                            } else {
                                 form.protocol.clone().unwrap_or_else(|| {
                                     "openai-completions".to_owned()
-                                });
+                                })
+                            };
                             form.completed = Some(ProviderAddData {
-                                provider,
+                                provider: if is_named {
+                                    named_provider
+                                } else {
+                                    provider
+                                },
                                 model,
                                 credential_env: form.credential_env.clone(),
-                                endpoint: form.endpoint.clone(),
+                                // Named adapters own fixed routes; a custom
+                                // endpoint/protocol would be rejected by the
+                                // registry and break the next compose.
+                                endpoint: if is_named {
+                                    None
+                                } else {
+                                    form.endpoint.clone()
+                                },
                                 protocol,
                                 model_display_name: form
                                     .model_display_name
@@ -3832,6 +4423,11 @@ pub fn handle_key(
                 let current = form.input.clone();
                 let trimmed = current.trim().to_owned();
                 let field = form.field;
+                let field_value = if field == ProviderAddField::ApiKey {
+                    current.clone()
+                } else {
+                    trimmed.clone()
+                };
                 let validation: Result<(), String> = match field {
                     ProviderAddField::DisplayName => {
                         if trimmed.is_empty() {
@@ -3902,29 +4498,14 @@ pub fn handle_key(
                         form.input.clear();
                     }
                     ProviderAddField::ApiKey => {
-                        let credential_opt = if trimmed.is_empty() {
-                            None
-                        } else if trimmed.starts_with("env:") {
-                            Some(trimmed.clone())
-                        } else {
-                            Some(format!("key:{}", trimmed))
-                        };
+                        let credential_opt =
+                            normalize_credential_input(&field_value);
                         form.credential_env = credential_opt;
                         form.field = ProviderAddField::ApiProtocol;
                         open_protocol_picker(form);
-                        // S2 fetch: trigger only when url is non-empty — blocking with freeze documented.
-                        let url_opt = form.endpoint.clone();
-                        if let Some(ep) = url_opt.as_deref() {
-                            if !ep.is_empty() {
-                                form.fetching_models = true;
-                                form.fetch_note = None;
-                                form.model_picker = None;
-                            } else {
-                                form.fetching_models = false;
-                            }
-                        } else {
-                            form.fetching_models = false;
-                        }
+                        // Model discovery is deferred until the protocol is
+                        // selected; the route shape is part of the probe.
+                        form.fetching_models = false;
                     }
                     ProviderAddField::ApiProtocol => {
                         form.protocol = Some(trimmed);
@@ -4016,7 +4597,9 @@ pub fn handle_key(
                 if ch.is_control() {
                     return false;
                 }
-                form.input.push(ch);
+                if form.input.len() + ch.len_utf8() <= MAX_INPUT_BYTES {
+                    form.input.push(ch);
+                }
                 form.error = None;
                 return false;
             }
@@ -4296,7 +4879,9 @@ pub fn handle_key(
             false
         }
         (KeyCode::Char(ch), _) => {
-            state.input.push(ch);
+            if state.input.len() + ch.len_utf8() <= MAX_INPUT_BYTES {
+                state.input.push(ch);
+            }
             state.update_palette();
             false
         }
@@ -4379,10 +4964,16 @@ pub fn open_provider_add_form(state: &mut TuiState) {
 /// not a second picker. Selecting an entry arms `pending_model_switch`,
 /// which the interactive loop resolves through the same switch-and-persist
 /// as `/model <id>`. An empty fetch never opens (the caller reports it
-/// truthfully instead). Sanitizer note: fetched ids render verbatim like
-/// the add-flow picker; the switch itself validates the id against the
-/// core model rule before anything is written or messaged.
+/// truthfully instead). Fetched ids are retained byte-for-byte in the
+/// picker; `model_picker_lines` applies the display mask only at render
+/// time. The switch itself validates the id against the core model rule
+/// before anything is written or messaged.
 pub fn open_model_switch_picker(state: &mut TuiState, items: Vec<String>) {
+    let items: Vec<String> = items
+        .into_iter()
+        .filter(|item| siralos_core::composition::is_model_id(item))
+        .take(1024)
+        .collect();
     if items.is_empty() {
         return;
     }

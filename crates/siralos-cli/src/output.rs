@@ -190,6 +190,22 @@ pub fn format_context_audit(
     out
 }
 
+fn safe_domain_label(value: &str) -> String {
+    let lower = value.to_ascii_lowercase();
+    if value.chars().any(char::is_control)
+        || value.len() > 512
+        || lower.contains("sk-")
+        || lower.contains("key:")
+        || lower.contains("token")
+        || lower.contains("secret")
+        || lower.contains("credential")
+    {
+        "[REDACTED]".to_owned()
+    } else {
+        value.to_owned()
+    }
+}
+
 /// Render the installed domains view (`/domains`): the deterministic
 /// empty state, or the recorded plugin list sorted by id.
 pub fn format_domains(records: &[PluginRecord]) -> String {
@@ -209,7 +225,9 @@ pub fn format_domains(records: &[PluginRecord]) -> String {
                 .collect::<String>();
             format!(
                 "  {} (digest {}, path {})",
-                record.id, short_digest, record.path,
+                safe_domain_label(&record.id),
+                short_digest,
+                safe_domain_label(&record.path),
             )
         })
         .collect::<Vec<_>>();

@@ -36,16 +36,32 @@ use siralos_core::tool::ToolLoopEvent;
 
 use crate::interactive::{InteractiveOptions, compose_session};
 use crate::sanitize::sanitize_for_display;
-use crate::session_worker::WorkerSession;
+use crate::session_worker::{FlushOutcome, WorkerSession};
 
 /// Stable id of the evaluation task set.
 pub const EVALUATION_CORPUS_ID: &str = "siralos-evaluation-smoke";
-/// Wall-time budget for ONE prompt turn, when a target does not set its own.
+/// Wall-time budget for accepting events from one prompt turn when a target
+/// does not set its own; a separate bounded quiesce grace may follow.
 pub const DEFAULT_TURN_TIMEOUT: Duration = Duration::from_secs(120);
+/// Ceiling for one prompt turn's wall-time budget, whatever a target sets. An
+/// evaluation runs unattended, so an unbounded or absurd target timeout is a
+/// resource-exhaustion lever, not a preference.
+pub const MAX_TURN_TIMEOUT: Duration = Duration::from_secs(600);
+/// Ceiling on how many targets one evaluation compares.
+pub const MAX_EVALUATION_TARGETS: usize = 64;
 /// Event budget for ONE prompt turn.
 pub const MAX_TURN_EVENTS: usize = 4096;
+/// Aggregate UTF-8 byte budget for the answer collected from one turn.
+pub const MAX_ANSWER_BYTES: usize = 64 * 1024;
+/// Marker appended when the aggregate answer budget is exceeded. It is part
+/// of the byte budget, so the resulting string is always within the cap.
+const ANSWER_TRUNCATION_MARKER: &str = "...[truncated]";
 /// How long an idle poll waits before checking the turn deadline again.
 const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(1);
+/// Bounded cooperative drain budget after cancellation or a terminal event.
+const QUIESCE_TIMEOUT: Duration = Duration::from_millis(250);
+/// Upper bound on discarded events while quiescing a cancelled response.
+const MAX_QUIESCE_EVENTS: usize = 256;
 
 /// The evaluation task set: three bounded cases with exact expectations.
 ///
@@ -86,12 +102,31 @@ pub fn evaluation_corpus() -> EvaluationCorpus {
 /// The provider, the model and (for a replay target) the store all come from
 /// that profile, read exactly as a real session reads it -- the runner applies no
 /// identity of its own.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct EvaluationTarget {
     /// Workspace root the session is composed for.
     pub workspace_root: PathBuf,
-    /// Wall-time budget for one prompt turn.
+    /// Optional trusted user configuration path used for composition.
+    pub config_path: Option<PathBuf>,
+    /// Wall-time budget for accepting events from one prompt turn. A separate,
+    /// bounded quiesce grace may follow after cancellation.
     pub turn_timeout: Duration,
+}
+
+/// Absolute target paths are host-only; diagnostics and reports use the
+/// workspace-relative projection instead.
+impl fmt::Debug for EvaluationTarget {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EvaluationTarget")
+            .field("workspace_root", &"[ABSOLUTE]")
+            .field(
+                "config_path",
+                &self.config_path.as_ref().map(|_| "[ABSOLUTE]"),
+            )
+            .field("turn_timeout", &self.turn_timeout)
+            .finish()
+    }
 }
 
 impl EvaluationTarget {
@@ -100,8 +135,30 @@ impl EvaluationTarget {
     pub fn new(workspace_root: impl Into<PathBuf>) -> Self {
         Self {
             workspace_root: workspace_root.into(),
+            config_path: None,
             turn_timeout: DEFAULT_TURN_TIMEOUT,
         }
+    }
+
+    /// Construct a target with an explicit trusted user-config path. The
+    /// workspace is never searched for this file: a workspace-controlled
+    /// approval would defeat the profile trust boundary.
+    #[must_use]
+    pub fn with_config(
+        workspace_root: impl Into<PathBuf>,
+        config_path: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            workspace_root: workspace_root.into(),
+            config_path: Some(config_path.into()),
+            turn_timeout: DEFAULT_TURN_TIMEOUT,
+        }
+    }
+
+    /// The effective turn budget, clamped to [`MAX_TURN_TIMEOUT`].
+    #[must_use]
+    pub fn effective_turn_timeout(&self) -> Duration {
+        self.turn_timeout.min(MAX_TURN_TIMEOUT)
     }
 }
 
@@ -117,6 +174,18 @@ pub enum EvaluationRunError {
     Composition(String),
     /// A prompt turn could not be sent.
     Prompt(String),
+    /// A cancelled turn did not reach a quiescent terminal state.
+    Quiesce(String),
+    /// The single replay-store flush did not complete successfully.
+    Flush(String),
+    /// A turn failure and a replay-flush failure both occurred; both causes
+    /// are retained for the finalizer.
+    Finalization {
+        /// The typed primary turn failure.
+        turn: Box<EvaluationRunError>,
+        /// The typed persistence failure.
+        flush: Box<EvaluationRunError>,
+    },
     /// The runs could not be compared.
     Comparison(String),
 }
@@ -132,6 +201,18 @@ impl fmt::Display for EvaluationRunError {
             }
             Self::Prompt(message) => {
                 write!(formatter, "evaluation prompt: {message}")
+            }
+            Self::Quiesce(message) => {
+                write!(formatter, "evaluation turn quiesce: {message}")
+            }
+            Self::Flush(message) => {
+                write!(formatter, "evaluation replay flush: {message}")
+            }
+            Self::Finalization { turn, flush } => {
+                write!(
+                    formatter,
+                    "evaluation turn and replay flush failed: {turn}; {flush}"
+                )
             }
             Self::Comparison(message) => {
                 write!(formatter, "evaluation comparison: {message}")
@@ -158,7 +239,11 @@ pub struct EvaluationReport {
 /// # Errors
 ///
 /// Returns [`EvaluationRunError`] when the task set is malformed, the session
-/// cannot be composed, or a prompt cannot be sent.
+/// cannot be composed, a prompt cannot be sent, a cancelled turn cannot
+/// quiesce, or the replay store cannot be flushed. If both the turn and the
+/// finalizer fail, the returned [`EvaluationRunError::Finalization`] retains
+/// both typed causes. The flush is attempted even after a prompt or quiesce
+/// failure, so persistence evidence is never lost on an early return.
 pub fn run_evaluation(
     corpus: &EvaluationCorpus,
     target: &EvaluationTarget,
@@ -167,7 +252,7 @@ pub fn run_evaluation(
         .map_err(|error| EvaluationRunError::Corpus(error.message))?;
     let started = Instant::now();
     let mut session = compose_session(InteractiveOptions {
-        config_path: None,
+        config_path: target.config_path.as_deref(),
         workspace_root: Some(target.workspace_root.as_path()),
     })
     .map_err(|error| EvaluationRunError::Composition(error.to_string()))?;
@@ -194,29 +279,38 @@ pub fn run_evaluation(
     };
     let mut cases = corpus.cases.clone();
     cases.sort_by(|left, right| left.id.cmp(&right.id));
-    for case in &cases {
-        let turn =
-            drive_turn(&mut session, &case.prompt, target.turn_timeout)?;
-        outcome.cases_run += 1;
-        outcome.turns += 1;
-        outcome.tool_rounds += turn.tool_rounds;
-        if turn.cancelled {
-            outcome.cancelled = true;
+    // Keep the task loop separate from the finalizer. In particular, an early
+    // prompt failure must not skip the one replay flush that owns the
+    // persistence evidence.
+    let run_result = (|| -> Result<(), EvaluationRunError> {
+        for case in &cases {
+            let turn = drive_turn(
+                &mut session,
+                &case.prompt,
+                target.effective_turn_timeout(),
+            )?;
+            outcome.cases_run += 1;
+            outcome.turns += 1;
+            outcome.tool_rounds += turn.tool_rounds;
+            if turn.cancelled {
+                outcome.cancelled = true;
+            }
+            if let Some(failure) = &turn.failure {
+                record_failure(&mut outcome, failure);
+            }
+            if turn.answer.trim_end() == case.expected {
+                outcome.cases_passed += 1;
+            } else {
+                // The answer is NOT recorded: the completion is untrusted data
+                // and can be arbitrarily long. The mismatch is the evidence.
+                record_failure(
+                    &mut outcome,
+                    &format!("case {} did not match the expectation", case.id),
+                );
+            }
         }
-        if let Some(failure) = &turn.failure {
-            record_failure(&mut outcome, failure);
-        }
-        if turn.answer.trim_end() == case.expected {
-            outcome.cases_passed += 1;
-        } else {
-            // The answer is NOT recorded: the completion is untrusted data and
-            // can be arbitrarily long. The mismatch is the evidence.
-            record_failure(
-                &mut outcome,
-                &format!("case {} did not match the expectation", case.id),
-            );
-        }
-    }
+        Ok(())
+    })();
     // Usage is whatever the provider reported through the recording seam, and
     // nothing when it reported none (absent stays absent, never a zero).
     if let Some(usage) = session.usage_totals() {
@@ -225,11 +319,45 @@ pub fn run_evaluation(
         outcome.cached_tokens = usage.cached_tokens;
     }
     // The single-owner flush (decision 78): a record-replay profile persists
-    // its store here, and a session without a recorder flushes nothing.
-    session.flush();
+    // its store here, and a session without a recorder reports that explicitly.
+    // The typed seam is mandatory here: a log line is not a successful
+    // evaluation when the evidence could not be persisted.
+    let flush_result = session.flush_result();
     outcome.wall_ms =
         u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-    Ok(outcome)
+    match (run_result, flush_result) {
+        (
+            Ok(()),
+            Ok(FlushOutcome::NoRecorder | FlushOutcome::Persisted { .. }),
+        ) => Ok(outcome),
+        (Ok(()), Ok(FlushOutcome::Legacy)) => {
+            Err(EvaluationRunError::Flush(bounded_failure(
+                "replay flush outcome is unavailable; typed persistence evidence is missing",
+            )))
+        }
+        (Ok(()), Err(error)) => {
+            Err(EvaluationRunError::Flush(bounded_failure(&error.to_string())))
+        }
+        (Err(error), Ok(FlushOutcome::Legacy)) => {
+            let flush = EvaluationRunError::Flush(bounded_failure(
+                "replay flush outcome is unavailable; typed persistence evidence is missing",
+            ));
+            Err(EvaluationRunError::Finalization {
+                turn: Box::new(error),
+                flush: Box::new(flush),
+            })
+        }
+        (Err(error), Ok(_)) => Err(error),
+        (Err(error), Err(flush_error)) => {
+            let flush = EvaluationRunError::Flush(bounded_failure(&format!(
+                "replay flush failed: {flush_error}"
+            )));
+            Err(EvaluationRunError::Finalization {
+                turn: Box::new(error),
+                flush: Box::new(flush),
+            })
+        }
+    }
 }
 
 /// Run the task set against every target and compare the records.
@@ -237,11 +365,16 @@ pub fn run_evaluation(
 /// # Errors
 ///
 /// Returns [`EvaluationRunError`] when any run fails or the comparison cannot
-/// be built (an empty target list is a comparison error).
+/// be built (an empty or over-long target list is a comparison error).
 pub fn evaluate_targets(
     corpus: &EvaluationCorpus,
     targets: &[EvaluationTarget],
 ) -> Result<EvaluationReport, EvaluationRunError> {
+    if targets.len() > MAX_EVALUATION_TARGETS {
+        return Err(EvaluationRunError::Comparison(format!(
+            "at most {MAX_EVALUATION_TARGETS} targets are compared"
+        )));
+    }
     let mut runs = Vec::with_capacity(targets.len());
     for target in targets {
         runs.push(run_evaluation(corpus, target)?);
@@ -345,73 +478,247 @@ pub(crate) struct TurnOutcome {
     pub(crate) tool_rounds: usize,
     /// The turn was cancelled.
     pub(crate) cancelled: bool,
+    /// The answer was explicitly shortened at [`MAX_ANSWER_BYTES`].
+    pub(crate) answer_truncated: bool,
     /// A failure the turn reported, or one the runner detected.
     pub(crate) failure: Option<String>,
 }
 
+/// Truncate to a byte limit without splitting a UTF-8 scalar.
+fn truncate_utf8_prefix(value: &mut String, limit: usize) {
+    let mut end = limit.min(value.len());
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value.truncate(end);
+}
+
+/// Append a provider text delta under the aggregate answer bound.
+///
+/// Returns `true` when the delta crossed the bound. The marker is included in
+/// the bound and the function never accepts more bytes than
+/// [`MAX_ANSWER_BYTES`], including when the incoming delta is a single huge
+/// string.
+fn append_bounded_answer(answer: &mut String, text: &str) -> bool {
+    if text.len() <= MAX_ANSWER_BYTES.saturating_sub(answer.len()) {
+        answer.push_str(text);
+        return false;
+    }
+
+    let prefix_budget =
+        MAX_ANSWER_BYTES.saturating_sub(ANSWER_TRUNCATION_MARKER.len());
+    if answer.len() > prefix_budget {
+        truncate_utf8_prefix(answer, prefix_budget);
+    }
+    let remaining = prefix_budget.saturating_sub(answer.len());
+    let mut end = 0;
+    for (offset, character) in text.char_indices() {
+        let next = offset.saturating_add(character.len_utf8());
+        if next > remaining {
+            break;
+        }
+        end = next;
+    }
+    answer.push_str(&text[..end]);
+    answer.push_str(ANSWER_TRUNCATION_MARKER);
+    true
+}
+
+fn mark_deadline<S: WorkerSession>(
+    session: &mut S,
+    outcome: &mut TurnOutcome,
+    timeout: Duration,
+) {
+    session.cancel();
+    outcome.cancelled = true;
+    if outcome.failure.is_none() {
+        outcome.failure = Some(format!(
+            "turn did not settle within {} ms and was cancelled",
+            timeout.as_millis()
+        ));
+    }
+}
+
+fn drain_until_settled<S: WorkerSession>(
+    session: &mut S,
+    timeout: Duration,
+) -> bool {
+    let Some(deadline) = Instant::now().checked_add(timeout) else {
+        return false;
+    };
+    let mut drained = 0usize;
+    while session.is_responding() {
+        if drained >= MAX_QUIESCE_EVENTS || Instant::now() >= deadline {
+            return false;
+        }
+        match session.poll_event() {
+            Some(_) => drained += 1,
+            None => {
+                if !session.is_responding() {
+                    return true;
+                }
+                std::thread::sleep(IDLE_POLL_INTERVAL);
+            }
+        }
+    }
+    true
+}
+
 /// Send one prompt and drain the turn to its end.
 ///
-/// The turn is bounded twice: by event count (a runaway stream) and by wall time
-/// (a provider that never settles). Exceeding either cancels the turn and records
-/// a failure, so an evaluation can never hang the gate. The wall-time check
-/// happens between events, so one blocking provider call is not interrupted.
+/// The response is bounded by event count, aggregate answer bytes, and wall
+/// time. The wall deadline is checked before polling and again before accepting
+/// the polled event, so an event that arrives just after the deadline cannot be
+/// mistaken for a live answer. Once a bound is exceeded, the bounded
+/// [`QUIESCE_TIMEOUT`] cleanup grace drains cancellation evidence but never
+/// accepts new answer data. A blocking provider call itself remains cooperative
+/// because the synchronous `poll_event` seam has no cancellation channel.
 pub(crate) fn drive_turn<S: WorkerSession>(
     session: &mut S,
     prompt: &str,
     timeout: Duration,
 ) -> Result<TurnOutcome, EvaluationRunError> {
-    session.send_prompt(prompt).map_err(EvaluationRunError::Prompt)?;
     let mut outcome = TurnOutcome::default();
-    let deadline = Instant::now() + timeout;
+    // Start the clock before the fallible/blocking start operation. A transport
+    // that returns after the budget is still handled as a deadline violation;
+    // making the provider read itself abortable is a separate transport seam.
+    // `checked_add` keeps an absurd caller-supplied duration from panicking.
+    // A clock that cannot represent the requested deadline fails closed as
+    // already expired; normal finite budgets get the exact wall bound.
+    let deadline = Instant::now().checked_add(timeout);
+    let deadline_reached = || match deadline {
+        Some(limit) => Instant::now() >= limit,
+        None => true,
+    };
+    if let Err(error) = session.send_prompt(prompt) {
+        // A provider may have started partially before reporting the refusal;
+        // request cancellation and restore the state before the caller's final
+        // replay flush.
+        if session.is_responding() {
+            session.cancel();
+            if !drain_until_settled(session, QUIESCE_TIMEOUT) {
+                session.cancel();
+                return Err(EvaluationRunError::Quiesce(bounded_failure(
+                    &format!(
+                        "{error}; cancelled turn did not quiesce within {} ms",
+                        QUIESCE_TIMEOUT.as_millis()
+                    ),
+                )));
+            }
+            session.turn_settled();
+        }
+        return Err(EvaluationRunError::Prompt(error));
+    }
     let mut events = 0usize;
+    let mut quiesce_required = false;
+    let mut terminal_seen = false;
+    if deadline_reached() {
+        mark_deadline(session, &mut outcome, timeout);
+        quiesce_required = true;
+    }
     while session.is_responding() {
-        if let Some(event) = session.poll_event() {
+        // Check before the blocking poll as well as after it. In particular, a
+        // zero timeout must not accept a delta that was already queued.
+        if deadline_reached() {
+            mark_deadline(session, &mut outcome, timeout);
+            quiesce_required = true;
+            break;
+        }
+        let event = session.poll_event();
+        // Do not process any event, or treat an empty poll as completion, after
+        // the wall deadline. The check is deliberately after `poll_event` as
+        // well as before it: a provider can return a queued event just late.
+        if deadline_reached() {
+            mark_deadline(session, &mut outcome, timeout);
+            quiesce_required = true;
+            break;
+        }
+        if let Some(event) = event {
             events += 1;
             if events > MAX_TURN_EVENTS {
                 session.cancel();
                 outcome.cancelled = true;
-                outcome.failure = Some(format!(
-                    "turn exceeded {MAX_TURN_EVENTS} events and was cancelled"
-                ));
+                if outcome.failure.is_none() {
+                    outcome.failure = Some(format!(
+                        "turn exceeded {MAX_TURN_EVENTS} events and was cancelled"
+                    ));
+                }
+                quiesce_required = true;
                 break;
             }
             match event {
                 ToolLoopEvent::TextDelta { text } => {
-                    outcome.answer.push_str(&text);
+                    if append_bounded_answer(&mut outcome.answer, &text) {
+                        outcome.answer_truncated = true;
+                        outcome.cancelled = true;
+                        let truncation_failure = format!(
+                            "turn answer exceeded the {MAX_ANSWER_BYTES}-byte aggregate cap; answer was truncated and the turn was cancelled"
+                        );
+                        outcome.failure = Some(match outcome.failure.take() {
+                            Some(previous) => {
+                                format!("{previous}; {truncation_failure}")
+                            }
+                            None => truncation_failure,
+                        });
+                        session.cancel();
+                        quiesce_required = true;
+                        break;
+                    }
                 }
                 ToolLoopEvent::ToolStarted { .. } => {
                     // R7.2 pairs one call with one result per round, so one
                     // started call is one round.
                     outcome.tool_rounds += 1;
                 }
-                ToolLoopEvent::ResponseFailed { message }
-                | ToolLoopEvent::ToolFailed { message, .. } => {
+                ToolLoopEvent::ResponseFailed { message } => {
+                    outcome.failure = Some(message);
+                    terminal_seen = true;
+                    break;
+                }
+                ToolLoopEvent::ToolFailed { message, .. } => {
                     outcome.failure = Some(message);
                 }
                 ToolLoopEvent::ResponseCancelled => {
                     outcome.cancelled = true;
+                    terminal_seen = true;
+                    break;
+                }
+                ToolLoopEvent::ResponseCompleted => {
+                    terminal_seen = true;
+                    break;
                 }
                 ToolLoopEvent::ReasoningDelta { .. }
                 | ToolLoopEvent::ResponseStarted
-                | ToolLoopEvent::ResponseCompleted
                 | ToolLoopEvent::ToolCompleted { .. }
                 | ToolLoopEvent::ToolCancelled { .. }
                 | ToolLoopEvent::ProviderPending
                 | ToolLoopEvent::ContextPressure { .. } => {}
             }
-        } else if Instant::now() >= deadline {
-            session.cancel();
-            outcome.cancelled = true;
-            outcome.failure = Some(format!(
-                "turn did not settle within {} ms and was cancelled",
-                timeout.as_millis()
-            ));
-            break;
         } else {
             std::thread::sleep(IDLE_POLL_INTERVAL);
         }
     }
-    // The demand loop runs where the frontends run it: after the turn's events.
+    if (quiesce_required || terminal_seen)
+        && !drain_until_settled(session, QUIESCE_TIMEOUT)
+    {
+        // Make one final cancellation request before reporting the
+        // cleanup failure; some providers expose cancellation only at
+        // their next poll boundary.
+        session.cancel();
+        let detail = match outcome.failure.take() {
+            Some(previous) => format!(
+                "{previous}; cancelled turn did not quiesce within {} ms",
+                QUIESCE_TIMEOUT.as_millis()
+            ),
+            None => format!(
+                "cancelled turn did not quiesce within {} ms",
+                QUIESCE_TIMEOUT.as_millis()
+            ),
+        };
+        return Err(EvaluationRunError::Quiesce(bounded_failure(&detail)));
+    }
+    // The demand loop runs where the frontends run it: after the turn's events
+    // and after the terminal sentinel has restored the application state.
     session.turn_settled();
     Ok(outcome)
 }
@@ -520,6 +827,7 @@ mod tests {
                 cached_tokens: None,
             },
             body,
+            request_sha256: None,
         }
     }
 
@@ -535,8 +843,14 @@ mod tests {
     }
 
     fn profile(root: &std::path::Path, lines: &[&str]) {
-        std::fs::write(root.join("siralos.toml"), lines.join("\n"))
-            .expect("profile");
+        let profile = lines.join("\n");
+        std::fs::write(root.join("siralos.toml"), &profile).expect("profile");
+        let digest = siralos_core::identity::sha256_hex(profile.as_bytes());
+        std::fs::write(
+            root.join(".test-user-config.json"),
+            format!("{{\"profileApproval\":\"{digest}\"}}"),
+        )
+        .expect("test approval config");
     }
 
     fn recorded_target(
@@ -597,9 +911,18 @@ mod tests {
         let report = evaluate_targets(
             &corpus,
             &[
-                EvaluationTarget::new(&fake_root),
-                EvaluationTarget::new(&good_root),
-                EvaluationTarget::new(&weak_root),
+                EvaluationTarget::with_config(
+                    &fake_root,
+                    fake_root.join(".test-user-config.json"),
+                ),
+                EvaluationTarget::with_config(
+                    &good_root,
+                    good_root.join(".test-user-config.json"),
+                ),
+                EvaluationTarget::with_config(
+                    &weak_root,
+                    weak_root.join(".test-user-config.json"),
+                ),
             ],
         )
         .expect("the evaluation runs");
@@ -745,6 +1068,12 @@ mod tests {
         responding: bool,
         flood: bool,
         cancelled: bool,
+        stays_responding_after_cancel: bool,
+        settled: bool,
+        terminal_sentinel_delay: Option<Duration>,
+        saw_terminal: bool,
+        events: std::collections::VecDeque<ToolLoopEvent>,
+        poll_delay: Duration,
     }
 
     impl WorkerSession for StubbornSession {
@@ -753,6 +1082,34 @@ mod tests {
             Ok(())
         }
         fn poll_event(&mut self) -> Option<ToolLoopEvent> {
+            if self.saw_terminal {
+                if let Some(delay) = self.terminal_sentinel_delay.take() {
+                    std::thread::sleep(delay);
+                }
+            }
+            if !self.poll_delay.is_zero() {
+                std::thread::sleep(self.poll_delay);
+            }
+            let next = self.events.pop_front();
+            if matches!(
+                &next,
+                Some(
+                    ToolLoopEvent::ResponseCompleted
+                        | ToolLoopEvent::ResponseCancelled
+                        | ToolLoopEvent::ResponseFailed { .. }
+                )
+            ) {
+                self.saw_terminal = true;
+            }
+            if next.is_none()
+                && self.saw_terminal
+                && !self.stays_responding_after_cancel
+            {
+                self.responding = false;
+            }
+            if let Some(event) = next {
+                return Some(event);
+            }
             if self.flood {
                 Some(ToolLoopEvent::TextDelta { text: "x".to_owned() })
             } else {
@@ -777,8 +1134,13 @@ mod tests {
         fn reload(&mut self) -> Result<String, String> {
             Ok(String::new())
         }
-        fn turn_settled(&mut self) {}
-        fn fetch_models(&mut self) -> Result<Vec<String>, String> {
+        fn turn_settled(&mut self) {
+            self.settled = true;
+        }
+        fn fetch_models(
+            &mut self,
+            _cancellation: &crate::session_worker::CancelFlag,
+        ) -> Result<Vec<String>, String> {
             Ok(Vec::new())
         }
         fn domains_add(&mut self, _folder: &str) -> Result<String, String> {
@@ -799,19 +1161,32 @@ mod tests {
                 protocol: String::new(),
                 credential_display: None,
                 credential_resolved: false,
+                live_model_switchable: true,
                 context_suffix: String::new(),
             }
         }
         fn cancel(&mut self) {
             self.cancelled = true;
-            self.responding = false;
+            if !self.stays_responding_after_cancel {
+                self.responding = false;
+            }
         }
         fn flush(&mut self) {}
         fn enable_progress_ticks(&mut self) {}
     }
 
     fn stubborn(flood: bool) -> StubbornSession {
-        StubbornSession { responding: false, flood, cancelled: false }
+        StubbornSession {
+            responding: false,
+            flood,
+            cancelled: false,
+            stays_responding_after_cancel: false,
+            settled: false,
+            terminal_sentinel_delay: None,
+            saw_terminal: false,
+            events: std::collections::VecDeque::new(),
+            poll_delay: Duration::ZERO,
+        }
     }
 
     #[test]
@@ -840,6 +1215,91 @@ mod tests {
         assert_eq!(turn.answer.len(), MAX_TURN_EVENTS);
         let failure = turn.failure.expect("a failure is recorded");
         assert!(failure.contains("exceeded 4096 events"), "{failure}");
+    }
+
+    #[test]
+    fn a_terminal_event_survives_a_late_sentinel_without_a_false_timeout() {
+        let mut terminal = stubborn(false);
+        terminal.events.push_back(ToolLoopEvent::ResponseCompleted);
+        terminal.terminal_sentinel_delay = Some(Duration::from_millis(20));
+        let turn =
+            drive_turn(&mut terminal, "prompt", Duration::from_millis(5))
+                .expect("the accepted terminal is settled");
+        assert!(turn.failure.is_none(), "{:?}", turn.failure);
+        assert!(!turn.cancelled);
+        assert!(terminal.settled);
+    }
+
+    #[test]
+    fn a_late_text_delta_is_rejected_before_it_can_become_the_answer() {
+        let mut late = stubborn(false);
+        late.poll_delay = Duration::from_millis(15);
+        late.events
+            .push_back(ToolLoopEvent::TextDelta { text: "late".to_owned() });
+        let turn = drive_turn(&mut late, "prompt", Duration::from_millis(1))
+            .expect("the turn is driven");
+        assert!(late.cancelled, "the late event is a timeout");
+        assert!(turn.cancelled);
+        assert!(turn.answer.is_empty(), "late bytes are not accepted");
+        let failure = turn.failure.expect("the late event is reported");
+        assert!(failure.contains("did not settle"), "{failure}");
+    }
+
+    #[test]
+    fn a_stuck_cancelled_turn_reports_quiesce_failure_without_claiming_settlement()
+     {
+        let mut stuck = stubborn(false);
+        stuck.stays_responding_after_cancel = true;
+        let error = drive_turn(&mut stuck, "prompt", Duration::from_millis(1))
+            .expect_err("the cleanup cannot claim quiescence");
+        assert!(matches!(error, EvaluationRunError::Quiesce(_)), "{error}");
+        assert!(stuck.cancelled, "the response was cancelled");
+        assert!(!stuck.settled, "settlement is withheld after failed quiesce");
+    }
+
+    #[test]
+    fn answer_deltas_are_capped_in_aggregate_and_report_truncation() {
+        let mut overlong = stubborn(false);
+        overlong.events.push_back(ToolLoopEvent::TextDelta {
+            text: "é".repeat(MAX_ANSWER_BYTES / 2),
+        });
+        overlong.events.push_back(ToolLoopEvent::TextDelta {
+            text: "é".repeat(MAX_ANSWER_BYTES / 2 + 1),
+        });
+        let turn = drive_turn(&mut overlong, "prompt", Duration::from_secs(1))
+            .expect("the turn is driven");
+        assert!(overlong.cancelled, "an overlong answer is cancelled");
+        assert!(turn.answer_truncated);
+        assert!(turn.answer.len() <= MAX_ANSWER_BYTES);
+        assert!(turn.answer.ends_with(ANSWER_TRUNCATION_MARKER));
+        assert!(turn.answer.is_char_boundary(turn.answer.len()));
+        let failure = turn.failure.expect("truncation is an explicit error");
+        assert!(failure.contains("aggregate cap"), "{failure}");
+        assert!(failure.contains("truncated"), "{failure}");
+    }
+
+    #[test]
+    fn a_target_budget_and_target_count_are_bounded() {
+        // An ABSOLUTE workspace path, because that is what the Debug
+        // projection is for: a relative name is not a path leak, and hiding
+        // it too would make the projection lie about what it redacts.
+        let absolute = std::env::temp_dir().join("siralos-eval-target");
+        let absolute = absolute.to_string_lossy().into_owned();
+        let mut target = EvaluationTarget::new(absolute.as_str());
+        target.turn_timeout = Duration::from_secs(60 * 60 * 24);
+        assert_eq!(target.effective_turn_timeout(), MAX_TURN_TIMEOUT);
+        target.turn_timeout = DEFAULT_TURN_TIMEOUT;
+        assert_eq!(target.effective_turn_timeout(), DEFAULT_TURN_TIMEOUT);
+        let debug = format!("{target:?}");
+        assert!(!debug.contains(&absolute), "{debug}");
+        assert!(debug.contains("[ABSOLUTE]"), "{debug}");
+
+        let targets: Vec<EvaluationTarget> = (0..=MAX_EVALUATION_TARGETS)
+            .map(|_| EvaluationTarget::new(absolute.as_str()))
+            .collect();
+        let error = evaluate_targets(&evaluation_corpus(), &targets)
+            .expect_err("an over-long target list is refused");
+        assert!(error.to_string().contains("at most"), "{error}");
     }
 
     #[test]

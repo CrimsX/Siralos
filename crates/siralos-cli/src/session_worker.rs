@@ -8,11 +8,50 @@
 //! are the compile-time proof, so the wiring cannot accidentally depend on a
 //! non-transferable value.
 //!
-//! This module is the contract only -- no thread is spawned here. C2's wiring
-//! (the worker loop, the cancel flag, the single replay flush) is written
-//! against it.
+//! This module owns the bridge contract and its bounded worker construction.
+//! C2's wiring (the worker loop, the cancel flag, the single replay flush) is
+//! written against it.
 
+use crate::sanitize::{TerminalSanitizer, sanitize_for_display};
 use siralos_core::tool::ToolLoopEvent;
+
+/// Bounded cooperative drain budget used before a stopping worker flushes.
+const SHUTDOWN_QUIESCE_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_millis(250);
+/// Upper bound on events discarded while quiescing a stopped response.
+const MAX_SHUTDOWN_DRAIN_EVENTS: usize = 256;
+
+/// Project a worker shutdown detail onto the ONE reporting boundary the
+/// frontends use: sanitized, single-line, bounded, and with credential-shaped
+/// or workspace-path content replaced instead of echoed.
+///
+/// Shutdown text is built from provider and transport errors, so it is
+/// untrusted data exactly like any other worker report. A lifecycle failure
+/// must still be visible; a secret inside it must not become visible with it.
+pub(crate) fn safe_shutdown_detail(value: &str) -> String {
+    let sanitized = sanitize_for_display(value);
+    let lower = sanitized.to_ascii_lowercase();
+    let sensitive =
+        ["://", "key:", "sk-", "akia", "secret", "token", "bearer "]
+            .iter()
+            .any(|marker| lower.contains(marker))
+            || sanitized.contains('\\');
+    if sensitive {
+        return "worker shutdown detail hidden".to_owned();
+    }
+    let single_line: String = sanitized
+        .chars()
+        .map(|character| {
+            if character == '\n' || character == '\r' || character.is_control()
+            {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect();
+    siralos_core::language::truncate_utf8_bytes(&single_line, 512)
+}
 
 /// A command from the UI thread to the worker.
 #[derive(Debug, Clone, PartialEq)]
@@ -20,7 +59,8 @@ pub enum WorkerCommand {
     /// Run one prompt turn.
     Prompt(String),
     /// Cancel the active turn. The worker ALSO watches an external flag, so a
-    /// blocked provider read is not the only escape.
+    /// cancellation request can be recorded while a provider read is blocked;
+    /// the transport seam must make that read abortable to stop the turn.
     Cancel,
     /// Display-only: the projection behind \`/context\`.
     ContextReport,
@@ -69,14 +109,18 @@ pub enum WorkerEvent {
     /// starts and again whenever the composition moves under it (`SetModel`,
     /// `Reload`), because only the session can derive it.
     Ready(SessionStatus),
-    /// The recordings were flushed and the worker is exiting.
+    /// The worker is exiting. A replay-persistence failure is also sent as
+    /// `Failed`; the typed join result is authoritative for shutdown callers.
     Stopped,
 }
 
 /// The header the frontend shows: the composed status segment plus the two
 /// names it is built from.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct SessionStatus {
+    /// Publicly constructed snapshots are debug-redacted; the normal producer
+    /// also applies credential-aware projection before sending them.
+    /// Endpoint fields are authority-only.
     /// The composed status segment (provider, model, context usage).
     pub status: String,
     /// Applied provider name, if any.
@@ -95,6 +139,13 @@ pub struct SessionStatus {
     /// this today, so the frontend needs the answer and not the secret;
     /// `false` also covers "no credential declared".
     pub credential_resolved: bool,
+    /// Whether `/model <id>` can move the live model for THIS composition.
+    ///
+    /// The frontend owns the profile write, so it has to know whether the
+    /// switch is possible BEFORE it persists: persisting a switch the worker
+    /// cannot apply would leave the file claiming a model the session never
+    /// adopted, and the next `/reload` would then look like drift.
+    pub live_model_switchable: bool,
     /// The context-usage suffix the status line carries (` | ctx N/4096`), empty
     /// when the context subsystem is off. It crosses so a frontend can
     /// re-render a TRANSIENT status -- the add-flow's "fetching models..." --
@@ -102,8 +153,36 @@ pub struct SessionStatus {
     pub context_suffix: String,
 }
 
-/// The external cancel flag (decision 167): the UI sets it, the worker polls it
-/// between events, so cancellation does not wait for a blocked read to return.
+impl std::fmt::Debug for SessionStatus {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        formatter
+            .debug_struct("SessionStatus")
+            .field("status", &"[PROJECTED]")
+            .field(
+                "provider",
+                &self.provider.as_deref().map(|_| "[CONFIGURED]"),
+            )
+            .field("model", &self.model.as_deref().map(|_| "[CONFIGURED]"))
+            .field(
+                "endpoint",
+                &self.endpoint.as_deref().map(|_| "[PROJECTED]"),
+            )
+            .field("protocol", &"[PROJECTED]")
+            .field("credential_display", &"[REDACTED]")
+            .field("credential_resolved", &self.credential_resolved)
+            .field("live_model_switchable", &self.live_model_switchable)
+            .field("context_suffix", &"[PROJECTED]")
+            .finish()
+    }
+}
+
+/// The external cancel flag (decision 167): the UI sets it, and the worker
+/// polls it between events. A provider call that is already blocked in an
+/// external read is cooperative and must be made abortable by its transport
+/// seam.
 #[derive(Debug, Clone, Default)]
 pub struct CancelFlag(std::sync::Arc<std::sync::atomic::AtomicBool>);
 
@@ -129,6 +208,12 @@ impl CancelFlag {
     pub fn clear(&self) {
         self.0.store(false, std::sync::atomic::Ordering::SeqCst);
     }
+
+    /// The shared atomic used by a bounded provider probe.
+    #[must_use]
+    pub fn flag(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        std::sync::Arc::clone(&self.0)
+    }
 }
 
 // The compile-time proof that the contract can cross threads. If a future edit
@@ -137,8 +222,108 @@ const _: () = {
     const fn assert_send<T: Send>() {}
     assert_send::<WorkerCommand>();
     assert_send::<WorkerEvent>();
+    assert_send::<WorkerStopOutcome>();
     assert_send::<CancelFlag>();
 };
+
+/// The result of the worker's single replay-flush operation.
+///
+/// `Legacy` is the compatibility result for an implementation that still only
+/// provides the old void [`WorkerSession::flush`] method. A real composition
+/// overrides the typed seam and reports either no recorder or the exact
+/// persisted recording count. It is deliberately not represented as a
+/// boolean: a successful flush and a session with nothing to flush are
+/// different evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlushOutcome {
+    /// The legacy void flush ran; no count is available.
+    Legacy,
+    /// This session has no retaining recorder, so no store was expected.
+    NoRecorder,
+    /// The bounded replay store was written with this many recordings.
+    Persisted {
+        /// Number of validated recordings written to the store.
+        recordings: usize,
+    },
+}
+
+/// A typed replay persistence failure.
+///
+/// The detail is required to be report-safe by implementors: it may name a
+/// bounded error class, but must not contain a credential, raw provider body,
+/// or an absolute path. The worker sanitizes the rendered event again at the
+/// frontend boundary, while the typed variant keeps the failure class visible
+/// to the owner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FlushError {
+    /// The replay store could not be persisted.
+    Persistence(String),
+}
+
+impl std::fmt::Display for FlushError {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        match self {
+            Self::Persistence(message) => {
+                write!(formatter, "replay persistence failed: {message}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for FlushError {}
+
+/// What a worker actually did when it stopped.
+///
+/// This is returned by the typed shutdown seam instead of an empty success.
+/// A flush failure still means the thread has stopped, but it is not a
+/// successful stop and must never be folded into `Flushed`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkerStopOutcome {
+    /// There was no live worker to join (for example, a scripted handle).
+    AlreadyStopped,
+    /// The worker stopped after a successful flush.
+    Flushed(FlushOutcome),
+    /// The worker stopped, but its replay flush failed.
+    FlushFailed(FlushError),
+    /// The legacy void flush ran without typed persistence evidence.
+    FlushEvidenceMissing,
+    /// The worker stopped before quiescing; the single flush attempt is included
+    /// so recorded evidence is never silently discarded.
+    QuiesceFailed {
+        /// Bounded diagnostic explaining why the response remained active.
+        detail: String,
+        /// Result of the one persistence attempt made after the failed drain.
+        flush: Result<FlushOutcome, FlushError>,
+    },
+}
+
+/// Why a bounded worker join did not produce a stop outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkerShutdownError {
+    /// The worker did not finish before the caller's deadline.
+    TimedOut,
+    /// The worker thread panicked while stopping.
+    ThreadPanicked,
+}
+
+impl std::fmt::Display for WorkerShutdownError {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        match self {
+            Self::TimedOut => formatter.write_str("worker shutdown timed out"),
+            Self::ThreadPanicked => {
+                formatter.write_str("worker thread panicked during shutdown")
+            }
+        }
+    }
+}
+
+impl std::error::Error for WorkerShutdownError {}
 
 /// What the worker needs from a session (C2).
 ///
@@ -172,7 +357,10 @@ pub trait WorkerSession {
     fn turn_settled(&mut self);
     /// The provider's model ids (decision 168 R2). Fallible exactly where a
     /// fetch is: unconfigured, unreachable, or a non-success status.
-    fn fetch_models(&mut self) -> Result<Vec<String>, String>;
+    fn fetch_models(
+        &mut self,
+        cancellation: &CancelFlag,
+    ) -> Result<Vec<String>, String>;
     /// Install a plugin folder, returning the report the frontend shows.
     fn domains_add(&mut self, folder: &str) -> Result<String, String>;
     /// Enable an installed plugin.
@@ -185,8 +373,19 @@ pub trait WorkerSession {
     fn status(&self) -> SessionStatus;
     /// Host cancellation authority.
     fn cancel(&mut self);
-    /// Flush the recordings -- called EXACTLY once, on shutdown.
+    /// Legacy void flush, called exactly once on shutdown. New implementations
+    /// should override [`WorkerSession::flush_result`] so persistence evidence
+    /// is typed rather than inferred from a log line.
     fn flush(&mut self);
+    /// Typed replay-flush seam. The default keeps existing synchronous and test
+    /// implementations source-compatible while making the compatibility case
+    /// explicit. A composed session that owns a replay recorder must override
+    /// this method and return [`FlushOutcome::NoRecorder`] or
+    /// [`FlushOutcome::Persisted`], or return [`FlushError::Persistence`].
+    fn flush_result(&mut self) -> Result<FlushOutcome, FlushError> {
+        self.flush();
+        Ok(FlushOutcome::Legacy)
+    }
     /// Turn on the keep-alive ticks (C2 step 3). Only a frontend that repaints
     /// while it waits wants them: the worker's session belongs to the TUI, so
     /// the WORKER turns them on, and stdio's session must not get them.
@@ -212,36 +411,270 @@ pub trait EventSource {
 ///
 /// Synchronous and single-threaded on its own thread: receive a command, act,
 /// drain the session into worker events, repeat. The cancel flag is checked
-/// between commands AND between drained events, so a cancel need not wait for a
-/// blocked read to return.
+/// between commands AND between drained events. A provider already blocked in
+/// an external read remains a transport-seam responsibility; this module does
+/// not claim to interrupt that call.
 ///
-/// `flush` is called exactly once, on shutdown, which is decision 78's
-/// single-owner rule made mechanical.
+/// `flush_result` is called exactly once, on shutdown, which is decision 78's
+/// single-owner rule made mechanical. The legacy wrapper discards the typed
+/// result for source compatibility; lifecycle owners should use
+/// [`run_worker_loop_typed`] or [`WorkerHandle::shutdown_typed`].
 pub fn run_worker_loop<S: WorkerSession>(
     commands: &std::sync::mpsc::Receiver<WorkerCommand>,
-    events: &std::sync::mpsc::Sender<WorkerEvent>,
+    events: &std::sync::mpsc::SyncSender<WorkerEvent>,
     cancel: &CancelFlag,
     session: &mut S,
 ) {
+    let _ = run_worker_loop_typed(commands, events, cancel, session);
+}
+
+/// Run the worker loop and expose its typed stop evidence to synchronous
+/// callers. The legacy `run_worker_loop` wrapper remains for source
+/// compatibility, while lifecycle owners can no longer accidentally discard a
+/// flush or quiesce failure.
+pub fn run_worker_loop_typed<S: WorkerSession>(
+    commands: &std::sync::mpsc::Receiver<WorkerCommand>,
+    events: &std::sync::mpsc::SyncSender<WorkerEvent>,
+    cancel: &CancelFlag,
+    session: &mut S,
+) -> WorkerStopOutcome {
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    run_worker_loop_with_stop(commands, events, cancel, &stop, session)
+}
+
+/// Ceiling on how long one non-terminal event delivery may retry while the
+/// frontend's bounded queue stays full. Past it the worker stops instead of
+/// waiting for a consumer that is not draining.
+const EVENT_DELIVERY_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(30);
+
+struct StopAwareEvents<'a> {
+    inner: &'a std::sync::mpsc::SyncSender<WorkerEvent>,
+    stop: &'a std::sync::atomic::AtomicBool,
+}
+
+impl StopAwareEvents<'_> {
+    fn request_stop(&self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn send(&self, event: WorkerEvent) -> Result<(), ()> {
+        let mut event = Some(event);
+        // A frontend that stops draining but keeps the channel open must not
+        // park a credential-holding worker in a retry loop forever: delivery
+        // is bounded, and an expired deadline is a stop, not silence.
+        let deadline =
+            std::time::Instant::now().checked_add(EVENT_DELIVERY_TIMEOUT);
+        loop {
+            if self.stop.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(());
+            }
+            match self.inner.try_send(event.take().expect("event sent once")) {
+                Ok(()) => return Ok(()),
+                Err(std::sync::mpsc::TrySendError::Full(value)) => {
+                    event = Some(value);
+                    let expired = match deadline {
+                        Some(limit) => std::time::Instant::now() >= limit,
+                        None => true,
+                    };
+                    if expired {
+                        self.request_stop();
+                        return Err(());
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                    // A frontend that disappeared must not leave a
+                    // credential-holding worker asleep on a command queue.
+                    self.request_stop();
+                    return Err(());
+                }
+            }
+        }
+    }
+
+    /// Terminal evidence gets one short, bounded delivery attempt even after
+    /// the stop bit is set. The typed join result remains authoritative if a
+    /// full event queue cannot accept it; this method must never wait forever
+    /// while the owner is trying to restore the terminal.
+    fn send_terminal(&self, event: WorkerEvent) {
+        let mut event = Some(event);
+        let deadline = std::time::Instant::now()
+            .checked_add(std::time::Duration::from_millis(100));
+        loop {
+            match self.inner.try_send(event.take().expect("event sent once")) {
+                Ok(()) => return,
+                Err(std::sync::mpsc::TrySendError::Full(value)) => {
+                    event = Some(value);
+                    let terminal_deadline_reached = match deadline {
+                        Some(limit) => std::time::Instant::now() >= limit,
+                        None => true,
+                    };
+                    if terminal_deadline_reached {
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+fn drain_until_settled<S: WorkerSession>(
+    session: &mut S,
+    timeout: std::time::Duration,
+) -> bool {
+    let Some(deadline) = std::time::Instant::now().checked_add(timeout) else {
+        return false;
+    };
+    let mut drained = 0usize;
+    while session.is_responding() {
+        if drained >= MAX_SHUTDOWN_DRAIN_EVENTS
+            || std::time::Instant::now() >= deadline
+        {
+            return false;
+        }
+        match session.poll_event() {
+            Some(_) => drained += 1,
+            None => {
+                if !session.is_responding() {
+                    return true;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        }
+    }
+    true
+}
+
+fn flush_and_stop<S: WorkerSession>(
+    session: &mut S,
+    events: &StopAwareEvents<'_>,
+) -> WorkerStopOutcome {
+    // Every exit path reaches the same cancellation point, including a
+    // command-channel or event-channel disconnect. Do not let a provider keep
+    // running while its owning session is being flushed.
+    let was_responding = session.is_responding();
+    if was_responding {
+        session.cancel();
+    }
+    if was_responding
+        && !drain_until_settled(session, SHUTDOWN_QUIESCE_TIMEOUT)
+    {
+        // Repeat the cancellation request at the cleanup boundary before
+        // taking the persistence snapshot; some transports observe it there.
+        session.cancel();
+        let detail = format!(
+            "cancelled response did not quiesce within {} ms",
+            SHUTDOWN_QUIESCE_TIMEOUT.as_millis()
+        );
+        // Persistence remains a single-owner responsibility even when cleanup
+        // could not prove quiescence. Make one bounded attempt and retain both
+        // failure classes in the typed outcome instead of dropping recordings.
+        let flush = session.flush_result();
+        let message = match &flush {
+            Ok(FlushOutcome::Legacy) => format!(
+                "{detail}; replay flush outcome is unavailable; typed persistence evidence is missing"
+            ),
+            Ok(_) => detail.clone(),
+            Err(error) => format!("{detail}; replay flush failed: {error}"),
+        };
+        let safe = crate::sanitize::sanitize_for_display(&message);
+        events.send_terminal(WorkerEvent::Failed(safe.clone()));
+        events.send_terminal(WorkerEvent::Stopped);
+        return WorkerStopOutcome::QuiesceFailed { detail: safe, flush };
+    }
+    if was_responding {
+        // The demand loop runs only after the terminal sentinel has restored
+        // the application state. Calling it earlier snapshots active response
+        // state and can make the next prompt fail as AlreadyResponding.
+        session.turn_settled();
+    }
+    let outcome = match session.flush_result() {
+        Ok(FlushOutcome::Legacy) => WorkerStopOutcome::FlushEvidenceMissing,
+        Ok(outcome) => WorkerStopOutcome::Flushed(outcome),
+        Err(error) => WorkerStopOutcome::FlushFailed(error),
+    };
+    match &outcome {
+        WorkerStopOutcome::FlushFailed(error) => {
+            let message = format!("replay flush failed: {error}");
+            let safe = crate::sanitize::sanitize_for_display(&message);
+            events.send_terminal(WorkerEvent::Failed(safe));
+        }
+        WorkerStopOutcome::FlushEvidenceMissing => {
+            events.send_terminal(WorkerEvent::Failed(
+                "replay flush outcome is unavailable; typed persistence evidence is missing"
+                    .to_owned(),
+            ));
+        }
+        _ => {}
+    }
+    events.send_terminal(WorkerEvent::Stopped);
+    outcome
+}
+
+fn run_worker_loop_with_stop<S: WorkerSession>(
+    commands: &std::sync::mpsc::Receiver<WorkerCommand>,
+    events: &std::sync::mpsc::SyncSender<WorkerEvent>,
+    cancel: &CancelFlag,
+    stop: &std::sync::atomic::AtomicBool,
+    session: &mut S,
+) -> WorkerStopOutcome {
+    let events = StopAwareEvents { inner: events, stop };
     // The startup pane snapshot goes FIRST. The frontend used to BUILD it
     // before its loop and cannot any more -- the metrics and the history live
     // here (decision 167 D1) -- and a frontend that waits for the header must
     // already hold the pane it will draw with that header. Sending it after the
     // header would make the first frame a race.
     if let Some(pane) = session.pane() {
-        let _ = events.send(WorkerEvent::Pane(pane));
+        if events.send(WorkerEvent::Pane(pane)).is_err() {
+            return flush_and_stop(session, &events);
+        }
     }
     // The frontend cannot derive its header any more: it arrives before any
     // command, and again whenever a command moves the composition under it.
-    let _ = events.send(WorkerEvent::Ready(session.status()));
-    while let Ok(command) = commands.recv() {
+    if events.send(WorkerEvent::Ready(session.status())).is_err() {
+        return flush_and_stop(session, &events);
+    }
+    loop {
+        if stop.load(std::sync::atomic::Ordering::SeqCst) {
+            break;
+        }
+        let command = match commands
+            .recv_timeout(std::time::Duration::from_millis(10))
+        {
+            Ok(command) => command,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        };
+        if stop.load(std::sync::atomic::Ordering::SeqCst)
+            && !matches!(command, WorkerCommand::Shutdown)
+        {
+            break;
+        }
         match command {
             WorkerCommand::Prompt(prompt) => {
-                cancel.clear();
+                if cancel.is_requested() {
+                    session.cancel();
+                    let _ = events.send(WorkerEvent::Failed(
+                        "prompt cancelled before it started".to_owned(),
+                    ));
+                    let _ = events.send(WorkerEvent::TurnFinished);
+                    cancel.clear();
+                    continue;
+                }
                 match session.send_prompt(&prompt) {
                     Ok(()) => {
                         while let Some(event) = session.poll_event() {
-                            let _ = events.send(WorkerEvent::Session(event));
+                            if events
+                                .send(WorkerEvent::Session(event))
+                                .is_err()
+                            {
+                                break;
+                            }
                             if cancel.is_requested() {
                                 session.cancel();
                             }
@@ -249,21 +682,35 @@ pub fn run_worker_loop<S: WorkerSession>(
                                 let _ = events.send(WorkerEvent::Pane(pane));
                             }
                         }
-                        session.turn_settled();
+                        // If the event relay was stopped, the response may
+                        // still be active. Leave settlement to the common
+                        // shutdown path so it can cancel, drain, and settle
+                        // before the replay recorder is flushed.
+                        if !session.is_responding() {
+                            session.turn_settled();
+                        }
                         // The settled pane: the demand loop has just run, so
                         // this is the first snapshot that can show its effect.
                         if let Some(pane) = session.pane() {
                             let _ = events.send(WorkerEvent::Pane(pane));
                         }
                         let _ = events.send(WorkerEvent::TurnFinished);
+                        cancel.clear();
                     }
                     Err(message) => {
                         let _ = events.send(WorkerEvent::Failed(message));
                         let _ = events.send(WorkerEvent::TurnFinished);
+                        cancel.clear();
                     }
                 }
             }
-            WorkerCommand::Cancel => session.cancel(),
+            WorkerCommand::Cancel => {
+                session.cancel();
+                // The command is observed only between turns, so the shared
+                // request is fully consumed here. Do not let an idle Ctrl+C
+                // make the next prompt look pre-cancelled.
+                cancel.clear();
+            }
             WorkerCommand::ContextReport => {
                 let report = session.context_report();
                 let _ = events.send(WorkerEvent::Report(report));
@@ -287,14 +734,26 @@ pub fn run_worker_loop<S: WorkerSession>(
                     }
                 }
             }
-            WorkerCommand::ModelsFetch => match session.fetch_models() {
-                Ok(models) => {
-                    let _ = events.send(WorkerEvent::Models(models));
+            WorkerCommand::ModelsFetch => {
+                if cancel.is_requested() {
+                    let _ = events.send(WorkerEvent::Failed(
+                        "model listing cancelled before it started".to_owned(),
+                    ));
+                    cancel.clear();
+                    continue;
                 }
-                Err(message) => {
-                    let _ = events.send(WorkerEvent::Failed(message));
+                match session.fetch_models(cancel) {
+                    Ok(models) => {
+                        let _ = events.send(WorkerEvent::Models(models));
+                    }
+                    Err(message) => {
+                        let _ = events.send(WorkerEvent::Failed(message));
+                    }
                 }
-            },
+                // A probe may have observed cancellation or completed
+                // normally; do not carry that bit into the next prompt.
+                cancel.clear();
+            }
             WorkerCommand::DomainsAdd(value) => {
                 match session.domains_add(&value) {
                     Ok(report) => {
@@ -332,22 +791,20 @@ pub fn run_worker_loop<S: WorkerSession>(
                 }
                 Err(message) => {
                     let _ = events.send(WorkerEvent::Failed(message));
+                    // Reload may revoke authority before returning an error;
+                    // refresh the header so stale route/credential state is
+                    // never left visible in the frontend.
+                    let _ = events.send(WorkerEvent::Ready(session.status()));
                 }
             },
             WorkerCommand::Shutdown => {
-                if session.is_responding() {
-                    session.cancel();
-                }
-                session.flush();
-                let _ = events.send(WorkerEvent::Stopped);
-                return;
+                return flush_and_stop(session, &events);
             }
         }
     }
     // The command channel closed without a Shutdown: flush once anyway, so a
     // vanished UI cannot lose the recordings silently.
-    session.flush();
-    let _ = events.send(WorkerEvent::Stopped);
+    flush_and_stop(session, &events)
 }
 
 /// One bounded wait on the worker (C2 step 3).
@@ -369,20 +826,39 @@ pub enum WorkerWait {
 
 /// The UI's handle on a running worker (C2 step 2).
 ///
-/// Dropping it does NOT stop the worker: `shutdown` sends the command and joins,
-/// which is the only path that guarantees the recordings flushed before the
-/// process restores the terminal.
+/// The compatibility `shutdown` method remains available, but the typed
+/// [`WorkerHandle::shutdown_typed`] method is the authoritative lifecycle
+/// result. A timeout is never converted into an empty success, and dropping a
+/// live handle emits a bounded diagnostic before the join handle is released.
 pub struct WorkerHandle {
-    commands: std::sync::mpsc::Sender<WorkerCommand>,
+    commands: std::sync::mpsc::SyncSender<WorkerCommand>,
     events: std::sync::mpsc::Receiver<WorkerEvent>,
     cancel: CancelFlag,
-    join: Option<std::thread::JoinHandle<()>>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    join: Option<std::thread::JoinHandle<WorkerStopOutcome>>,
 }
 
 impl WorkerHandle {
     /// Send one command (`false` when the worker is already gone).
     pub fn send(&self, command: WorkerCommand) -> bool {
-        self.commands.send(command).is_ok()
+        const MAX_COMMAND_STRING_BYTES: usize = 64 * 1024;
+        let string_len = match &command {
+            WorkerCommand::Prompt(value)
+            | WorkerCommand::SetModel(value)
+            | WorkerCommand::DomainsAdd(value)
+            | WorkerCommand::DomainsEnable(value)
+            | WorkerCommand::DomainsActivate(value) => Some(value.len()),
+            WorkerCommand::Cancel
+            | WorkerCommand::ContextReport
+            | WorkerCommand::ToolsReport
+            | WorkerCommand::Reload
+            | WorkerCommand::ModelsFetch
+            | WorkerCommand::Shutdown => None,
+        };
+        if string_len.is_some_and(|length| length > MAX_COMMAND_STRING_BYTES) {
+            return false;
+        }
+        self.commands.try_send(command).is_ok()
     }
 
     /// The next worker event, or `None` when the worker has stopped.
@@ -403,11 +879,20 @@ impl WorkerHandle {
         }
     }
 
+    /// Receive one already-produced event without blocking.
+    pub fn try_recv(&self) -> Option<WorkerEvent> {
+        self.events.try_recv().ok()
+    }
+
     /// Everything the worker has already produced, without blocking.
     pub fn try_recv_all(&self) -> Vec<WorkerEvent> {
+        const MAX_BATCH: usize = 1024;
         let mut events = Vec::new();
-        while let Ok(event) = self.events.try_recv() {
-            events.push(event);
+        while events.len() < MAX_BATCH {
+            match self.events.try_recv() {
+                Ok(event) => events.push(event),
+                Err(_) => break,
+            }
         }
         events
     }
@@ -418,16 +903,107 @@ impl WorkerHandle {
         &self.cancel
     }
 
-    /// Stop the worker and WAIT for it: the recordings are flushed before this
-    /// returns (decision 78's single-owner rule, decision 167 step 4).
-    ///
-    /// Takes `&mut self` so the owner can be a guard that runs this on drop; a
-    /// second call is harmless (the join handle is already taken, and a send to
-    /// a stopped worker fails quietly).
+    /// Compatibility wrapper for call sites that historically returned `()`.
+    /// It is deliberately noisy on failure: the typed method below is the path
+    /// that should be used for lifecycle decisions.
     pub fn shutdown(&mut self) {
-        let _ = self.commands.send(WorkerCommand::Shutdown);
-        if let Some(join) = self.join.take() {
-            let _ = join.join();
+        if let Err(error) =
+            self.shutdown_bounded(std::time::Duration::from_secs(2))
+        {
+            eprintln!("siralos: worker shutdown: {error}");
+        }
+    }
+
+    /// Cancel first, request `Shutdown`, and return the worker's typed stop
+    /// result after a bounded join. A timeout leaves the join handle installed
+    /// so the owner can retry; it is never represented as success and the
+    /// handle's `Drop` reports a final diagnostic if it is later released.
+    pub fn shutdown_typed(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> Result<WorkerStopOutcome, WorkerShutdownError> {
+        let deadline = std::time::Instant::now().checked_add(timeout);
+        self.cancel.request();
+        // Signal the command before the stop bit. An idle worker can then
+        // consume the explicit command and emit its terminal evidence; a
+        // worker in a turn still observes the cancellation flag first.
+        let _ = self.commands.try_send(WorkerCommand::Shutdown);
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        let Some(join) = self.join.take() else {
+            return Ok(WorkerStopOutcome::AlreadyStopped);
+        };
+        while !join.is_finished() {
+            let deadline_reached = match deadline {
+                Some(limit) => std::time::Instant::now() >= limit,
+                // A duration that cannot be represented by the platform clock
+                // cannot provide a bounded join; fail closed instead of
+                // detaching the worker after an unbounded wait.
+                None => true,
+            };
+            if deadline_reached {
+                self.join = Some(join);
+                return Err(WorkerShutdownError::TimedOut);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        join.join().map_err(|_| WorkerShutdownError::ThreadPanicked)
+    }
+
+    /// Compatibility error-shaped shutdown used by the existing frontends. It
+    /// now also maps a typed replay flush failure to `Err`, instead of joining
+    /// the thread and calling that empty success.
+    pub fn shutdown_bounded(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> Result<(), String> {
+        let outcome = match self.shutdown_typed(timeout) {
+            Ok(WorkerStopOutcome::AlreadyStopped) => Ok(()),
+            Ok(WorkerStopOutcome::FlushEvidenceMissing) => Err(
+                "replay flush outcome is unavailable; typed persistence evidence is missing"
+                    .to_owned(),
+            ),
+            Ok(WorkerStopOutcome::Flushed(_)) => Ok(()),
+            Ok(WorkerStopOutcome::FlushFailed(error)) => {
+                Err(format!("replay flush failed: {error}"))
+            }
+            Ok(WorkerStopOutcome::QuiesceFailed { detail, flush }) => {
+                let flush_detail = match flush {
+                    Ok(FlushOutcome::Legacy) => "; replay flush outcome is unavailable"
+                        .to_owned(),
+                    Ok(_) => String::new(),
+                    Err(error) => format!("; replay flush failed: {error}"),
+                };
+                Err(format!(
+                    "worker response did not quiesce: {detail}{flush_detail}"
+                ))
+            }
+            Err(WorkerShutdownError::TimedOut) => {
+                Err("worker shutdown timed out; recordings may be incomplete"
+                    .to_owned())
+            }
+            Err(WorkerShutdownError::ThreadPanicked) => {
+                Err("worker thread panicked during shutdown".to_owned())
+            }
+        };
+        outcome.map_err(|error| safe_shutdown_detail(&error))
+    }
+}
+
+impl Drop for WorkerHandle {
+    fn drop(&mut self) {
+        if self.join.is_none() {
+            return;
+        }
+        // A direct handle owner is not allowed to detach a credential-holding
+        // worker silently. Give cancellation the same bounded opportunity as
+        // the explicit API, then leave an unmistakable diagnostic if the
+        // thread still cannot be joined.
+        if let Err(error) =
+            self.shutdown_bounded(std::time::Duration::from_secs(2))
+        {
+            eprintln!(
+                "siralos: worker handle dropped before shutdown completed: {error}"
+            );
         }
     }
 }
@@ -447,6 +1023,24 @@ pub struct WorkerSource {
     handle: WorkerHandle,
     ready: std::collections::VecDeque<ToolLoopEvent>,
     pending: Vec<WorkerEvent>,
+    deferred: std::collections::VecDeque<WorkerEvent>,
+    pub(crate) output_sanitizer: std::cell::RefCell<TerminalSanitizer>,
+}
+
+impl std::fmt::Debug for WorkerSource {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        // Only queue cardinalities: the queued events carry provider and tool
+        // text, and a startup error type can be formatted by a caller.
+        formatter
+            .debug_struct("WorkerSource")
+            .field("ready", &self.ready.len())
+            .field("pending", &self.pending.len())
+            .field("deferred", &self.deferred.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl WorkerSource {
@@ -457,6 +1051,8 @@ impl WorkerSource {
             handle,
             ready: std::collections::VecDeque::new(),
             pending: Vec::new(),
+            deferred: std::collections::VecDeque::new(),
+            output_sanitizer: std::cell::RefCell::new(TerminalSanitizer::new()),
         }
     }
 
@@ -485,7 +1081,22 @@ impl WorkerSource {
         self.handle.wait(timeout)
     }
 
-    /// The next worker event, WAITING for it (C2 step 3).
+    fn admit_event(&mut self, event: WorkerEvent, max_pending: usize) {
+        match event {
+            WorkerEvent::Session(inner) => {
+                if self.ready.len() < max_pending {
+                    self.ready.push_back(inner);
+                } else {
+                    self.deferred.push_back(WorkerEvent::Session(inner));
+                }
+            }
+            other if self.pending.len() < max_pending => {
+                self.pending.push(other)
+            }
+            other => self.deferred.push_back(other),
+        }
+    }
+
     ///
     /// Only for the one moment a frontend can afford to wait with nothing to
     /// draw: the startup handshake, before its terminal exists. Inside a turn
@@ -494,10 +1105,28 @@ impl WorkerSource {
         self.handle.recv()
     }
 
-    /// Stop the worker and WAIT for it: the recordings are flushed before this
-    /// returns (decision 78's single-owner rule, decision 167 step 4).
+    /// Compatibility wrapper; use [`WorkerSource::shutdown_typed`] when the
+    /// lifecycle result matters.
     pub fn shutdown(&mut self) {
         self.handle.shutdown();
+    }
+
+    /// Stop the worker with the same bounded deadline while preserving the
+    /// timeout/panic and replay-flush diagnostics for callers that can report
+    /// them.
+    pub fn shutdown_bounded(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> Result<(), String> {
+        self.handle.shutdown_bounded(timeout)
+    }
+
+    /// Return the worker's typed stop outcome or a typed bounded-join error.
+    pub fn shutdown_typed(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> Result<WorkerStopOutcome, WorkerShutdownError> {
+        self.handle.shutdown_typed(timeout)
     }
 }
 
@@ -528,36 +1157,111 @@ impl WorkerGuard {
         &mut self.source
     }
 
-    /// Send `Shutdown` and join -- exactly once.
+    /// Compatibility wrapper for cleanup call sites that cannot return an
+    /// error. A bounded failure is printed, never silently treated as success.
     pub fn shutdown(&mut self) {
-        if !self.stopped {
-            self.stopped = true;
-            self.source.shutdown();
+        if let Err(error) = self.shutdown_result() {
+            eprintln!("siralos: worker shutdown: {error}");
         }
+    }
+
+    /// Stop the worker once and return the typed stop outcome.
+    pub fn shutdown_typed(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> Result<WorkerStopOutcome, WorkerShutdownError> {
+        if self.stopped {
+            return Ok(WorkerStopOutcome::AlreadyStopped);
+        }
+        let outcome = self.source.shutdown_typed(timeout);
+        match &outcome {
+            // A flush failure is still a completed join, so do not retry a
+            // stopped worker on guard drop; the returned outcome carries the
+            // failure to the caller. A panic also consumed the join handle
+            // and cannot be retried.
+            Ok(_) | Err(WorkerShutdownError::ThreadPanicked) => {
+                self.stopped = true;
+            }
+            Err(WorkerShutdownError::TimedOut) => {}
+        }
+        outcome
+    }
+
+    /// Stop the worker once and return any bounded-shutdown or flush failure.
+    pub fn shutdown_result(&mut self) -> Result<(), String> {
+        let outcome = match self.shutdown_typed(std::time::Duration::from_secs(2)) {
+            Ok(WorkerStopOutcome::AlreadyStopped) => Ok(()),
+            Ok(WorkerStopOutcome::FlushEvidenceMissing) => Err(
+                "replay flush outcome is unavailable; typed persistence evidence is missing"
+                    .to_owned(),
+            ),
+            Ok(WorkerStopOutcome::Flushed(_)) => Ok(()),
+            Ok(WorkerStopOutcome::FlushFailed(error)) => {
+                Err(format!("replay flush failed: {error}"))
+            }
+            Ok(WorkerStopOutcome::QuiesceFailed { detail, flush }) => {
+                let flush_detail = match flush {
+                    Ok(FlushOutcome::Legacy) => "; replay flush outcome is unavailable"
+                        .to_owned(),
+                    Ok(_) => String::new(),
+                    Err(error) => format!("; replay flush failed: {error}"),
+                };
+                Err(format!(
+                    "worker response did not quiesce: {detail}{flush_detail}"
+                ))
+            }
+            Err(WorkerShutdownError::TimedOut) => {
+                Err("worker shutdown timed out; recordings may be incomplete"
+                    .to_owned())
+            }
+            Err(WorkerShutdownError::ThreadPanicked) => {
+                Err("worker thread panicked during shutdown".to_owned())
+            }
+        };
+        outcome.map_err(|error| safe_shutdown_detail(&error))
     }
 }
 
 impl Drop for WorkerGuard {
     fn drop(&mut self) {
-        self.shutdown();
+        if let Err(error) = self.shutdown_result() {
+            eprintln!("siralos: worker shutdown: {error}");
+        }
     }
 }
 
 impl EventSource for WorkerSource {
     fn poll_event(&mut self) -> Option<ToolLoopEvent> {
-        for event in self.handle.try_recv_all() {
-            match event {
-                WorkerEvent::Session(inner) => self.ready.push_back(inner),
-                other => self.pending.push(other),
-            }
+        const MAX_PENDING: usize = 2048;
+        // Preserve ordering when either local bounded queue is full. The
+        // worker now applies backpressure on its channel; the frontend keeps
+        // overflow here rather than silently losing a terminal/control event.
+        if let Some(event) = self.deferred.pop_front() {
+            self.admit_event(event, MAX_PENDING);
+        }
+        // Do not remove another event from the bounded channel unless there
+        // is room in every local queue. `try_recv_all` would otherwise pull a
+        // batch into an unbounded-looking deferred queue and lose it when the
+        // local cap was reached.
+        while self.ready.len() < MAX_PENDING
+            && self.pending.len() < MAX_PENDING
+            && self.deferred.len() < MAX_PENDING
+        {
+            let Some(event) = self.handle.try_recv() else {
+                break;
+            };
+            self.admit_event(event, MAX_PENDING);
+        }
+        if let Some(event) = self.deferred.pop_front() {
+            self.admit_event(event, MAX_PENDING);
         }
         self.ready.pop_front()
     }
 
     fn cancel(&mut self) {
-        // Both halves: the flag reaches the worker BETWEEN events (it does not
-        // wait for a blocked read to return), the command reaches it when it is
-        // not in a turn.
+        // Both halves: the flag reaches the worker between events, and the
+        // command reaches it when it is not in a turn. An already-blocked
+        // provider read remains bounded by that provider's transport seam.
         self.handle.cancel_flag().request();
         self.handle.send(WorkerCommand::Cancel);
     }
@@ -573,10 +1277,16 @@ pub fn spawn_worker(
     workspace_root: Option<std::path::PathBuf>,
     config_path: Option<std::path::PathBuf>,
 ) -> WorkerHandle {
-    let (command_tx, command_rx) = std::sync::mpsc::channel::<WorkerCommand>();
-    let (event_tx, event_rx) = std::sync::mpsc::channel::<WorkerEvent>();
+    const COMMAND_CAPACITY: usize = 256;
+    const EVENT_CAPACITY: usize = 4096;
+    let (command_tx, command_rx) =
+        std::sync::mpsc::sync_channel::<WorkerCommand>(COMMAND_CAPACITY);
+    let (event_tx, event_rx) =
+        std::sync::mpsc::sync_channel::<WorkerEvent>(EVENT_CAPACITY);
     let cancel = CancelFlag::new();
     let thread_cancel = cancel.clone();
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let thread_stop = std::sync::Arc::clone(&stop);
     let join = std::thread::spawn(move || {
         let options = crate::interactive::InteractiveOptions {
             config_path: config_path.as_deref(),
@@ -585,16 +1295,18 @@ pub fn spawn_worker(
         match crate::interactive::compose_session(options) {
             Ok(mut session) => {
                 session.enable_progress_ticks();
-                run_worker_loop(
+                run_worker_loop_with_stop(
                     &command_rx,
                     &event_tx,
                     &thread_cancel,
+                    &thread_stop,
                     &mut session,
-                );
+                )
             }
             Err(error) => {
                 let _ = event_tx.send(WorkerEvent::Failed(error.to_string()));
                 let _ = event_tx.send(WorkerEvent::Stopped);
+                WorkerStopOutcome::AlreadyStopped
             }
         }
     });
@@ -602,6 +1314,7 @@ pub fn spawn_worker(
         commands: command_tx,
         events: event_rx,
         cancel,
+        stop,
         join: Some(join),
     }
 }
@@ -665,6 +1378,7 @@ pub fn apply_worker_event<W: std::io::Write>(
         },
         WorkerEvent::Pane(data) => *pane = Some(data),
         WorkerEvent::Report(text) => {
+            writer.write_all(sanitizer.flush().as_bytes())?;
             let safe = crate::sanitize::sanitize_for_display(&text);
             writer.write_all(safe.as_bytes())?;
         }
@@ -674,7 +1388,13 @@ pub fn apply_worker_event<W: std::io::Write>(
             let line = format!("Worker failed: {safe}\n");
             writer.write_all(line.as_bytes())?;
         }
-        WorkerEvent::TurnFinished | WorkerEvent::Stopped => {}
+        WorkerEvent::TurnFinished | WorkerEvent::Stopped => {
+            // A turn/worker boundary closes the stateful output stream even
+            // when a producer omitted an explicit terminal event. Otherwise a
+            // dangling escape sequence from one turn could suppress or alter
+            // the first bytes of the next turn.
+            writer.write_all(sanitizer.flush().as_bytes())?;
+        }
     }
     Ok(())
 }
@@ -692,7 +1412,7 @@ pub(crate) mod worker_source_tests {
     /// capability (decision 167), and this test needs neither.
     pub(crate) struct Scripted {
         pub(crate) source: WorkerSource,
-        pub(crate) events: std::sync::mpsc::Sender<WorkerEvent>,
+        pub(crate) events: std::sync::mpsc::SyncSender<WorkerEvent>,
         pub(crate) commands: std::sync::mpsc::Receiver<WorkerCommand>,
         pub(crate) cancel: CancelFlag,
     }
@@ -700,13 +1420,18 @@ pub(crate) mod worker_source_tests {
     /// Shared with the drain test in `interactive`, which drives the real
     /// drain from this scripted worker.
     pub(crate) fn scripted() -> Scripted {
-        let (command_tx, commands) = std::sync::mpsc::channel();
-        let (events, event_rx) = std::sync::mpsc::channel();
+        let (command_tx, commands) =
+            std::sync::mpsc::sync_channel::<WorkerCommand>(256);
+        let (events, event_rx) =
+            std::sync::mpsc::sync_channel::<WorkerEvent>(4096);
         let cancel = CancelFlag::new();
         let handle = WorkerHandle {
             commands: command_tx,
             events: event_rx,
             cancel: cancel.clone(),
+            stop: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+                false,
+            )),
             join: None,
         };
         Scripted {
@@ -774,7 +1499,10 @@ pub(crate) mod worker_source_tests {
         let mut s = scripted();
         assert!(!s.cancel.is_requested());
         s.source.cancel();
-        assert!(s.cancel.is_requested(), "the flag reaches a blocked read");
+        assert!(
+            s.cancel.is_requested(),
+            "the flag reaches the worker poll seam"
+        );
         assert_eq!(s.commands.try_recv(), Ok(WorkerCommand::Cancel));
 
         assert!(s.source.send(WorkerCommand::ContextReport));
@@ -948,6 +1676,46 @@ mod loop_tests {
     }
 
     #[test]
+    fn a_turn_boundary_resets_a_dangling_escape_state() {
+        use super::{WorkerEvent, apply_worker_event};
+        use crate::sanitize::TerminalSanitizer;
+        use siralos_core::tool::ToolLoopEvent;
+        let mut sanitizer = TerminalSanitizer::new();
+        let mut out: Vec<u8> = Vec::new();
+        let mut reasoning = |_text: &str| {};
+        let mut pane = None;
+        apply_worker_event(
+            WorkerEvent::Session(ToolLoopEvent::TextDelta {
+                text: "\u{1b}[".to_owned(),
+            }),
+            &mut sanitizer,
+            &mut out,
+            &mut reasoning,
+            &mut pane,
+        )
+        .expect("write");
+        apply_worker_event(
+            WorkerEvent::TurnFinished,
+            &mut sanitizer,
+            &mut out,
+            &mut reasoning,
+            &mut pane,
+        )
+        .expect("write");
+        apply_worker_event(
+            WorkerEvent::Session(ToolLoopEvent::TextDelta {
+                text: "31mnext".to_owned(),
+            }),
+            &mut sanitizer,
+            &mut out,
+            &mut reasoning,
+            &mut pane,
+        )
+        .expect("write");
+        assert_eq!(String::from_utf8(out).expect("utf8"), "31mnext");
+    }
+
+    #[test]
     fn the_bridge_routes_thinking_to_its_own_sink_and_reports_failures() {
         use super::{WorkerEvent, apply_worker_event};
         use crate::sanitize::TerminalSanitizer;
@@ -1042,8 +1810,9 @@ mod loop_tests {
     }
 
     use super::{
-        CancelFlag, SessionStatus, WorkerCommand, WorkerEvent, WorkerSession,
-        run_worker_loop,
+        CancelFlag, FlushError, FlushOutcome, SessionStatus, WorkerCommand,
+        WorkerEvent, WorkerHandle, WorkerSession, WorkerStopOutcome,
+        run_worker_loop, run_worker_loop_typed, run_worker_loop_with_stop,
     };
     use siralos_core::tool::ToolLoopEvent;
 
@@ -1056,11 +1825,13 @@ mod loop_tests {
         flushes: usize,
         refuse: Option<String>,
         responding: bool,
+        stays_responding_after_cancel: bool,
         models: Vec<String>,
         reload_report: Option<String>,
         reload_refusal: Option<String>,
         settled: usize,
         pane: Option<crate::tui::ContextPaneData>,
+        flush_result: Option<Result<FlushOutcome, FlushError>>,
     }
 
     impl WorkerSession for FakeSession {
@@ -1074,7 +1845,7 @@ mod loop_tests {
         }
         fn poll_event(&mut self) -> Option<ToolLoopEvent> {
             let next = self.events.pop_front();
-            if next.is_none() {
+            if next.is_none() && !self.stays_responding_after_cancel {
                 self.responding = false;
             }
             next
@@ -1111,12 +1882,17 @@ mod loop_tests {
         }
         fn cancel(&mut self) {
             self.cancels += 1;
-            self.responding = false;
+            if !self.stays_responding_after_cancel {
+                self.responding = false;
+            }
         }
         fn turn_settled(&mut self) {
             self.settled += 1;
         }
-        fn fetch_models(&mut self) -> Result<Vec<String>, String> {
+        fn fetch_models(
+            &mut self,
+            _cancellation: &CancelFlag,
+        ) -> Result<Vec<String>, String> {
             Ok(vec!["fake-model".to_owned()])
         }
         fn domains_add(&mut self, folder: &str) -> Result<String, String> {
@@ -1137,12 +1913,20 @@ mod loop_tests {
                 protocol: "openai-completions".to_owned(),
                 credential_display: None,
                 credential_resolved: false,
+                live_model_switchable: true,
                 context_suffix: String::new(),
             }
         }
         fn enable_progress_ticks(&mut self) {}
         fn flush(&mut self) {
             self.flushes += 1;
+        }
+        fn flush_result(&mut self) -> Result<FlushOutcome, FlushError> {
+            self.flushes += 1;
+            // A scripted session has no retaining recorder, which is typed
+            // evidence in its own right -- not the LEGACY "a void flush ran"
+            // ambiguity. The legacy path is pinned by its own test below.
+            self.flush_result.take().unwrap_or(Ok(FlushOutcome::NoRecorder))
         }
     }
 
@@ -1151,8 +1935,10 @@ mod loop_tests {
         session: &mut FakeSession,
         cancel: &CancelFlag,
     ) -> Vec<WorkerEvent> {
-        let (command_tx, command_rx) = std::sync::mpsc::channel();
-        let (event_tx, event_rx) = std::sync::mpsc::channel();
+        let (command_tx, command_rx) =
+            std::sync::mpsc::sync_channel::<WorkerCommand>(256);
+        let (event_tx, event_rx) =
+            std::sync::mpsc::sync_channel::<WorkerEvent>(4096);
         for command in commands {
             command_tx.send(command).expect("send");
         }
@@ -1246,6 +2032,7 @@ mod loop_tests {
                     protocol: "openai-completions".to_owned(),
                     credential_display: None,
                     credential_resolved: false,
+                    live_model_switchable: true,
                     context_suffix: String::new(),
                 }),
                 WorkerEvent::Report(
@@ -1260,6 +2047,7 @@ mod loop_tests {
                     protocol: "openai-completions".to_owned(),
                     credential_display: None,
                     credential_resolved: false,
+                    live_model_switchable: true,
                     context_suffix: String::new(),
                 }),
                 // The command channel closed without a Shutdown: the loop
@@ -1388,6 +2176,28 @@ mod loop_tests {
     }
 
     #[test]
+    fn an_idle_cancel_does_not_stick_to_the_next_prompt() {
+        let mut session = FakeSession::default();
+        let events = run(
+            vec![
+                WorkerCommand::Cancel,
+                WorkerCommand::Prompt("hi".to_owned()),
+            ],
+            &mut session,
+            &CancelFlag::new(),
+        );
+        assert_eq!(session.prompts, vec!["hi".to_owned()]);
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                WorkerEvent::Failed(message)
+                    if message.contains("cancelled before it started")
+            )),
+            "the next prompt must not inherit an idle cancel"
+        );
+    }
+
+    #[test]
     fn the_worker_pushes_the_startup_pane_and_a_settled_one() {
         // Decision 167 D1: the frontend no longer BUILDS the pane -- it cannot,
         // because the metrics and the history live here. It arrives with the
@@ -1452,12 +2262,21 @@ mod loop_tests {
             "[profile]\nname = \"default\"\nprovider = \"example-vendor\"\nmodel = \"example/model-a\"\nendpoint = \"https://api.example.com/v1\"\nprotocol = \"openai-completions\"\nrecord-replay = true\n",
         )
         .expect("profile");
+        let profile_bytes = std::fs::read(dir.join("siralos.toml"))
+            .expect("read profile for approval");
+        let digest = siralos_core::identity::sha256_hex(&profile_bytes);
+        let config = dir.join(".test-user-config.json");
+        std::fs::write(
+            &config,
+            format!("{{\"profileApproval\":\"{digest}\"}}"),
+        )
+        .expect("write test approval config");
         let store = dir.join(".siralos").join("replay-store.json");
         assert!(!store.exists(), "nothing is written before the shutdown");
 
         {
             let mut guard = super::WorkerGuard::new(super::WorkerSource::new(
-                super::spawn_worker(Some(dir.clone()), None),
+                super::spawn_worker(Some(dir.clone()), Some(config.clone())),
             ));
             // The worker composes before it answers, so waiting for the header
             // makes the drop below a shutdown of a COMPOSED session.
@@ -1488,6 +2307,200 @@ mod loop_tests {
             session.flushes, 1,
             "a channel that closes without a Shutdown still flushes once"
         );
+    }
+
+    #[test]
+    fn a_flush_failure_is_a_typed_stop_failure_and_an_explicit_event() {
+        let mut session = FakeSession {
+            flush_result: Some(Err(FlushError::Persistence(
+                "disk unavailable".to_owned(),
+            ))),
+            ..FakeSession::default()
+        };
+        let (command_tx, command_rx) =
+            std::sync::mpsc::sync_channel::<WorkerCommand>(8);
+        let (event_tx, event_rx) =
+            std::sync::mpsc::sync_channel::<WorkerEvent>(8);
+        command_tx.send(WorkerCommand::Shutdown).expect("shutdown");
+        drop(command_tx);
+        let cancel = CancelFlag::new();
+        let stop =
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let outcome = run_worker_loop_with_stop(
+            &command_rx,
+            &event_tx,
+            &cancel,
+            &stop,
+            &mut session,
+        );
+        assert_eq!(
+            outcome,
+            WorkerStopOutcome::FlushFailed(FlushError::Persistence(
+                "disk unavailable".to_owned()
+            ))
+        );
+        let mut events = Vec::new();
+        while let Ok(event) = event_rx.try_recv() {
+            events.push(event);
+        }
+        assert!(events.iter().any(|event| matches!(
+            event,
+            WorkerEvent::Failed(message)
+                if message.contains("replay flush failed")
+                    && message.contains("disk unavailable")
+        )));
+        assert_eq!(events.last(), Some(&WorkerEvent::Stopped));
+    }
+
+    #[test]
+    fn a_stop_that_cannot_quiesce_still_attempts_and_reports_the_flush() {
+        let (command_tx, command_rx) =
+            std::sync::mpsc::sync_channel::<WorkerCommand>(2);
+        let (event_tx, event_rx) =
+            std::sync::mpsc::sync_channel::<WorkerEvent>(8);
+        command_tx.send(WorkerCommand::Shutdown).expect("queue shutdown");
+        let mut session = FakeSession {
+            responding: true,
+            stays_responding_after_cancel: true,
+            flush_result: Some(Err(FlushError::Persistence(
+                "store is read-only".to_owned(),
+            ))),
+            ..FakeSession::default()
+        };
+        let cancel = CancelFlag::new();
+        let outcome = run_worker_loop_typed(
+            &command_rx,
+            &event_tx,
+            &cancel,
+            &mut session,
+        );
+        assert!(
+            matches!(
+                &outcome,
+                WorkerStopOutcome::QuiesceFailed {
+                    flush: Err(FlushError::Persistence(message)),
+                    ..
+                } if message.contains("read-only")
+            ),
+            "got {outcome:?}"
+        );
+        assert_eq!(session.flushes, 1, "the single flush is still attempted");
+        let mut saw_failure = false;
+        let mut saw_stop = false;
+        while let Ok(event) = event_rx.try_recv() {
+            match event {
+                WorkerEvent::Failed(message) => {
+                    saw_failure |= message.contains("did not quiesce")
+                        && message.contains("replay flush failed");
+                }
+                WorkerEvent::Stopped => saw_stop = true,
+                _ => {}
+            }
+        }
+        assert!(saw_failure && saw_stop, "typed failure evidence is relayed");
+    }
+
+    #[test]
+    fn the_handle_surfaces_flush_failure_instead_of_empty_shutdown_success() {
+        let (command_tx, command_rx) =
+            std::sync::mpsc::sync_channel::<WorkerCommand>(8);
+        let (event_tx, event_rx) =
+            std::sync::mpsc::sync_channel::<WorkerEvent>(8);
+        let cancel = CancelFlag::new();
+        let thread_cancel = cancel.clone();
+        let stop =
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let thread_stop = std::sync::Arc::clone(&stop);
+        let join = std::thread::spawn(move || {
+            let mut session = FakeSession {
+                flush_result: Some(Err(FlushError::Persistence(
+                    "store is read-only".to_owned(),
+                ))),
+                ..FakeSession::default()
+            };
+            run_worker_loop_with_stop(
+                &command_rx,
+                &event_tx,
+                &thread_cancel,
+                &thread_stop,
+                &mut session,
+            )
+        });
+        let mut handle = WorkerHandle {
+            commands: command_tx,
+            events: event_rx,
+            cancel,
+            stop,
+            join: Some(join),
+        };
+
+        assert!(matches!(
+            handle.shutdown_bounded(std::time::Duration::from_secs(1)),
+            Err(message) if message.contains("replay flush failed")
+        ));
+    }
+
+    #[test]
+    fn a_legacy_flush_reports_missing_typed_evidence_once() {
+        let (command_tx, command_rx) =
+            std::sync::mpsc::sync_channel::<WorkerCommand>(2);
+        let (event_tx, event_rx) =
+            std::sync::mpsc::sync_channel::<WorkerEvent>(8);
+        command_tx.send(WorkerCommand::Shutdown).expect("queue shutdown");
+        let mut session = FakeSession {
+            flush_result: Some(Ok(FlushOutcome::Legacy)),
+            ..FakeSession::default()
+        };
+        let cancel = CancelFlag::new();
+        let outcome = run_worker_loop_typed(
+            &command_rx,
+            &event_tx,
+            &cancel,
+            &mut session,
+        );
+        assert_eq!(outcome, WorkerStopOutcome::FlushEvidenceMissing);
+        let mut events = Vec::new();
+        while let Ok(event) = event_rx.try_recv() {
+            events.push(event);
+        }
+        let missing = events
+            .iter()
+            .filter(|event| {
+                matches!(event, WorkerEvent::Failed(message) if message
+                    .contains("typed persistence evidence is missing"))
+            })
+            .count();
+        assert_eq!(missing, 1, "reported exactly once, got: {events:?}");
+        assert_eq!(events.last(), Some(&WorkerEvent::Stopped));
+    }
+
+    #[test]
+    fn shutdown_details_are_single_line_bounded_and_secret_free() {
+        // A plain lifecycle reason survives: the failure must stay visible.
+        assert_eq!(
+            super::safe_shutdown_detail(
+                "worker shutdown timed out; recordings may be incomplete"
+            ),
+            "worker shutdown timed out; recordings may be incomplete"
+        );
+        // A secret, a URL, and an absolute workspace path do not.
+        for hidden in [
+            "replay flush failed: key:sk-live-abc",
+            "provider said https://internal.example/v1 refused",
+            r"could not open C:\Users\test\replay.jsonl",
+        ] {
+            assert_eq!(
+                super::safe_shutdown_detail(hidden),
+                "worker shutdown detail hidden",
+                "got {:?}",
+                super::safe_shutdown_detail(hidden)
+            );
+        }
+        // Line structure is flattened, and the projection is bounded.
+        let multiline = super::safe_shutdown_detail("first line\nsecond line");
+        assert_eq!(multiline, "first line second line");
+        let long = super::safe_shutdown_detail(&"x".repeat(4096));
+        assert!(long.chars().count() <= 512, "got {}", long.chars().count());
     }
 
     #[test]
@@ -1548,7 +2561,10 @@ mod loop_tests {
             Ok(String::new())
         }
         fn turn_settled(&mut self) {}
-        fn fetch_models(&mut self) -> Result<Vec<String>, String> {
+        fn fetch_models(
+            &mut self,
+            _cancellation: &CancelFlag,
+        ) -> Result<Vec<String>, String> {
             Ok(Vec::new())
         }
         fn domains_add(&mut self, _folder: &str) -> Result<String, String> {
@@ -1569,6 +2585,7 @@ mod loop_tests {
                 protocol: String::new(),
                 credential_display: None,
                 credential_resolved: false,
+                live_model_switchable: true,
                 context_suffix: String::new(),
             }
         }
@@ -1583,10 +2600,12 @@ mod loop_tests {
     }
 
     #[test]
-    fn a_stalled_turn_is_cancelled_within_an_event_interval() {
+    fn cancel_reaches_a_stalled_turn_within_an_event_interval() {
         // C4 evidence: the cancel is an EXTERNAL flag polled between events, so
-        // its latency is bounded by the event interval, not by the turn. The
-        // numbers are printed because the point of the pack is the measurement.
+        // its callback latency is bounded by the event interval, not by the
+        // turn. This deliberately does not claim that an already-blocked
+        // provider transport is interrupted; that boundary is outside this
+        // module. The numbers are printed because the point is the measurement.
         let delay = std::time::Duration::from_millis(20);
         let cancels = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let mut session = StallingSession {
@@ -1595,8 +2614,10 @@ mod loop_tests {
             prompt: None,
             cancels: std::sync::Arc::clone(&cancels),
         };
-        let (command_tx, command_rx) = std::sync::mpsc::channel();
-        let (event_tx, event_rx) = std::sync::mpsc::channel();
+        let (command_tx, command_rx) =
+            std::sync::mpsc::sync_channel::<WorkerCommand>(256);
+        let (event_tx, event_rx) =
+            std::sync::mpsc::sync_channel::<WorkerEvent>(4096);
         let cancel = CancelFlag::new();
         let thread_cancel = cancel.clone();
         let worker = std::thread::spawn(move || {
@@ -1632,7 +2653,7 @@ mod loop_tests {
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
         let latency = landed
-            .expect("the flag reaches a blocked turn")
+            .expect("the flag reaches the stalled turn's poll seam")
             .duration_since(requested);
         println!(
             "cancel latency after a {delay:?} event interval: {latency:?} ({} events, {latency_events:.1} intervals)",

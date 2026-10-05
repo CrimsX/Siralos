@@ -118,6 +118,8 @@ fn wrap_line_to_width_breaks_words_and_long_tokens() {
     for row in &first {
         assert!(row.chars().count() <= 40, "row overflows the width: {row:?}");
     }
+    // Width is terminal-cell width, not UTF-8 bytes or scalar count.
+    assert_eq!(wrap_line_to_width("界界界", 4), vec!["界界", "界"]);
 }
 
 #[test]
@@ -174,11 +176,14 @@ fn tui_sink_appends_sanitized_lines_verbatim() {
     paint_until_settled(&state);
     let transcript = state.borrow().transcript_lines.clone();
     assert_eq!(transcript, vec!["hello world", "second line"]);
-    // Ensure unsanitized content would be stored verbatim (the sink does
-    // not inject sanitization; upstream already sanitized).
+    // The sink is a defense-in-depth output boundary even when a caller
+    // bypasses the session relay.
+    sink.write_all(b"raw \x1b[31mred\x1b[0m\n").expect("write");
+    paint_until_settled(&state);
+    assert_eq!(state.borrow().transcript_lines[2], "raw red");
     sink.write_all(b"already sanitized ^@\n").expect("write");
     paint_until_settled(&state);
-    assert_eq!(state.borrow().transcript_lines[2], "already sanitized ^@");
+    assert_eq!(state.borrow().transcript_lines[3], "already sanitized ^@");
 }
 
 #[test]
@@ -202,6 +207,34 @@ fn tui_sink_respects_transcript_bound() {
     assert_eq!(
         transcript[transcript.len() - 1],
         format!("line {}", MAX_TRANSCRIPT_LINES + 49)
+    );
+}
+
+#[test]
+fn transcript_lines_have_an_independent_byte_bound() {
+    let mut state = TuiState::new();
+    let oversized = "x".repeat(MAX_TRANSCRIPT_LINE_BYTES + 257);
+    state.push_line(oversized);
+    let line = &state.transcript_lines[0];
+    assert!(line.len() <= MAX_TRANSCRIPT_LINE_BYTES);
+    assert!(line.ends_with("... (line truncated)"));
+}
+
+#[test]
+fn sink_caps_a_single_caller_buffer_before_decoding() {
+    let state = Rc::new(RefCell::new(TuiState::new()));
+    let mut sink = TuiSink::new(state.clone());
+    let payload = vec![b'x'; MAX_STREAM_BYTES + 4096];
+    // The bound is a TYPED refusal, not a silent cap: the caller is told its
+    // buffer did not land whole, and the sink keeps the accepted prefix.
+    let error = sink.write_all(&payload).expect_err("bounded write");
+    assert_eq!(error.kind(), std::io::ErrorKind::WriteZero, "{error}");
+    let state = state.borrow();
+    assert!(state.status.contains("truncated"), "{}", state.status);
+    assert!(state.stream_buffer.len() <= MAX_STREAM_BYTES);
+    assert!(
+        !state.stream_buffer.is_empty(),
+        "the accepted prefix is still shown"
     );
 }
 
@@ -1255,9 +1288,8 @@ fn working_line_pulses_once_a_second_and_errors_render_red() {
 #[test]
 fn turn_keys_keep_type_ahead_expand_thinking_and_ask_to_interrupt() {
     // S3b/4b: the keys that work WHILE the model is running. The arrows
-    // expand the thinking mid-flight, Esc is the interrupt, and a CHORDED
-    // key stays the loop's (Ctrl+C is the exit key -- folding it into the
-    // prompt would kill it for the whole turn).
+    // expand the thinking mid-flight, Esc and Ctrl+C request interruption,
+    // and a chorded character never becomes type-ahead.
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     let key = |code, modifiers| KeyEvent::new(code, modifiers);
     let plain = |code| KeyEvent::new(code, KeyModifiers::NONE);
@@ -1267,8 +1299,8 @@ fn turn_keys_keep_type_ahead_expand_thinking_and_ask_to_interrupt() {
     assert_eq!(state.input, "hi", "typing mid-turn is kept");
     assert!(!apply_turn_key(&mut state, plain(KeyCode::Backspace)));
     assert_eq!(state.input, "h");
-    // A chorded character is NOT type-ahead.
-    assert!(!apply_turn_key(
+    // Ctrl+C is the active interrupt request; it must not become a literal c.
+    assert!(apply_turn_key(
         &mut state,
         key(KeyCode::Char('c'), KeyModifiers::CONTROL)
     ));
@@ -1747,6 +1779,34 @@ fn status_sanitizes_provider_and_model() {
     assert!(status.contains(&sanitized));
 }
 
+#[test]
+fn header_and_status_mask_secret_shaped_provider_and_model_labels() {
+    for value in [
+        "vendor/key:super-secret",
+        "vendor/sk-live-secret",
+        "vendor/secret-model",
+    ] {
+        let status = compose_status_line("ready", Some(value), Some(value));
+        let header = header_text(Some(value), Some(value));
+        assert!(!status.contains(value), "status leaked {value}: {status}");
+        assert!(!header.contains(value), "header leaked {value}: {header}");
+        assert!(status.contains("[REDACTED]"));
+        assert!(header.contains("[REDACTED]"));
+    }
+    for value in [
+        "vendor/model\nforged",
+        "vendor/model\tforged",
+        "vendor/model\u{0085}",
+    ] {
+        let status = compose_status_line("ready", Some(value), None);
+        let header = header_text(Some(value), None);
+        assert!(!status.contains('\n'));
+        assert!(!header.contains('\n'));
+        assert!(!status.contains('\t'));
+        assert!(!header.contains('\t'));
+    }
+}
+
 // P1–P5 polish pass tests (decision 118)
 
 #[test]
@@ -2125,6 +2185,44 @@ fn model_switch_picker_navigates_arms_and_renders() {
 }
 
 #[test]
+fn model_switch_picker_masks_only_rendered_rows_and_keeps_raw_selection() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+
+    let raw = vec![
+        "vendor/model:token".to_owned(),
+        "vendor/key:secret".to_owned(),
+        "vendor/plain".to_owned(),
+    ];
+    let mut state = TuiState::new();
+    open_model_switch_picker(&mut state, raw.clone());
+
+    let picker = state.model_switch_picker.as_ref().expect("picker open");
+    assert_eq!(picker.items, raw, "the picker must retain exact model ids");
+
+    let content: String = render(&state, 80, 24)
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    assert!(content.contains("[MODEL REDACTED]"), "got: {content}");
+    assert!(!content.contains("model:token"), "got: {content}");
+    assert!(!content.contains("key:secret"), "got: {content}");
+    assert!(content.contains("vendor/plain"), "got: {content}");
+
+    let enter = KeyEvent::new_with_kind(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+        KeyEventKind::Press,
+    );
+    assert!(!handle_key(&mut state, enter, 10));
+    assert_eq!(
+        state.pending_model_switch.as_deref(),
+        Some("vendor/model:token"),
+        "selection must persist the raw fetched id",
+    );
+}
+
+#[test]
 fn model_picker_window_always_shows_selection() {
     // The shared decision 138 window both pickers use: the selection
     // is always inside the rendered window, bounded to 8 rows.
@@ -2192,6 +2290,18 @@ fn provider_picker_renders_and_echo_and_esc() {
         .filter(|e| e.text.contains("provider: openai selected"))
         .count();
     assert_eq!(count, 1);
+}
+
+#[test]
+fn provider_picker_masks_secret_shaped_provider_labels() {
+    let entries = provider_entries_from_session(
+        Some("vendor/key:super-secret"),
+        Some("vendor/model:token"),
+        Some("https://api.example.com/v1"),
+    );
+    assert_eq!(entries[0].name, "[REDACTED]");
+    assert_eq!(entries[0].model, "[MODEL REDACTED]");
+    assert!(!entries[0].name.contains("super-secret"));
 }
 
 #[test]
@@ -2390,6 +2500,16 @@ fn t108_enter(state: &mut TuiState) {
     handle_key(state, t108_key(crossterm::event::KeyCode::Enter), 10);
 }
 
+/// Settle the deferred model probe the interactive loop would normally resolve
+/// between keystrokes. Without it the form blocks input exactly as it does in
+/// production, and a scripted "type the model manually" step silently no-ops.
+fn settle_model_fetch(state: &mut TuiState) {
+    let form = state.provider_add_form.as_mut().expect("form open");
+    if form.fetching_models {
+        form.apply_fetch_result(Err("test".to_owned()));
+    }
+}
+
 #[test]
 fn provider_add_flow_sequential_form_completes() {
     // Six-field order: display name -> url -> api key -> api protocol -> model -> model display name (O1).
@@ -2447,10 +2567,9 @@ fn provider_add_flow_sequential_form_completes() {
         completed.credential_env.as_deref(),
         Some("env:OPENAI_API_KEY")
     );
-    assert_eq!(
-        completed.endpoint.as_deref(),
-        Some("https://api.openai.com/v1")
-    );
+    // Named providers use their registry-owned fixed route; the form's
+    // temporary discovery URL is not persisted as a profile override.
+    assert_eq!(completed.endpoint, None);
     assert_eq!(completed.protocol, "openai-completions");
     assert_eq!(completed.model_display_name.as_deref(), Some("My GPT"));
 }
@@ -2967,6 +3086,15 @@ fn validation_still_rejects_invalid_input() {
     handle_key(&mut state, t108_key(crossterm::event::KeyCode::Esc), 10);
     t108_type(&mut state, "openai-completions");
     t108_enter(&mut state);
+    settle_model_fetch(&mut state);
+    // Protocol selection starts the deferred model probe. Settle it before
+    // typing the manual fallback, exactly as the interactive loop does.
+    {
+        let form = state.provider_add_form.as_mut().unwrap();
+        if form.fetching_models {
+            form.apply_fetch_result(Err("test".to_owned()));
+        }
+    }
     t108_type(&mut state, "gpt-4o");
     t108_enter(&mut state);
     t108_type(&mut state, "");
@@ -2982,7 +3110,8 @@ fn validation_still_rejects_invalid_input() {
             .unwrap()
             .endpoint
             .as_deref(),
-        Some("https://api.openai.com/v1")
+        None,
+        "named adapters own a fixed route; the form must not persist a custom endpoint"
     );
     // Display name derived from the url host after the Url advance.
     assert_eq!(
@@ -2995,6 +3124,36 @@ fn validation_still_rejects_invalid_input() {
             .unwrap()
             .provider,
         "openai"
+    );
+}
+
+#[test]
+fn provider_add_form_keeps_endpoint_for_a_generic_provider() {
+    let mut state = TuiState::new();
+    state.provider_add_form = Some(ProviderAddForm {
+        endpoint: Some("https://api.example.com/v1".to_owned()),
+        credential_env: Some("EXAMPLE_KEY".to_owned()),
+        provider: Some("example-vendor".to_owned()),
+        protocol: Some("openai-completions".to_owned()),
+        model: Some("example/model-a".to_owned()),
+        model_display_name: None,
+        field: ProviderAddField::ModelDisplayName,
+        input: String::new(),
+        error: None,
+        completed: None,
+        fetching_models: false,
+        model_picker: None,
+        fetch_note: None,
+        protocol_picker: None,
+    });
+    handle_key(&mut state, t108_key(crossterm::event::KeyCode::Enter), 10);
+    assert_eq!(
+        state
+            .provider_add_form
+            .as_ref()
+            .and_then(|form| form.completed.as_ref())
+            .and_then(|data| data.endpoint.as_deref()),
+        Some("https://api.example.com/v1")
     );
 }
 
@@ -3102,6 +3261,7 @@ fn prefill_is_editable() {
     handle_key(&mut state, t108_key(crossterm::event::KeyCode::Esc), 10);
     t108_type(&mut state, "openai-completions");
     t108_enter(&mut state);
+    settle_model_fetch(&mut state);
     t108_type(&mut state, "gpt-4o");
     t108_enter(&mut state);
     t108_type(&mut state, "My Display");
@@ -3139,6 +3299,7 @@ fn name_only_flow_still_works() {
     handle_key(&mut state, t108_key(crossterm::event::KeyCode::Esc), 10);
     t108_type(&mut state, "openai-completions");
     t108_enter(&mut state);
+    settle_model_fetch(&mut state);
     t108_type(&mut state, "gpt-4o");
     t108_enter(&mut state);
     t108_type(&mut state, "");
@@ -3250,6 +3411,7 @@ fn display_name_first_flow_completes() {
     handle_key(&mut state, t108_key(crossterm::event::KeyCode::Esc), 10);
     t108_type(&mut state, "anthropic-messages");
     t108_enter(&mut state);
+    settle_model_fetch(&mut state);
     t108_type(&mut state, "model-a");
     t108_enter(&mut state);
     t108_type(&mut state, "Spark Display");
@@ -3283,6 +3445,7 @@ fn completion_requires_name_when_url_empty() {
     handle_key(&mut state, t108_key(crossterm::event::KeyCode::Esc), 10);
     t108_type(&mut state, "openai-completions");
     t108_enter(&mut state);
+    settle_model_fetch(&mut state);
     t108_type(&mut state, "gpt-4o");
     t108_enter(&mut state);
     t108_enter(&mut state); // empty model display name -> completion error

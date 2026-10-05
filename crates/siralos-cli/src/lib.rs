@@ -107,9 +107,7 @@ where
             .to_str()
             .ok_or_else(|| UsageError::new("argument is not valid UTF-8"))?;
         if terminated {
-            return Err(UsageError::new(format!(
-                "unexpected argument `{text}` after `--`"
-            )));
+            return Err(UsageError::new("unexpected argument after `--`"));
         }
         match text {
             "--" => terminated = true,
@@ -147,10 +145,8 @@ where
                 }
                 json = true;
             }
-            other => {
-                return Err(UsageError::new(format!(
-                    "unknown argument `{other}`"
-                )));
+            _ => {
+                return Err(UsageError::new("unknown argument"));
             }
         }
     }
@@ -282,16 +278,21 @@ mod tests {
     }
 
     #[test]
-    fn removed_tui_flag_is_rejected() {
-        // Decision 105 A2: the one-commit `--tui` flag is removed.
+    fn removed_tui_flag_is_rejected_without_echoing_argv() {
+        // Decision 105 A2: the one-commit `--tui` flag is removed. The refusal
+        // names the accepted vocabulary instead of echoing the offending argv,
+        // which could carry a secret in a mistyped flag.
         let error = parse_args(args(&["--tui"])).expect_err("must fail");
-        assert!(error.detail().contains("--tui"));
+        assert_eq!(error.detail(), "unknown argument");
+        assert!(!error.detail().contains("--tui"));
+        assert_eq!(error.to_string(), error.detail());
     }
 
     #[test]
     fn unknown_arguments_are_rejected() {
         let error = parse_args(args(&["--unknown"])).expect_err("must fail");
-        assert!(error.detail().contains("--unknown"));
+        assert_eq!(error.detail(), "unknown argument");
+        assert!(!error.detail().contains("--unknown"));
         assert_eq!(error.to_string(), error.detail());
     }
 

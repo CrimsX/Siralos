@@ -16,7 +16,12 @@ fn main() -> ExitCode {
             match siralos_cli::interactive::run_interactive_stdio() {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
-                    eprintln!("siralos: {error}");
+                    eprintln!(
+                        "siralos: {}",
+                        siralos_cli::sanitize::sanitize_for_display(
+                            &error.to_string()
+                        )
+                    );
                     ExitCode::from(1)
                 }
             }
@@ -30,7 +35,12 @@ fn main() -> ExitCode {
                 match siralos_cli::interactive::run_interactive_tui_stdio() {
                     Ok(()) => ExitCode::SUCCESS,
                     Err(error) => {
-                        eprintln!("siralos: {error}");
+                        eprintln!(
+                            "siralos: {}",
+                            siralos_cli::sanitize::sanitize_for_display(
+                                &error.to_string()
+                            )
+                        );
                         ExitCode::from(1)
                     }
                 }
@@ -39,7 +49,12 @@ fn main() -> ExitCode {
                 match siralos_cli::interactive::run_interactive_stdio() {
                     Ok(()) => ExitCode::SUCCESS,
                     Err(error) => {
-                        eprintln!("siralos: {error}");
+                        eprintln!(
+                            "siralos: {}",
+                            siralos_cli::sanitize::sanitize_for_display(
+                                &error.to_string()
+                            )
+                        );
                         ExitCode::from(1)
                     }
                 }
@@ -56,7 +71,12 @@ fn main() -> ExitCode {
             ) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
-                    eprintln!("siralos: {error}");
+                    eprintln!(
+                        "siralos: {}",
+                        siralos_cli::sanitize::sanitize_for_display(
+                            &error.to_string()
+                        )
+                    );
                     ExitCode::from(1)
                 }
             }
@@ -67,7 +87,12 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("siralos: {error}");
+            eprintln!(
+                "siralos: {}",
+                siralos_cli::sanitize::sanitize_for_display(
+                    &error.to_string()
+                )
+            );
             eprintln!("Try `siralos --help` for usage.");
             ExitCode::from(2)
         }
@@ -91,10 +116,7 @@ fn print_version() -> ExitCode {
 
 /// Print usage text and exit successfully.
 fn print_usage() -> ExitCode {
-    let state_dir = match siralos_adapters::paths::state_dir() {
-        Ok(path) => path.display().to_string(),
-        Err(error) => format!("<unavailable: {error}>"),
-    };
+    let _state_dir = siralos_adapters::paths::state_dir().ok();
     println!(
         "siralos: a deterministic, security-first software-development and QA harness\n\
          \n\
@@ -113,7 +135,7 @@ fn print_usage() -> ExitCode {
          \n\
          With no arguments, start the interactive terminal session.\n\
          \n\
-         User state directory: {state_dir}"
+         User state directory: (hidden)"
     );
     ExitCode::SUCCESS
 }
