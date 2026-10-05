@@ -50,6 +50,11 @@ reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
 ] }
 
+[target.'cfg(unix)'.dependencies]
+# Component bytes are opened with O_NOFOLLOW/O_NONBLOCK so a link or FIFO
+# inserted between validation and open cannot be followed or block the host.
+libc = "=0.2.189"
+
 [features]
 # Harness-only feature for the differential harness's HostCredential test helper
 # (`from_bytes_for_test` with `#[cfg(any(test, feature = "differential-harness"))]`).
