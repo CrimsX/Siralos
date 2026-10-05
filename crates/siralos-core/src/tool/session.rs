@@ -35,11 +35,20 @@ use crate::tool::round::{
     ToolRoundRunner, ToolRoundStep,
 };
 
+/// Maximum bytes accepted for one user prompt.
+pub const MAX_PROMPT_BYTES: usize = 64 * 1024;
+/// Maximum number of detached conversation items retained at idle.
+pub const MAX_HISTORY_ITEMS: usize = 256;
+/// Maximum aggregate serialized bytes retained at idle.
+pub const MAX_HISTORY_BYTES: usize = 1024 * 1024;
+
 /// Why a prompt could not be started.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PromptStartError {
     /// Another prompt response is still active.
     AlreadyResponding,
+    /// The prompt or resulting history exceeds the Host byte/item budget.
+    TooLong,
 }
 
 impl PromptStartError {
@@ -49,6 +58,7 @@ impl PromptStartError {
             Self::AlreadyResponding => {
                 "Siralos is already responding to a prompt."
             }
+            Self::TooLong => "Prompt exceeds the Host conversation budget.",
         }
     }
 }
@@ -788,9 +798,9 @@ impl<'a, P: ModelProvider> SiralosApplication<'a, P> {
     /// Start one prompt response.
     ///
     /// Appends the user message exactly once and emits
-    /// `response_started` as the first pull event. Returns
-    /// [`PromptStartError::AlreadyResponding`] while another response is
-    /// active.
+    /// `response_started` as the first pull event. Returns a typed
+    /// [`PromptStartError`] when the turn is active or the Host budget is
+    /// exceeded.
     pub fn send_prompt(
         &mut self,
         text: String,
@@ -798,8 +808,20 @@ impl<'a, P: ModelProvider> SiralosApplication<'a, P> {
         if matches!(&self.state, AppState::Responding(_)) {
             return Err(PromptStartError::AlreadyResponding);
         }
-        let mut history = std::mem::take(&mut self.history);
-        history.push(ConversationItem::UserMessage { content: text });
+        if text.len() > MAX_PROMPT_BYTES {
+            return Err(PromptStartError::TooLong);
+        }
+        let mut history = self.history.clone();
+        prune_history(&mut history);
+        let prompt_item = ConversationItem::UserMessage { content: text };
+        let prompt_bytes = history_item_bytes(&prompt_item);
+        if history.len().saturating_add(1) > MAX_HISTORY_ITEMS
+            || history_bytes(&history).saturating_add(prompt_bytes)
+                > MAX_HISTORY_BYTES
+        {
+            return Err(PromptStartError::TooLong);
+        }
+        history.push(prompt_item);
         let host = HostToolExecutor {
             registry: self.registry,
             policy: self.policy.clone(),
@@ -905,6 +927,59 @@ impl<'a, P: ModelProvider> SiralosApplication<'a, P> {
             self.history = machine.history;
             self.completed_tool_rounds = machine.completed_tool_rounds;
             self.provider_turn_count = provider_turn_count;
+            prune_history(&mut self.history);
         }
+    }
+}
+
+fn history_bytes(history: &[ConversationItem]) -> usize {
+    history.iter().fold(0usize, |total, item| {
+        total.saturating_add(history_item_bytes(item))
+    })
+}
+
+fn history_item_bytes(item: &ConversationItem) -> usize {
+    match item {
+        ConversationItem::UserMessage { content }
+        | ConversationItem::AssistantMessage { content } => content.len() + 32,
+        ConversationItem::AssistantToolCall { call_id, tool_name, input } => {
+            let input_bytes = input.serialized_json().len();
+            call_id.len() + tool_name.len() + input_bytes + 48
+        }
+        ConversationItem::ToolResult { call_id, tool_name, result } => {
+            let output_bytes = match result {
+                crate::provider::ToolExecutionResult::Success {
+                    output,
+                    summary,
+                } => serde_json::to_string(output)
+                    .map_or(0, |value| value.len())
+                    .saturating_add(summary.len()),
+                other => other.message().len(),
+            };
+            call_id.len() + tool_name.len() + output_bytes + 48
+        }
+    }
+}
+
+fn is_user_item(item: &ConversationItem) -> bool {
+    matches!(item, ConversationItem::UserMessage { .. })
+}
+
+fn prune_history(history: &mut Vec<ConversationItem>) {
+    while history.len() > MAX_HISTORY_ITEMS
+        || history_bytes(history) > MAX_HISTORY_BYTES
+    {
+        let Some(next_user) = history.iter().skip(1).position(is_user_item)
+        else {
+            // There is no complete earlier turn to remove. An oversized
+            // terminal assistant/tool group cannot be admitted again; drop
+            // the orphaned tail so the next prompt can start cleanly.
+            history.clear();
+            break;
+        };
+        // `next_user` is relative to `skip(1)`, so the selected user is at
+        // absolute index `next_user + 1`. Remove everything before that item
+        // and retain the user/assistant turn as the new context boundary.
+        history.drain(..next_user + 1);
     }
 }

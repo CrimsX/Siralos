@@ -71,9 +71,9 @@ impl ContextPolicy {
             ("frozen", Some(digest)) => {
                 Ok(Self::Frozen { digest: pinned(digest)? })
             }
-            (kind, _) => Err(context_error(format!(
-                "Unknown context control kind {kind:?}."
-            ))),
+            _ => {
+                Err(context_error("Unknown context control kind.".to_owned()))
+            }
         }
     }
 

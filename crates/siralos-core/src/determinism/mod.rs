@@ -56,16 +56,18 @@ pub use ports::{
     compare_code_units, normalize_keyed_results, stable_sort_by_key,
 };
 pub use provider_replay::{
-    CollectingReplayRecorder, NoopReplayRecorder, ProviderReplayAvailability,
-    ProviderResponseIdentity, ReplayRecorder, ReplayRecording,
-    RetainingReplayRecorder, SessionReplayEvidence,
-    compute_provider_response_identity_digest,
-    compute_session_replay_evidence_digest,
+    CollectingReplayRecorder, MAX_REPLAY_IDENTIFIER_BYTES, NoopReplayRecorder,
+    ProviderReplayAvailability, ProviderResponseIdentity,
+    REPLAY_SHA256_HEX_LENGTH, ReplayIdentityError, ReplayRecorder,
+    ReplayRecording, ReplayRecordingValidationError, RetainingReplayRecorder,
+    SessionReplayEvidence, compute_provider_response_identity_digest,
+    compute_session_replay_evidence_digest, is_valid_replay_sha256,
 };
 pub use replay_store::{
     REPLAY_STORE_MAX_RECORDINGS, REPLAY_STORE_MAX_TOTAL_BODY_BYTES,
-    ReplayStore, ReplayStoreBoundsError, compute_replay_store_digest,
-    validate_replay_store_bounds,
+    ReplayStore, ReplayStoreBoundsError, ReplayStoreValidationError,
+    compute_replay_store_digest, try_compute_replay_store_digest,
+    validate_replay_store, validate_replay_store_bounds,
 };
 pub use reproducibility::{
     ClockPolicy, ProviderInputIdentity, ReproducibilityManifest,

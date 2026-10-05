@@ -16,6 +16,16 @@ pub const REPLAY_STORE_MAX_RECORDINGS: usize = 64;
 /// Maximum total body bytes across all recordings (2 MiB).
 pub const REPLAY_STORE_MAX_TOTAL_BODY_BYTES: usize = 2 * 1024 * 1024;
 
+/// Canonicalize a hexadecimal identity field for store digest/serialization.
+///
+/// SHA-256 digests are case-insensitive on the wire, but the store has one
+/// canonical representation. Normalizing at the digest boundary keeps a
+/// caller-supplied uppercase value from producing a document whose own
+/// canonical digest cannot be reproduced by the loader.
+fn canonical_digest(value: &str) -> String {
+    value.to_ascii_lowercase()
+}
+
 /// Bounded in-memory recordings store.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ReplayStore {
@@ -23,14 +33,32 @@ pub struct ReplayStore {
     pub recordings: Vec<ReplayRecording>,
 }
 
-/// Digest the bounded store's canonical contents (`ReplayStore` v1/v2).
+impl ReplayStore {
+    /// Build a checked store without changing the legacy public `recordings`
+    /// field or struct-literal construction path.
+    pub fn try_new(
+        recordings: Vec<ReplayRecording>,
+    ) -> Result<Self, ReplayStoreValidationError> {
+        let store = Self { recordings };
+        store.validate()?;
+        Ok(store)
+    }
+
+    /// Validate this store's capacity and every retained body identity.
+    pub fn validate(&self) -> Result<(), ReplayStoreValidationError> {
+        validate_replay_store(&self.recordings)
+    }
+}
+
+/// Digest the bounded store's canonical contents (`ReplayStore` v1-v3).
 ///
 /// The payload is the array in order of `{providerId, model, status,
 /// bodySha256, bodyBytes, observedAtMs[, inputTokens, outputTokens,
-/// cachedTokens], body}` per recording through the domain-separated artifact
-/// primitive `siralos:ReplayStore:v{1|2}\0` + canonical JSON. When no recording
-/// carries usage fields, v1 is used (byte-identical to the pre-102 digest);
-/// otherwise v2 includes the usage bindings (null when absent within v2).
+/// cachedTokens][, requestSha256], body}` per recording through the
+/// domain-separated artifact primitive `siralos:ReplayStore:v{1|2|3}\0` +
+/// canonical JSON. Hash fields are lowercase-canonical before they enter the
+/// payload. When no recording carries usage or request binding, v1 is used;
+/// usage selects v2 and request binding selects v3.
 #[must_use]
 pub fn compute_replay_store_digest(recordings: &[ReplayRecording]) -> String {
     let has_usage = recordings.iter().any(|r| {
@@ -38,10 +66,12 @@ pub fn compute_replay_store_digest(recordings: &[ReplayRecording]) -> String {
             || r.identity.output_tokens.is_some()
             || r.identity.cached_tokens.is_some()
     });
+    let has_request_binding =
+        recordings.iter().any(|r| r.request_sha256.is_some());
     let entries: Vec<Value> = recordings
         .iter()
         .map(|recording| {
-            if has_usage {
+            let mut entry = if has_usage {
                 json!({
                     "providerId": recording.identity.provider_id,
                     "model": recording.identity.model,
@@ -49,7 +79,7 @@ pub fn compute_replay_store_digest(recordings: &[ReplayRecording]) -> String {
                         Some(value) => json!(value),
                         None => Value::Null,
                     },
-                    "bodySha256": recording.identity.body_sha256,
+                    "bodySha256": canonical_digest(&recording.identity.body_sha256),
                     "bodyBytes": recording.identity.body_bytes,
                     "observedAtMs": match recording.identity.observed_at_ms {
                         Some(value) => json!(value),
@@ -77,7 +107,7 @@ pub fn compute_replay_store_digest(recordings: &[ReplayRecording]) -> String {
                         Some(value) => json!(value),
                         None => Value::Null,
                     },
-                    "bodySha256": recording.identity.body_sha256,
+                    "bodySha256": canonical_digest(&recording.identity.body_sha256),
                     "bodyBytes": recording.identity.body_bytes,
                     "observedAtMs": match recording.identity.observed_at_ms {
                         Some(value) => json!(value),
@@ -85,17 +115,48 @@ pub fn compute_replay_store_digest(recordings: &[ReplayRecording]) -> String {
                     },
                     "body": recording.body,
                 })
+            };
+            if has_request_binding {
+                entry
+                    .as_object_mut()
+                    .expect("replay entry is an object")
+                    .insert(
+                        "requestSha256".to_owned(),
+                        match &recording.request_sha256 {
+                            Some(value) => Value::String(canonical_digest(value)),
+                            None => Value::Null,
+                        },
+                    );
             }
+            entry
         })
         .collect();
     let payload = Value::Array(entries);
-    let version = if has_usage { 2 } else { 1 };
+    let version = if has_request_binding {
+        3
+    } else if has_usage {
+        2
+    } else {
+        1
+    };
     crate::determinism::helpers::digest_artifact_payload(
         "ReplayStore",
         version,
         &payload,
     )
     .expect("ReplayStore digest is infallible")
+}
+
+/// Compute a store digest only after checking capacity and body identity.
+///
+/// The legacy [`compute_replay_store_digest`] function remains permissive for
+/// callers that need to digest an in-progress or historical record; new
+/// persistence paths should use this checked variant.
+pub fn try_compute_replay_store_digest(
+    recordings: &[ReplayRecording],
+) -> Result<String, ReplayStoreValidationError> {
+    validate_replay_store(recordings)?;
+    Ok(compute_replay_store_digest(recordings))
 }
 
 /// Typed bounds violation for the bounded store.
@@ -130,6 +191,39 @@ impl std::fmt::Display for ReplayStoreBoundsError {
 
 impl std::error::Error for ReplayStoreBoundsError {}
 
+/// A bounded store failed capacity or detached-recording identity validation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReplayStoreValidationError {
+    /// The legacy bounded-cache invariant failed.
+    Bounds(ReplayStoreBoundsError),
+    /// A recording is not internally consistent.
+    InvalidRecording {
+        /// Index of the offending recording.
+        index: usize,
+        /// Identity/body validation failure.
+        error: super::provider_replay::ReplayRecordingValidationError,
+    },
+}
+
+impl std::fmt::Display for ReplayStoreValidationError {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        match self {
+            Self::Bounds(error) => {
+                write!(formatter, "replay store bounds: {error}")
+            }
+            Self::InvalidRecording { index, error } => write!(
+                formatter,
+                "replay recording {index} is invalid: {error}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ReplayStoreValidationError {}
+
 /// Validate the bounded store invariants on the given recordings.
 ///
 /// Checks at most 64 recordings and at most 2 MiB total body bytes.
@@ -142,9 +236,30 @@ pub fn validate_replay_store_bounds(
             count: recordings.len(),
         });
     }
-    let total: usize = recordings.iter().map(|r| r.body.len()).sum();
-    if total > REPLAY_STORE_MAX_TOTAL_BODY_BYTES {
-        return Err(ReplayStoreBoundsError::TotalBodyBytesExceeded { total });
+    let mut total = 0usize;
+    for recording in recordings {
+        total = total.saturating_add(recording.body.len());
+        if total > REPLAY_STORE_MAX_TOTAL_BODY_BYTES {
+            return Err(ReplayStoreBoundsError::TotalBodyBytesExceeded {
+                total,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Validate capacity and the complete identity/body contract of every
+/// recording. This performs no collection allocation and hashes each body
+/// directly from its existing buffer.
+pub fn validate_replay_store(
+    recordings: &[ReplayRecording],
+) -> Result<(), ReplayStoreValidationError> {
+    validate_replay_store_bounds(recordings)
+        .map_err(ReplayStoreValidationError::Bounds)?;
+    for (index, recording) in recordings.iter().enumerate() {
+        recording.validate().map_err(|error| {
+            ReplayStoreValidationError::InvalidRecording { index, error }
+        })?;
     }
     Ok(())
 }
@@ -153,7 +268,9 @@ pub fn validate_replay_store_bounds(
 mod tests {
     use super::{
         REPLAY_STORE_MAX_RECORDINGS, REPLAY_STORE_MAX_TOTAL_BODY_BYTES,
-        compute_replay_store_digest, validate_replay_store_bounds,
+        ReplayStore, compute_replay_store_digest,
+        try_compute_replay_store_digest, validate_replay_store,
+        validate_replay_store_bounds,
     };
     use crate::determinism::provider_replay::{
         ProviderResponseIdentity, ReplayRecording,
@@ -166,7 +283,7 @@ mod tests {
                 provider_id: format!("provider-{id}"),
                 model: format!("model-{id}"),
                 status: Some(200),
-                body_sha256: format!("sha{id}"),
+                body_sha256: crate::identity::sha256_hex(body.as_bytes()),
                 body_bytes: body.len() as u64,
                 observed_at_ms: Some(id as u64),
                 input_tokens: None,
@@ -174,11 +291,51 @@ mod tests {
                 cached_tokens: None,
             },
             body: body.to_owned(),
+            request_sha256: None,
         }
     }
 
     fn small_recording(id: usize) -> ReplayRecording {
         recording_with_body(id, "hello")
+    }
+
+    #[test]
+    fn strict_store_validation_rejects_body_identity_mismatch() {
+        let mut recording = small_recording(1);
+        recording.identity.body_bytes += 1;
+        let error = validate_replay_store(&[recording])
+            .expect_err("mismatched recording must fail closed");
+        assert!(matches!(
+            error,
+            super::ReplayStoreValidationError::InvalidRecording {
+                index: 0,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn checked_store_constructor_validates_without_changing_legacy_fields() {
+        let recording = small_recording(1);
+        let store = ReplayStore::try_new(vec![recording.clone()])
+            .expect("valid recording");
+        assert_eq!(store.recordings, vec![recording]);
+        assert!(store.validate().is_ok());
+    }
+
+    #[test]
+    fn legacy_bounds_validator_remains_capacity_only() {
+        let mut recording = small_recording(1);
+        recording.identity.body_bytes += 1;
+        assert!(validate_replay_store_bounds(&[recording.clone()]).is_ok());
+        assert!(validate_replay_store(&[recording]).is_err());
+    }
+
+    #[test]
+    fn checked_digest_refuses_inconsistent_recording() {
+        let mut recording = small_recording(1);
+        recording.identity.body_sha256 = "0".repeat(64);
+        assert!(try_compute_replay_store_digest(&[recording]).is_err());
     }
 
     #[test]
@@ -192,13 +349,42 @@ mod tests {
     }
 
     #[test]
+    fn digest_canonicalizes_uppercase_hash_fields() {
+        let mut recording = small_recording(1);
+        recording.identity.body_sha256 = "ABCDEF0123456789".repeat(4);
+        recording.request_sha256 = Some("0123456789ABCDEF".repeat(4));
+        let mut lower = recording.clone();
+        lower.identity.body_sha256 =
+            lower.identity.body_sha256.to_ascii_lowercase();
+        lower.request_sha256 =
+            lower.request_sha256.as_deref().map(str::to_ascii_lowercase);
+        assert_eq!(
+            compute_replay_store_digest(&[recording]),
+            compute_replay_store_digest(&[lower])
+        );
+    }
+
+    #[test]
+    fn digest_binds_request_identity_when_present() {
+        let mut first = small_recording(1);
+        first.request_sha256 = Some("a".repeat(64));
+        let mut second = first.clone();
+        second.request_sha256 = Some("b".repeat(64));
+        assert_ne!(
+            compute_replay_store_digest(&[first]),
+            compute_replay_store_digest(&[second])
+        );
+    }
+
+    #[test]
     fn digest_is_field_order_canonical() {
         let recordings = vec![ReplayRecording {
             identity: ProviderResponseIdentity {
                 provider_id: "openai".to_owned(),
                 model: "gpt-4o".to_owned(),
                 status: Some(200),
-                body_sha256: "abc".to_owned(),
+                body_sha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+                    .to_owned(),
                 body_bytes: 5,
                 observed_at_ms: Some(42),
                 input_tokens: None,
@@ -206,6 +392,7 @@ mod tests {
                 cached_tokens: None,
             },
             body: "hello".to_owned(),
+            request_sha256: None,
         }];
         let digest = compute_replay_store_digest(&recordings);
         // Recompute via explicit payload with different key insertion order
@@ -214,7 +401,7 @@ mod tests {
             "body": "hello",
             "observedAtMs": 42,
             "bodyBytes": 5,
-            "bodySha256": "abc",
+            "bodySha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
             "status": 200,
             "model": "gpt-4o",
             "providerId": "openai",

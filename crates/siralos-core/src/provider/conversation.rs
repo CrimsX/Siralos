@@ -38,6 +38,15 @@ impl AssistantToolCallInput {
             Self::Omitted => None,
         }
     }
+
+    /// Compact JSON bytes used for bounded history accounting.
+    pub fn serialized_json(&self) -> String {
+        match self {
+            Self::Present(value) => serde_json::to_string(value)
+                .unwrap_or_else(|_| "null".to_owned()),
+            Self::Omitted => String::new(),
+        }
+    }
 }
 
 /// One provider-visible conversation item.

@@ -15,6 +15,7 @@
 //! profile resolves to a typed default.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 
 pub mod lock;
 
@@ -39,6 +40,10 @@ use crate::tool::permission::{
 pub const MAX_PROFILE_NAME_BYTES: usize = 64;
 /// Maximum number of permission-overlay entries in one profile.
 pub const MAX_PROFILE_OVERLAY_ENTRIES: usize = 16;
+/// Maximum number of skill names in one profile selection.
+pub(crate) const MAX_PROFILE_SKILL_ENTRIES: usize = 128;
+/// Maximum UTF-8 bytes in one selected skill name.
+pub(crate) const MAX_PROFILE_SKILL_NAME_BYTES: usize = 128;
 /// Maximum number of plugin ids in one profile selection.
 pub(crate) const MAX_PROFILE_PLUGIN_ENTRIES: usize = 16;
 /// Maximum profile plugin id length in UTF-8 bytes.
@@ -138,6 +143,68 @@ pub fn has_http_scheme(value: &str) -> bool {
     value.starts_with("https://") || value.starts_with("http://")
 }
 
+/// Validate the bounded HTTP(S) endpoint shape without normalizing or
+/// resolving it. Endpoints may contain a path, but not userinfo, query,
+/// fragment, control characters, or an empty/malformed authority.
+#[must_use]
+pub fn is_valid_http_endpoint(value: &str) -> bool {
+    if !has_http_scheme(value)
+        || value.chars().any(char::is_control)
+        || value.chars().any(char::is_whitespace)
+        || value.contains(['?', '#'])
+    {
+        return false;
+    }
+    let authority = value
+        .split_once("://")
+        .map(|(_, rest)| rest.split('/').next().unwrap_or_default())
+        .unwrap_or_default();
+    if authority.is_empty()
+        || authority.contains('@')
+        || authority.contains('\\')
+        || authority.contains('[') != authority.contains(']')
+    {
+        return false;
+    }
+    if let Some(end) = authority.strip_prefix('[') {
+        let Some(close) = end.find(']') else {
+            return false;
+        };
+        if close == 0 || end[close + 1..].contains('[') {
+            return false;
+        }
+        let suffix = &end[close + 1..];
+        if !suffix.is_empty() {
+            let Some(port) = suffix.strip_prefix(':') else {
+                return false;
+            };
+            if port.is_empty()
+                || !port.bytes().all(|b| b.is_ascii_digit())
+                || port.parse::<u16>().is_err()
+            {
+                return false;
+            }
+        }
+    } else {
+        let has_port_separator = authority.contains(':');
+        let (host, port) = match authority.rsplit_once(':') {
+            Some((host, port)) => (host, port),
+            None => (authority, ""),
+        };
+        if host.is_empty() || host.contains(['[', ']', ':']) {
+            return false;
+        }
+        if has_port_separator
+            && (port.is_empty()
+                || !port.bytes().all(|b| b.is_ascii_digit())
+                || port.parse::<u16>().is_err())
+        {
+            return false;
+        }
+    }
+    true
+}
+
 /// Whether every character of `value` is non-control.
 ///
 /// One clause of the model-display-name rule. An empty value is printable, so
@@ -196,7 +263,7 @@ pub struct ProfileOverlayEntry {
 }
 
 /// A named declarative working configuration.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ProfileRecord {
     /// Non-empty, bounded profile name.
     pub name: String,
@@ -255,6 +322,34 @@ pub struct ProfileRecord {
     pub model_display_name: Option<String>,
 }
 
+impl fmt::Debug for ProfileRecord {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ProfileRecord")
+            .field("name", &"[PROJECTED]")
+            .field("overlay_count", &self.overlay.len())
+            .field("plugin_count", &self.plugins.as_ref().map(Vec::len))
+            .field("context_configured", &self.context.is_some())
+            .field("skill_count", &self.skills.as_ref().map(Vec::len))
+            .field("provider", &self.provider.as_ref().map(|_| "[PROJECTED]"))
+            .field("model", &self.model.as_ref().map(|_| "[PROJECTED]"))
+            .field(
+                "credential",
+                &self.credential.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("endpoint", &self.endpoint.as_ref().map(|_| "[CONFIGURED]"))
+            .field("record_replay", &self.record_replay)
+            .field("replay", &self.replay)
+            .field("context_system_enabled", &self.context_system_enabled)
+            .field("protocol", &self.protocol)
+            .field(
+                "model_display_name",
+                &self.model_display_name.as_ref().map(|_| "[PROJECTED]"),
+            )
+            .finish()
+    }
+}
+
 /// Rank of a rule for the narrowing comparison: `Deny < Ask < Allow`.
 fn rule_rank(rule: &PermissionRule) -> u8 {
     match rule {
@@ -308,9 +403,10 @@ impl ProfileRecord {
                 ),
             });
         }
-        if self.name.contains('\0') {
+        if self.name.chars().any(char::is_control) {
             return Err(ProfileValidationError {
-                message: "A profile name must not contain NUL.".to_owned(),
+                message: "A profile name must not contain control characters."
+                    .to_owned(),
             });
         }
         if self.overlay.len() > MAX_PROFILE_OVERLAY_ENTRIES {
@@ -324,15 +420,15 @@ impl ProfileRecord {
         for entry in &self.overlay {
             if seen.contains_key(entry.capability.as_str()) {
                 return Err(ProfileValidationError {
-                    message: format!(
-                        "The profile requests capability {} more than once.",
-                        entry.capability.as_str()
-                    ),
+                    message:
+                        "The profile requests a capability more than once."
+                            .to_owned(),
                 });
             }
             seen.insert(entry.capability.as_str(), ());
         }
         validate_plugin_selection(&self.plugins)?;
+        validate_skill_selection(&self.skills)?;
         validate_provider_field(&self.provider)?;
         validate_model_field(&self.model)?;
         validate_credential_field(&self.credential)?;
@@ -361,21 +457,9 @@ fn validate_endpoint_field(
             ),
         });
     }
-    if value.contains('\0') {
+    if !is_valid_http_endpoint(value) {
         return Err(ProfileValidationError {
-            message: "An endpoint must not contain NUL.".to_owned(),
-        });
-    }
-    if !has_http_scheme(value) {
-        return Err(ProfileValidationError {
-            message:
-                "An endpoint must start with \"https://\" or \"http://\"."
-                    .to_owned(),
-        });
-    }
-    if value.contains(' ') {
-        return Err(ProfileValidationError {
-            message: "An endpoint must not contain spaces.".to_owned(),
+            message: "An endpoint must be a valid HTTP(S) URL with an authority and no userinfo, query, fragment, or controls.".to_owned(),
         });
     }
     Ok(())
@@ -651,7 +735,7 @@ fn validate_plugin_selection(
                 ),
             });
         }
-        if id.contains('\0') {
+        if id.chars().any(char::is_control) {
             return Err(ProfileValidationError {
                 message: "A profile plugin id must not contain NUL."
                     .to_owned(),
@@ -659,12 +743,46 @@ fn validate_plugin_selection(
         }
         if seen.contains_key(id.as_str()) {
             return Err(ProfileValidationError {
-                message: format!(
-                    "The profile selects plugin id {id} more than once."
-                ),
+                message: "The profile selects a plugin more than once."
+                    .to_owned(),
             });
         }
         seen.insert(id.as_str(), ());
+    }
+    Ok(())
+}
+
+fn validate_skill_selection(
+    skills: &Option<Vec<String>>,
+) -> Result<(), ProfileValidationError> {
+    let Some(skills) = skills else {
+        return Ok(());
+    };
+    if skills.len() > MAX_PROFILE_SKILL_ENTRIES {
+        return Err(ProfileValidationError {
+            message: format!(
+                "The profile exceeds the {MAX_PROFILE_SKILL_ENTRIES}-skill bound."
+            ),
+        });
+    }
+    let mut seen = BTreeSet::new();
+    for name in skills {
+        if name.is_empty()
+            || name.len() > MAX_PROFILE_SKILL_NAME_BYTES
+            || name.chars().any(char::is_control)
+        {
+            return Err(ProfileValidationError {
+                message: format!(
+                    "A profile skill name must be 1..={MAX_PROFILE_SKILL_NAME_BYTES} printable bytes."
+                ),
+            });
+        }
+        if !seen.insert(name.as_str()) {
+            return Err(ProfileValidationError {
+                message: "A profile selects a skill more than once."
+                    .to_owned(),
+            });
+        }
     }
     Ok(())
 }

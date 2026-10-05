@@ -13563,9 +13563,20 @@ fn replay_store_record(_input: &Value) -> Result<Value, HarnessError> {
         output_tokens: None,
         cached_tokens: None,
     };
+    // `request_sha256: None` is the legacy digest-less recording form, which
+    // is exactly the binding this subject pins: the same provider must serve
+    // the same three turns across sessions without a per-request route match.
     let recordings = vec![
-        ReplayRecording { identity: identity1, body: body1.to_owned() },
-        ReplayRecording { identity: identity2, body: body2.to_owned() },
+        ReplayRecording {
+            identity: identity1,
+            body: body1.to_owned(),
+            request_sha256: None,
+        },
+        ReplayRecording {
+            identity: identity2,
+            body: body2.to_owned(),
+            request_sha256: None,
+        },
     ];
     // Hermetic sandbox workspace.
     let sandbox = std::env::temp_dir().join(format!(

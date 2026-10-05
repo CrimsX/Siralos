@@ -46,14 +46,21 @@ impl LockPluginIdentity {
     /// oversize paths, and non-hex digests.
     pub fn validate(&self) -> Result<(), ProfileValidationError> {
         let fail = |message: String| ProfileValidationError { message };
-        if self.id.is_empty() || self.id.len() > MAX_LOCK_ID_BYTES {
+        if self.id.is_empty()
+            || self.id.len() > MAX_LOCK_ID_BYTES
+            || self.id.chars().any(char::is_control)
+        {
             return Err(fail(format!(
-                "A lock plugin id must be 1..={MAX_LOCK_ID_BYTES} bytes."
+                "A lock plugin id must be 1..={MAX_LOCK_ID_BYTES} bytes without controls."
             )));
         }
-        if self.path.is_empty() || self.path.len() > MAX_LOCK_PATH_BYTES {
+        if self.path.is_empty()
+            || self.path.len() > MAX_LOCK_PATH_BYTES
+            || crate::workspace::path::validate_relative_path(&self.path)
+                .is_err()
+        {
             return Err(fail(format!(
-                "A lock plugin path must be 1..={MAX_LOCK_PATH_BYTES} bytes."
+                "A lock plugin path must be 1..={MAX_LOCK_PATH_BYTES} bytes and workspace-relative."
             )));
         }
         if !is_hex64(&self.digest) {

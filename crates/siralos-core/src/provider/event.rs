@@ -47,7 +47,15 @@ impl ToolCallInput {
     /// with JavaScript object-key insertion order; it is Host-supplied
     /// fixture data on the trusted typed-event path only.
     pub fn from_ordered_json(value: Value, ordered_json: String) -> Self {
-        Self { value, ordered_json: Some(ordered_json) }
+        const MAX_ORDERED_JSON_BYTES: usize = 1024 * 1024;
+        let ordered_json = if ordered_json.len() <= MAX_ORDERED_JSON_BYTES
+            && serde_json::from_str::<Value>(&ordered_json).is_ok()
+        {
+            Some(ordered_json)
+        } else {
+            None
+        };
+        Self { value, ordered_json }
     }
 
     /// The detached executable JSON value.

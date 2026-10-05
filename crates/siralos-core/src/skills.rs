@@ -32,17 +32,50 @@ fn failure(message: impl Into<String>) -> SkillValidationError {
 
 /// One declarative skill: a bounded name plus guidance content,
 /// bound by a content digest over the artifact-digest primitive.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// The fields are private: the digest is the binding between name and
+/// content, and public mutable fields would let a caller change either side
+/// without invalidating it.
+#[derive(Clone, PartialEq, Eq)]
 pub struct SkillDefinition {
-    /// The skill name (unique within a catalog).
-    pub name: String,
-    /// The guidance content.
-    pub content: String,
-    /// The content digest binding name + content.
-    pub digest: String,
+    name: String,
+    content: String,
+    digest: String,
+}
+
+impl std::fmt::Debug for SkillDefinition {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        formatter
+            .debug_struct("SkillDefinition")
+            .field("name", &"[CONFIGURED]")
+            .field("content", &"[OMITTED]")
+            .field("digest", &self.digest)
+            .finish()
+    }
 }
 
 impl SkillDefinition {
+    /// The validated skill name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The validated guidance content.
+    #[must_use]
+    pub fn content(&self) -> &str {
+        &self.content
+    }
+
+    /// The content digest binding name and content.
+    #[must_use]
+    pub fn digest(&self) -> &str {
+        &self.digest
+    }
+
     /// Validate and digest-bind one skill definition.
     ///
     /// # Errors
@@ -65,8 +98,16 @@ impl SkillDefinition {
         }
         if content.is_empty() || content.len() > MAX_SKILL_CONTENT_BYTES {
             return Err(failure(format!(
-                "Skill {name:?} content must be 1..={MAX_SKILL_CONTENT_BYTES} bytes."
+                "Skill content must be 1..={MAX_SKILL_CONTENT_BYTES} bytes."
             )));
+        }
+        if content.chars().any(|character| {
+            character.is_control() && !matches!(character, '\n' | '\r' | '\t')
+        }) {
+            return Err(failure(
+                "Skill content contains a disallowed control character."
+                    .to_owned(),
+            ));
         }
         let payload = CanonicalValue::Object(BTreeMap::from([
             ("content".to_owned(), CanonicalValue::Str(content.to_owned())),
@@ -80,13 +121,21 @@ impl SkillDefinition {
 }
 
 /// The bounded, deterministically ordered declared skill set.
+///
+/// The entries are private so that the digest binding validated in
+/// [`SkillCatalog::new`] cannot be broken by a later caller mutation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkillCatalog {
-    /// Sorted by name.
-    pub skills: Vec<SkillDefinition>,
+    skills: Vec<SkillDefinition>,
 }
 
 impl SkillCatalog {
+    /// The validated entries, sorted by name.
+    #[must_use]
+    pub fn skills(&self) -> &[SkillDefinition] {
+        &self.skills
+    }
+
     /// Validate and build a catalog; order-independent (sorted).
     ///
     /// # Errors
@@ -102,15 +151,27 @@ impl SkillCatalog {
             )));
         }
         let mut seen = BTreeSet::new();
+        let mut normalized = Vec::with_capacity(skills.len());
         for skill in &skills {
-            if skill.name.is_empty() || !seen.insert(skill.name.as_str()) {
-                return Err(failure(format!(
-                    "The skill catalog declares name {:?} more than once.",
-                    skill.name
-                )));
+            if skill.name.is_empty()
+                || skill.name.chars().any(char::is_control)
+                || !seen.insert(skill.name.as_str())
+            {
+                return Err(failure(
+                    "The skill catalog declares an invalid or duplicate name."
+                        .to_owned(),
+                ));
             }
+            let checked = SkillDefinition::new(&skill.name, &skill.content)?;
+            if checked.digest != skill.digest {
+                return Err(failure(
+                    "The skill catalog contains an unbound skill definition."
+                        .to_owned(),
+                ));
+            }
+            normalized.push(checked);
         }
-        let mut sorted = skills;
+        let mut sorted = normalized;
         sorted.sort_by(|left, right| left.name.cmp(&right.name));
         Ok(Self { skills: sorted })
     }
@@ -336,7 +397,7 @@ mod skills_tests {
         assert_eq!(evidence_a.resolution_digest, evidence_b.resolution_digest);
         let duplicate = SkillCatalog::new(vec![skill("dup"), skill("dup")]);
         let error = duplicate.expect_err("duplicate refused");
-        assert!(error.message.contains("more than once"));
+        assert!(error.message.contains("invalid or duplicate name"));
         let error = SkillDefinition::new(
             &"x".repeat(MAX_SKILL_NAME_BYTES + 1),
             "content",
