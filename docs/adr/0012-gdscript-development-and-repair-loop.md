@@ -10,6 +10,13 @@ supersedes: []
 
 Status: accepted
 
+> **Correction (2026-09-24).** The original present-status rationale for
+> closed mutation attributed unavailability to a missing Node primitive. That
+> language attribution is historical. The current rationale is the deliberate
+> frozen-oracle ported-parity decision recorded below; reopening requires a
+> reviewed oracle amendment plus mechanical proof of directory-relative identity
+> binding.
+
 ## Context
 
 Siralos can inspect a Godot project, look up exact-engine API knowledge
@@ -144,9 +151,12 @@ period, hard timeout) rather than assuming an instant empty result.
 
 ### Fail-closed at this stage
 
-The change-set applier fails closed on every platform: Node offers no
-directory-relative (openat/renameat) primitive, so a same-user process can
-swap a parent or target at any instruction boundary. `isAvailable()` is
+The change-set applier fails closed on every platform by the deliberate
+frozen-oracle ported-parity decision; this is not a limitation of Node, Rust,
+or another implementation language, and flipping it requires a reviewed oracle
+amendment. A reviewed reopening must prove directory-relative
+(openat/renameat-style) identity binding so a same-user process cannot swap a
+parent or target at an instruction boundary. `isAvailable()` is
 false, `workspace.apply_text_changeset` preparation refuses with a typed
 `unavailable` result, the workflow refuses before any approval for a
 mutation, no checkpoint is created, and nothing is written or deleted —

@@ -10,6 +10,13 @@ supersedes: []
 
 Status: accepted
 
+> **Correction (2026-09-24).** The original present-status rationale for
+> closed execution attributed unavailability to missing Node and sandbox-runtime
+> primitives. That language attribution is historical. The current rationale is
+> the deliberate frozen-oracle ported-parity decision recorded below; reopening
+> requires a reviewed oracle amendment plus mechanical proof of the identity
+> bindings named there.
+
 ## Context
 
 GDScript intelligence in Siralos is currently per-invocation: `--check-only`
@@ -113,10 +120,12 @@ alone is never described as the security boundary.
 
 ### Fail-closed at this stage
 
-Every execution path inherits the ADR 0009 platform blocker: Node and the
-pinned sandbox runtime offer no exec-by-handle, no directory-relative
-create, and no delete-by-handle primitive. Therefore the LSP server runner
-never spawns the editor; the session service refuses with a typed
+Every execution path inherits the ADR 0009 deliberate frozen-oracle
+ported-parity decision; this is not a limitation of Node, Rust, or another
+implementation language, and flipping it requires a reviewed oracle amendment.
+A reviewed reopening must still prove exec-by-handle launch, parent-bound
+directory-relative creation, and delete-by-handle cleanup. Therefore the LSP
+server runner never spawns the editor; the session service refuses with a typed
 `unavailable` outcome before a mirror is created, a port is opened, or an
 editor is launched; no approval is requested while execution is
 unavailable; `/gdscript-lsp` refuses before approval; the live isolation

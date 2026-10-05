@@ -75,16 +75,22 @@ What that buys you:
   ([ADR 0036](docs/adr/0036-lean-product-composition-and-extension-model.md)).
 - **Not a state owner.** Task state is host-owned; model completion is a request
   the host evaluates against its own acceptance evidence.
-- **Not a security boundary by itself.** The architecture checks in this
-  repository are developer guardrails, not an OS boundary. The enforceable
-  boundary is the sandbox backend described in [SECURITY.md](SECURITY.md).
-- **Not a desktop application.** Siralos 1.0 ships a terminal frontend and a
-  headless mode; a desktop UI is not part of 1.0, though it is not ruled out for
-  later.
+- **Not an OS sandbox.** The architecture checks in this repository are
+  developer guardrails, not a process boundary. The current product does not
+  launch model-requested commands or sandboxed child processes; effects whose
+  security boundary is not mechanically enforced report `unavailable`.
+  [SECURITY.md](SECURITY.md) records the current and future boundaries.
+- **Not a desktop application.** The current pre-1.0 product and planned 1.x
+  line are terminal and headless only; no desktop UI is promised.
 - **Not a Godot tool.** Godot is one optional domain, installed explicitly.
   Nothing is enabled merely because `project.godot` exists.
-- **Not a credential store.** Credentials are resolved from the environment when
-  a provider is called, and are never written to configuration, context, or logs.
+- **Not a credential store.** `env:NAME` credentials are resolved from the
+  environment and copied into a redacted, non-serializable credential retained
+  by the live provider for its provider/session lifetime. The profile format
+  also accepts a literal `key:VALUE`; that value remains plaintext in the
+  workspace profile and is also copied into the live credential. The CLI
+  composition paths require the exact profile digest in trusted user
+  configuration before they apply a profile with authority-bearing fields.
 
 ## Status vocabulary
 
@@ -124,7 +130,7 @@ cargo run --locked --bin siralos -- --help
 
 ### An offline first turn
 
-Siralos ships a deterministic fake provider, so a first turn needs no credential
+Siralos includes a deterministic fake provider, so a first turn needs no credential
 and no network. Create a workspace directory with a profile in it:
 
 ```bash
@@ -165,8 +171,11 @@ path when a fast model should be tracked exactly.
 
 A profile is the composition unit: declarative, versioned, and **narrowing-only**
 — it may restrict what the host permits, never widen it. It lives in
-`siralos.toml` at the workspace root. The file is git-ignored by default, because
-it is where provider details belong.
+`siralos.toml` at the workspace root. This repository ignores `siralos.toml` at
+its root and in nested directories, but its ignore rules do not reach a separate
+workspace repository. If a literal credential is used anywhere, keep that
+workspace's profile out of version control with that repository's own ignore
+configuration.
 
 ```toml
 [profile]
@@ -193,9 +202,17 @@ credential reference leaves the profile unapplied rather than half-applied.
 Credential references come in two forms:
 
 - `env:NAME` (recommended) — resolved from the environment when the provider is
-  called, held in memory for that call only, and redacted in every log and report;
-- `key:VALUE` — a literal token. It works, but it puts the secret in a file;
-  prefer the environment.
+  composed. The resulting credential is retained by the live provider for its
+  lifetime, not released after one call;
+- `key:VALUE` — a literal token. It works, but it leaves the secret in plaintext
+  in the workspace profile; prefer the environment.
+
+In the CLI composition paths, a profile that declares a credential or endpoint,
+enables replay/record-replay, or enables `[profile.context_system]` is gated by
+the trusted user configuration's exact `profileApproval` SHA-256. `/reload`
+re-reads that trusted file before it accepts a changed dangerous profile. This
+approval binds authority to exact bytes; it does not convert a plaintext literal
+credential into a secret store.
 
 ## Run it
 
@@ -278,8 +295,9 @@ The differential behavioral harness
 ([ADR 0033](docs/adr/0033-differential-behavioral-harness.md)) is the mechanism
 behind behavioral claims: a scenario corpus is run against a pinned oracle and the
 Rust candidate, and typed canonical outcome records are compared. Corpus and
-scenario digests are checked in, and the harness is pinned so results are
-reproducible.
+scenario digests are checked in, and the harness input is pinned. That is
+digest-bound verification evidence, not a claim of byte-identical binaries or
+independent reproducibility.
 
 Run only the parity decision:
 

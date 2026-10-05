@@ -10,6 +10,13 @@ supersedes: []
 
 Status: accepted
 
+> **Correction (2026-09-24).** The original present-status rationale for
+> closed execution attributed unavailability to missing Node and sandbox-runtime
+> primitives. That language attribution is historical. The current rationale is
+> the deliberate frozen-oracle ported-parity decision recorded below; reopening
+> requires a reviewed oracle amendment plus mechanical proof of the identity
+> bindings named there.
+
 ## Context
 
 Stage 2 (Godot script-development MVP) needs two programming-intelligence
@@ -125,12 +132,14 @@ fabricated.
 
 ### Fail-closed at this stage
 
-Both pipelines execute Godot, and every execution path inherits the same
-platform blocker as ADR 0009: Node and the pinned sandbox runtime offer no
-identity-bound launch primitive (exec-by-handle — the backend re-opens the
-staged copy's pathname at spawn time and a same-user process can
-substitute bytes between final verification and launch), no
-directory-relative create primitive, and no delete-by-handle primitive.
+Both pipelines execute Godot, and every execution path stays closed by the
+same deliberate frozen-oracle ported-parity decision as ADR 0009. This is not
+a limitation of Node, Rust, or another implementation language; flipping it
+requires a reviewed oracle amendment. A reviewed reopening must prove the
+mechanical identity bindings inherited from ADR 0009: exec-by-handle launch
+(the backend re-opens the staged copy's pathname at spawn time, so a same-user
+process can otherwise substitute bytes between final verification and launch),
+parent-bound directory-relative creation, and delete-by-handle cleanup.
 Therefore:
 
 - the API documentation runner and the check-only runner **never spawn the

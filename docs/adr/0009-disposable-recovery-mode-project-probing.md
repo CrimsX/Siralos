@@ -10,6 +10,13 @@ supersedes: []
 
 Status: accepted
 
+> **Correction (2026-09-24).** The original present-status rationale for
+> closed execution attributed unavailability to missing Node and sandbox-runtime
+> primitives. That language attribution is historical. The current rationale is
+> the deliberate frozen-oracle ported-parity decision recorded below; reopening
+> requires a reviewed oracle amendment plus mechanical proof of the identity
+> bindings named there.
+
 ## Context
 
 Stage 2 (Godot script-development MVP) needs to know what a project looks
@@ -36,13 +43,15 @@ only to the extent the repository's current mechanical security
 requirements can be satisfied: the contracts, static preparation,
 approval workflow, diagnostics, CLI reporting, and developer guardrails
 are implemented; **execution (mirror construction, engine launch, and
-cleanup) fails closed as unavailable on every platform at this stage**
-because Node and the pinned sandbox runtime offer no identity-bound launch
-primitive (exec-by-handle), no directory-relative create primitive
-(openat/mkdirat-style), and no delete-by-handle primitive. Those three
-primitives are prerequisites for the required invariants below; none of
-them exists in Node today, so the runner refuses before creating a mirror
-or launching Godot.
+cleanup) fails closed as unavailable on every platform at this stage**.
+That unavailability is a deliberate frozen-oracle ported-parity decision, not
+a limitation of Node, Rust, or another implementation language; flipping it
+requires a reviewed oracle amendment. The mechanical requirements for any
+reopening remain identity-bound launch (exec-by-handle), parent-bound creation
+(openat/mkdirat-style), and delete-by-handle cleanup, because a pathname-based
+launch or create can be substituted by a same-user process. Until a reviewed
+amendment proves those bindings, the runner refuses before creating a mirror or
+launching Godot.
 
 ## Decision
 
@@ -68,10 +77,11 @@ or launching Godot.
   after the copy (a change is a `conflict`), and the mirror is reverified
   (hashes, unexpected files, no symlinks) immediately before Godot starts.
   **None of this runs at this stage**: the mirror adapter reports
-  `unavailable` and performs zero filesystem operations, because Node
-  offers no directory-relative create primitive and no delete-by-handle
-  primitive, so creation could not be bound to a verified parent object
-  and cleanup could delete a substituted object.
+  `unavailable` and performs zero filesystem operations by the frozen-oracle
+  parity decision. A reviewed reopening must prove creation bound to a verified
+  parent object and delete-by-handle cleanup, because a pathname-based create
+  can substitute a parent and pathname-based cleanup can delete a substituted
+  object.
 - **Recovery mode is required, not optional.** The selected engine must
   advertise `--recovery-mode`, `--editor`, `--headless`, and `--path`;
   otherwise the probe is `unsupported` and no weaker mode is ever
@@ -85,10 +95,11 @@ or launching Godot.
   recovery pairing, forbidden project-execution options, no literal or
   workspace-root project path, no concatenated or imported argument
   arrays). **The runner never launches at this stage**: it reports a typed
-  `unavailable` outcome without ever invoking the sandbox backend, because
-  the backend re-opens the staged executable's pathname at spawn time and
-  no exec-by-handle primitive exists, so the verified fingerprint could be
-  attached to bytes that never execute.
+  `unavailable` outcome without ever invoking the sandbox backend. This is
+  the frozen-oracle parity decision. A reviewed reopening must prove
+  exec-by-handle identity binding, because a backend that re-opens the staged
+  executable's pathname at spawn time can attach the verified fingerprint to
+  bytes that never execute.
 - **The recovery probe would run under a dedicated internal sandbox
   profile** (`godot-recovery-probe-offline`, never user-selectable): the
   source workspace is never writable and is excluded from the host-read

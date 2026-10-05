@@ -17,22 +17,29 @@ unsafe filesystem or process boundary intentionally fails closed.
 - **Intentionally unavailable** — the entry point returns `unavailable` before
   execution, approval, mutation, checkpoint creation, or cleanup.
 
-## Verification retraction — read this before trusting any CI claim
+## External verification status
 
-**No CI workflow in this repository has ever executed.** From the Stage 7 Godot
-externalization until commit `60a56fa`, `siralos-godot` was a mandatory `../`
-path dependency of the product workspace, so a fresh checkout could not resolve
-its own Cargo workspace and **every** cargo-invoking CI step failed before doing
-any work. `60a56fa` removed that edge, and the pipeline was audited and repaired
-afterwards — but as of this file's last update, **no recorded run exists**.
+External workflows have run, but they do not verify the current working tree.
+As of 2026-09-24, the GitHub Actions API records 230 Rust CI runs, including
+eight historical successes. That directly contradicts any claim that CI has
+never executed. A historical conclusion is evidence only for that run's exact
+commit and workflow definition; it says nothing about later local or unpushed
+work.
 
-Therefore: any statement implying that CI is green, passing, or verified — in
-this repository's history, in a decision record, or in a commit message from
-before that repair — is **unverified**, whatever it says. Local gate runs are
-evidence for the machine that ran them, not for CI.
+The latest recorded runs are not green. The latest `origin/main` Rust CI run,
+`35184854206` at `b241c69cf1d23c3c05115462bec9dba5b295db50`, failed in the
+MSRV, Linux formatting, Windows harness, and macOS test jobs. The latest
+scheduled assurance run, `35582664917`, also failed. The one successful Tier-1
+dispatch is dated and precedes the current harness and Godot layout; it is not
+evidence for this tree. CodeQL is a scanning signal, not the canonical quality
+gate.
 
-Settling this requires a push and a recorded run outcome, failures included.
-Until that exists, treat CI status as unknown rather than as passed.
+The current in-flight working tree is not present on `origin/main` and has no
+external run. Its status is **unverified**, not passing. A push is a prerequisite
+for external evidence but is not itself a pass; this file may record a current
+result only after the canonical workflows succeed on the exact revision being
+claimed. The release workflow is also not registered on `origin/main`, has never
+executed, and no release has been published.
 
 ## Current position
 
@@ -443,13 +450,13 @@ Status: complete and **Verified** at `e2c3540` — four slices across decisions 
 
 Stage 7 — Godot externalization (lean vision, ADR 0036): the Godot domain and its host adapters move to the standalone siralos-godot repository, pinned in the monorepo as an external path dependency, keeping the core domain-neutral and adapters core-only.
 
-Status: complete per decisions 60–65 — the plugin is fully self-contained at external 1bf2ca3 (41 domain files + host adapters, 234 tests), the monorepo pins it as siralos-godot = { path = "../siralos-godot" } (3-member workspace, shim removed at 87bfd35), and differential parity held (315/315 at v52). The plugin repository is pushed to GitHub and managed independently.
+Status: complete per decisions 60–65 — the plugin is fully self-contained; the current clean external revision is `c8777b1bc5abc214e5092a489aef62ad1f0b9b41`, and the monorepo pins it as siralos-godot = { path = "../siralos-godot" } (3-member workspace, shim removed at 87bfd35). The plugin repository is pushed to GitHub and managed independently.
 
 ## 8. Real Model/Provider
 
-Real Model/Provider (lean vision, ADR 0036): declarative provider/model/credential/endpoint in ProfileRecord with env-only credentials, Host-mediated bounded HTTP adapters, an all-purpose generic provider with provider-neutral placeholder defaults, and determinism-port replay recording of provider responses.
+Real Model/Provider (lean vision, ADR 0036): declarative provider/model/credential/endpoint in ProfileRecord with both `env:NAME` and explicit literal `key:VALUE` credential forms, Host-mediated bounded HTTP adapters, an all-purpose generic provider with provider-neutral placeholder defaults, and determinism-port replay recording of provider responses.
 
-Status: complete and **Verified** per decisions 66–71 — ProfileRecord fields + siralos.toml parsing (67 C1), env-only HostCredential (68), the registry with typed OpenAI/Anthropic adapters and the all-purpose GenericProvider, bounded 1 MiB sanitized HTTP adapters (2d6f5d9-era hardening), replay recording with typed Recorded/Unavailable availability and the recorded 68 §4 secret-hygiene sweep (70), the hermetic provider-generic subject at corpus v53/321 files (316/316 applicable required, 82 expectation records, pinned v32 oracle untouched), and the fresh full-gate run in the roll-up (71); zero spawn paths.
+Status: complete and **Verified** per decisions 66–71 — ProfileRecord fields + siralos.toml parsing (67 C1), HostCredential handling for environment and explicitly literal credentials (68), the registry with typed OpenAI/Anthropic adapters and the all-purpose GenericProvider, bounded 1 MiB sanitized HTTP adapters (2d6f5d9-era hardening), replay recording with typed Recorded/Unavailable availability and the recorded 68 §4 secret-hygiene sweep (70), the hermetic provider-generic subject at corpus v53/321 files (316/316 applicable required, 82 expectation records, pinned v32 oracle untouched), and the fresh full-gate run in the roll-up (71); zero spawn paths. The in-flight profile-approval repair additionally binds dangerous profile bytes to an exact trusted `profileApproval` digest and re-reads that approval on `/reload`; it is not recorded as completed until its final verification gate passes, so it does not alter the historical decision status above.
 
 ## 9. Release readiness (1.0)
 
@@ -466,9 +473,9 @@ here rather than implied, and neither is a coding task inside this repository.
   dependency is enough — and deliberately not applied from here.
 - **No license has been published.** Until one is chosen, every artifact is
   "all rights reserved"; the release workflow therefore refuses to publish while
-  no license file exists. The tag-triggered workflow has also never executed, so
-  the `unknown` CI status recorded at the top of this file applies to it exactly
-  as it does to the existing workflows.
+  no license file exists. The tag-triggered workflow has never executed and is
+  not registered on `origin/main`. That is separate from the historical CI
+  evidence recorded above: CI has run, while the release path has not.
 
 What does exist today: the release workflow (tag-triggered, digest-bearing,
 publication authority isolated from ordinary validation jobs), the clean-clone
@@ -721,9 +728,10 @@ later session needs must appear here or in a commit.
   `Delete` belong to the workspace mutation capability the fail-closed posture refuses to
   exercise, so deleting them would delete preparation, not redundancy.
 
-- **The fuzz crate had never been compiled, and two of its three targets were broken.**
-  Nothing builds `fuzz/`: it is excluded from the workspace and needs nightly, so no gate
-  and no workflow has ever compiled it. `cli_args` called
+- **The fuzz crate has never been built successfully, and two of its three targets were broken.**
+  `fuzz/` is excluded from the workspace and needs nightly, so ordinary gates do not
+  build it. All six recorded scheduled assurance attempts failed; the latest failed at
+  `Build fuzz targets` rather than proving any target. `cli_args` called
   `OsString::from(String::from_utf8_lossy(..))` in its `#[cfg(not(unix))]` branch, which
   does not type-check — and a Linux runner never compiles that branch, so CI would not have
   caught it either. `corpus_scenario` imports `siralos_cli::harness::Scenario`, and
@@ -812,7 +820,9 @@ later session needs must appear here or in a commit.
   into `docs/development/PROJECT_CONTEXT.md`; it exists in neither that file nor
   `AGENTS.md` today, and the 32k-character line it was meant to fix is absent
   (longest line 1,246). Not claimed as done.
-- **A push**, so CI stops being `unknown`. No workflow has ever executed.
+- **External validation of the exact current revision.** A push is required before the
+  canonical workflows can produce evidence, but a push alone does not change an
+  unverified status into a pass.
 - **The O3/I3 credential teaching message.** `crates/siralos-cli/src/tui.rs` carried
   a second credential-env-name validator whose failure text taught the pattern
   instead of restating the rule — verbatim: `this looks like the key itself -
@@ -861,7 +871,7 @@ with setx YOUR_API_KEY_NAME "the-key" and enter YOUR_API_KEY_NAME here`. It coul
 - **W1.6b, the Plugin/Domain terminology rename** — listed in the plan, never
   scheduled by an owner-approved step.
 - Windows junction and case-variant tests for `atomic.rs`; the differential runner
-  swallowing its build stderr; `harness/Cargo.lock` tracking the product lock.
+  swallowing its build stderr.
 
 ### Post-1.0 by the plan
 
@@ -873,17 +883,49 @@ closed.
 
 ### Verification state
 
-`npm run check` is green on the current working tree: differential parity at 352/352
-applicable required scenarios with four explicit platform skips, the eight
-adversarial supersession lists refused with their named codes, the reachability
-ratchet holding over 70 of 177 product modules, and clippy, tests, and every
-documentation gate clean. CI remains `unknown` — see the retraction at the top of
-this file — and the release workflow has never executed.
+The current working tree is green for the complete local gate as of this
+update. `npm run check` passes end to end in this working tree: format, lint,
+documentation links, documentation truth, project context, identity,
+public hygiene, secret hygiene, the Rust architecture check, the reachability
+ratchet, the Rust format/clippy/test gates (siralos-core 650 library tests,
+siralos-adapters 475 library tests plus 28 domain-conformance tests,
+siralos-cli 355 library tests, differential harness 34), and
+`npm run check:differential` with **parity held on 352/352 applicable required
+scenarios** (4 explicit platform skips, 0 accepted informational deviations).
 
-One further observation belongs here rather than in a session's memory. A differential run
-failed twice for environmental reasons rather than a parity deviation —
-`candidate TIMED_OUT for godot-runtime-launch.cancelled`, then `Windows Job runner exited
-with exit code 1073807364 before proving its managed range empty` — and the same code passed
-before and after; the only intervening change was to this file. Decision 17 already records
-a sibling spawn-timeout flake in the same machinery. Nothing corroborates or contradicts it
-yet, because no workflow has ever run.
+The differential gate is no longer blocked. `harness/Cargo.lock` was stale
+against the product lock (it predated the adapters' `libc` target dependency),
+so `--locked` refused to build the harness and every differential result was
+unreproducible. The lock now carries that one dependency entry; no other
+version changed, and the harness builds and runs.
+
+Six scenarios changed behavior during the security and lifecycle repair, each
+deliberately, and the evidence records say so rather than hiding it:
+
+- `tests/differential/evidence/post-freeze/supersessions.json` carries ONE
+  digest-bound supersession retiring the frozen `user-config-matrix` oracle
+  record: the frozen record echoed a rejected local-directory path value, and
+  diagnostics no longer echo configured paths.
+- `tests/differential/evidence/post-freeze/expectations.json` has five records
+  refreshed to the same rule: `provider-generic` (status-only transport error
+  text, no request URL), `composition-effective.invalid-ignored` (no rejected
+  field name), and the three `context-session` scenarios (the workspace profile
+  `siralos.toml` is protected from the model-visible context graph, so the
+  working set is one node smaller than the frozen record).
+
+The in-flight alignment work is still not complete: the repair design
+(untracked working-tree scaffolding, not committed evidence) remains in
+progress, and no owner-visible release or external run exists.
+
+Local results are evidence for the machine and exact working tree that ran
+them. The current in-flight revision has no external run, and the latest
+recorded remote-main Rust and assurance runs failed as recorded above. The
+release workflow has never executed and no release exists.
+
+Earlier differential observations remain historical context, not a current
+result: two environment-level failures (`candidate TIMED_OUT for
+godot-runtime-launch.cancelled` and a Windows Job runner exit before proving its
+managed range empty) occurred while the same code passed before and after.
+Decision 17 records the sibling spawn-timeout flake. No external run covers the
+current in-flight tree, so this observation neither corroborates nor
+contradicts it.
