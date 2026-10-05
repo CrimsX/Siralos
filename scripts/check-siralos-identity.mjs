@@ -26,6 +26,13 @@ const OLD_IDENTITY_PATTERN = /solaris/i;
 /** Directories never scanned: dependencies, build output, VCS metadata. */
 const SKIPPED_DIRECTORIES = new Set(["node_modules", "dist", "target", "coverage", ".git"]);
 
+/**
+ * Ad-hoc build directories created by verification runs (`target-local`,
+ * `target-profile-*`, ...) are build output too, and walking one exhausts the
+ * heap long before the check reaches a project file.
+ */
+const isBuildDirectory = (name) => SKIPPED_DIRECTORIES.has(name) || /^target[-_]/.test(name);
+
 /** Files never scanned: generated TypeScript build artifacts. */
 const SKIPPED_FILE_SUFFIXES = [".tsbuildinfo"];
 
@@ -60,7 +67,7 @@ export function collectProjectFiles(root) {
       const full = join(directory, entry);
       const stat = statSync(full);
       if (stat.isDirectory()) {
-        if (!SKIPPED_DIRECTORIES.has(entry)) {
+        if (!isBuildDirectory(entry)) {
           walk(full);
         }
       } else if (!SKIPPED_FILE_SUFFIXES.some((suffix) => entry.endsWith(suffix))) {

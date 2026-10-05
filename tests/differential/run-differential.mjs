@@ -1,10 +1,20 @@
 /** Authoritative end-to-end R2 acceptance command (ADR 0033). Pinned mode post-TS-archive (decision 40). */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { canonicalizeJson, sha256Hex } from "./shared/canonical.mjs";
-import { CorpusIntegrityError, loadValidatedCorpus } from "./shared/contract.mjs";
+import {
+  CONTRACT_LIMITS,
+  CorpusIntegrityError,
+  loadValidatedCorpus,
+  readBoundedUtf8File,
+} from "./shared/contract.mjs";
+import {
+  EvidenceIntegrityError,
+  loadPinnedEvidence,
+  validateExpectationRecords,
+} from "./shared/evidence.mjs";
 import { canonicalRecordDocument, parseCanonicalRecordDocument } from "./shared/protocol.mjs";
 import { RUNNER_PROCESS_LIMITS, superviseRunner } from "./shared/runner-process.mjs";
 import { collectSourceIdentity, runCompare, validateRecord } from "./compare.mjs";
@@ -60,7 +70,10 @@ function assertCompleted(result, outDir) {
 
 function readSingleRecord(path, implementation, scenarioId, outDir) {
   try {
-    const records = parseCanonicalRecordDocument(readFileSync(path, "utf8"), implementation);
+    const records = parseCanonicalRecordDocument(
+      readBoundedUtf8File(path, CONTRACT_LIMITS.recordsBytes, "runner record file"),
+      implementation,
+    );
     if (records.length !== 1 || records[0].scenarioId !== scenarioId) {
       throw new Error(`${implementation} emitted an incomplete per-scenario protocol document`);
     }
@@ -81,43 +94,61 @@ function readSingleRecord(path, implementation, scenarioId, outDir) {
   }
 }
 
-function loadPinnedOracle(pinnedPath, outDir) {
+function loadExpectations(path, outDir, scenarios) {
   try {
-    const text = readFileSync(resolve(pinnedPath), "utf8");
-    return parseCanonicalRecordDocument(text, "reference");
+    const text = readBoundedUtf8File(
+      resolve(path),
+      CONTRACT_LIMITS.recordsBytes,
+      "post-freeze expectations",
+    );
+    const records = parseCanonicalRecordDocument(text, "expectation");
+    validateExpectationRecords(records, scenarios);
+    return { records, sha256: sha256Hex(text) };
   } catch (error) {
-    const failure = {
-      implementation: "reference",
-      scenarioId: "<pinned-oracle>",
-      outcome: "HARNESS_ERROR",
-      category: "PINNED_ORACLE_FAILURE",
-      code: error instanceof CorpusIntegrityError ? error.code : "PINNED_READ_FAILURE",
-      message: String(error instanceof Error ? error.message : error),
-    };
-    writeFailure(outDir, { schemaVersion: 1, parityHeld: false, runnerFailure: failure });
-    const e = new Error(`pinned oracle could not be loaded: ${failure.message}`);
-    e.exitCode = 2;
-    throw e;
-  }
-}
-
-/** Load the digest-bound post-freeze expectation records (decision 40 C7). */
-function loadExpectations(path, outDir) {
-  try {
-    return parseCanonicalRecordDocument(readFileSync(resolve(path), "utf8"), "expectation");
-  } catch (error) {
+    const code =
+      error instanceof EvidenceIntegrityError
+        ? error.code
+        : error instanceof CorpusIntegrityError
+          ? error.code
+          : "EXPECTATIONS_READ_FAILURE";
+    const detail =
+      error instanceof EvidenceIntegrityError
+        ? error.message
+        : "post-freeze expectations could not be loaded";
     const failure = {
       implementation: "reference",
       scenarioId: "<post-freeze-expectations>",
       outcome: "HARNESS_ERROR",
       category: "PINNED_ORACLE_FAILURE",
-      code: error instanceof CorpusIntegrityError ? error.code : "EXPECTATIONS_READ_FAILURE",
-      message: `post-freeze expectations could not be loaded: ${
-        error instanceof Error ? error.message : error
-      }`,
+      code,
+      message: detail,
     };
     writeFailure(outDir, { schemaVersion: 1, parityHeld: false, runnerFailure: failure });
-    const e = new Error(failure.message);
+    const e = new Error(detail);
+    e.exitCode = 2;
+    throw e;
+  }
+}
+
+function loadPinnedEvidenceForRun(path, outDir, scenarios) {
+  try {
+    return loadPinnedEvidence(path, scenarios);
+  } catch (error) {
+    const code = error instanceof EvidenceIntegrityError ? error.code : "PINNED_EVIDENCE_FAILURE";
+    const detail =
+      error instanceof EvidenceIntegrityError
+        ? error.message
+        : "pinned evidence could not be loaded";
+    const failure = {
+      implementation: "reference",
+      scenarioId: "<pinned-evidence>",
+      outcome: "HARNESS_ERROR",
+      category: "PINNED_ORACLE_FAILURE",
+      code,
+      message: detail,
+    };
+    writeFailure(outDir, { schemaVersion: 1, parityHeld: false, runnerFailure: failure });
+    const e = new Error(detail);
     e.exitCode = 2;
     throw e;
   }
@@ -181,7 +212,11 @@ function loadSupersessions(path, outDir, scenarios, oracleRecords, corpusVersion
   let document;
   let text;
   try {
-    text = readFileSync(resolve(path), "utf8");
+    text = readBoundedUtf8File(
+      resolve(path),
+      CONTRACT_LIMITS.recordsBytes,
+      "supersessions evidence",
+    );
   } catch (error) {
     fail(
       "SUPERSESSIONS_READ_FAILURE",
@@ -382,6 +417,75 @@ export async function runDifferential({
     throw corpusError;
   }
   const { manifest, scenarios, corpusDigest } = corpus;
+  let oracleRecords;
+  let expectationScenarioIds = null;
+  let expectationRecordsSha256 = null;
+  let supersededDisclosure = null;
+  let supersessionsSha256 = null;
+  let supersessionsEntriesSha256 = null;
+  let pinnedEvidence = null;
+  let frozenOracleRecords = [];
+  let expectationRecords = [];
+  let supersessions = { byId: new Map() };
+
+  if (pinnedOracle !== undefined) {
+    // Verify the complete historical bundle before launching a candidate build.
+    // This keeps a changed oracle, manifest, freeze audit, or candidate from
+    // being silently treated as a current-source result.
+    pinnedEvidence = loadPinnedEvidenceForRun(pinnedOracle, absoluteOut, scenarios);
+    frozenOracleRecords = pinnedEvidence.oracleRecords;
+    const pinnedIds = new Set(frozenOracleRecords.map((record) => record.scenarioId));
+    if (expectationsPath !== undefined) {
+      const loadedExpectations = loadExpectations(expectationsPath, absoluteOut, scenarios);
+      expectationRecords = loadedExpectations.records;
+      expectationRecordsSha256 = loadedExpectations.sha256;
+    }
+    const expectationIds = new Set(expectationRecords.map((record) => record.scenarioId));
+    if (supersessionsPath !== undefined && existsSync(resolve(supersessionsPath))) {
+      supersessions = loadSupersessions(
+        supersessionsPath,
+        absoluteOut,
+        scenarios,
+        frozenOracleRecords,
+        manifest.corpusVersion,
+      );
+      supersessionsSha256 = supersessions.documentSha256;
+      supersessionsEntriesSha256 = supersessions.entriesSha256;
+    }
+    const supersededIds = new Set(supersessions.byId.keys());
+    const overlapping = [...pinnedIds].filter((id) => expectationIds.has(id));
+    const uncovered = scenarios.filter(
+      (scenario) => !pinnedIds.has(scenario.id) && !expectationIds.has(scenario.id),
+    );
+    const currentIds = new Set(scenarios.map((scenario) => scenario.id));
+    const orphanFrozen = pinnedEvidence.scenarioIds.filter(
+      (id) => !currentIds.has(id) && !supersededIds.has(id),
+    );
+    if (overlapping.length > 0 || uncovered.length > 0 || orphanFrozen.length > 0) {
+      const failure = {
+        implementation: "reference",
+        scenarioId: "<evidence-coverage>",
+        outcome: "HARNESS_ERROR",
+        category: "PINNED_ORACLE_FAILURE",
+        code: overlapping.length > 0 ? "EXPECTATIONS_OVERLAP" : "PINNED_MISMATCH",
+        message:
+          overlapping.length > 0
+            ? `post-freeze expectations overlap the pinned freeze in ${overlapping.length} scenario(s)`
+            : orphanFrozen.length > 0
+              ? `pinned freeze contains ${orphanFrozen.length} scenario(s) absent from the current corpus without a supersession`
+              : `${uncovered.length} current scenario(s) lack both a pinned record and a post-freeze expectation (freeze v32 vs current v${manifest.corpusVersion})`,
+      };
+      writeFailure(absoluteOut, {
+        schemaVersion: 1,
+        parityHeld: false,
+        runnerFailure: failure,
+      });
+      const e = new Error(failure.message);
+      e.exitCode = 2;
+      throw e;
+    }
+  }
+
   const scratch = mkdtempSync(join(tmpdir(), "siralos-r2-"));
   try {
     const build = await superviseRunner({
@@ -413,65 +517,9 @@ export async function runDifferential({
     }
     assertCompleted(build, absoluteOut);
 
-    let oracleRecords;
-    let expectationScenarioIds = null;
-    let expectationRecordsSha256 = null;
-    let supersededDisclosure = null;
-    let supersessionsSha256 = null;
-    let supersessionsEntriesSha256 = null;
     if (pinnedOracle !== undefined) {
-      const frozenOracleRecords = loadPinnedOracle(pinnedOracle, absoluteOut);
-      const pinnedIds = new Set(frozenOracleRecords.map((r) => r.scenarioId));
-      let expectationRecords = [];
-      if (expectationsPath !== undefined) {
-        expectationRecords = loadExpectations(expectationsPath, absoluteOut);
-        expectationRecordsSha256 = sha256Hex(readFileSync(resolve(expectationsPath)));
-      }
-      const expectationIds = new Set(expectationRecords.map((r) => r.scenarioId));
-      let supersessions = { byId: new Map() };
-      if (supersessionsPath !== undefined && existsSync(resolve(supersessionsPath))) {
-        supersessions = loadSupersessions(
-          supersessionsPath,
-          absoluteOut,
-          scenarios,
-          frozenOracleRecords,
-          manifest.corpusVersion,
-        );
-        // The loader already read and hashed the document; the audit carries
-        // both that digest and the document's own entries self-digest.
-        supersessionsSha256 = supersessions.documentSha256;
-        supersessionsEntriesSha256 = supersessions.entriesSha256;
-      }
-      // A supersession may only retire a record the pinned oracle holds, and the
-      // oracle and post-freeze expectation sets are refused an overlap just
-      // below, so the two candidate-authored sources can never claim one
-      // scenario — no extra overlap guard is needed, and none is written.
+      const expectationIds = new Set(expectationRecords.map((record) => record.scenarioId));
       const supersededIds = new Set(supersessions.byId.keys());
-      const overlapping = [...pinnedIds].filter((id) => expectationIds.has(id));
-      const uncovered = scenarios.filter(
-        (scenario) => !pinnedIds.has(scenario.id) && !expectationIds.has(scenario.id),
-      );
-      if (overlapping.length > 0 || uncovered.length > 0) {
-        const failure = {
-          implementation: "reference",
-          scenarioId: uncovered[0]?.id ?? overlapping[0] ?? "<coverage>",
-          outcome: "HARNESS_ERROR",
-          category: "PINNED_ORACLE_FAILURE",
-          code: overlapping.length > 0 ? "EXPECTATIONS_OVERLAP" : "PINNED_MISMATCH",
-          message:
-            overlapping.length > 0
-              ? `scenarios covered by both the pinned freeze-v32 oracle and the post-freeze expectations: ${overlapping.join(", ")}`
-              : `pinned oracle does not contain scenario ${uncovered[0].id} (freeze v32 vs current v${manifest.corpusVersion}); post-freeze scenarios require explicit digest-bound expectation records (decision 40 C7, decision 41 C5)`,
-        };
-        writeFailure(absoluteOut, {
-          schemaVersion: 1,
-          parityHeld: false,
-          runnerFailure: failure,
-        });
-        const e = new Error(failure.message);
-        e.exitCode = 2;
-        throw e;
-      }
       // Reference records in exact corpus order: frozen oracle records, minus any
       // record a supersession retires, plus digest-bound post-freeze expectation
       // records and the superseding replacements. The audit discloses which
@@ -597,6 +645,7 @@ export async function runDifferential({
       supersededDisclosure,
       supersessionsSha256,
       supersessionsEntriesSha256,
+      pinnedEvidence: pinnedEvidence?.provenance ?? null,
     });
     writeFileSync(auditPath, `${canonicalizeJson(audit)}\n`, "utf8");
     if (!audit.parityHeld) {

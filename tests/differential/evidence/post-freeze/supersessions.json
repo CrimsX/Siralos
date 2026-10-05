@@ -1,6 +1,664 @@
 {
   "schemaVersion": 1,
   "corpusVersion": 82,
-  "entriesSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-  "supersessions": []
+  "entriesSha256": "10c289433610f31192d980b23efc38d8d30e25806097287254111a80514e6d2a",
+  "supersessions": [
+    {
+      "scenarioId": "user-config-matrix",
+      "reason": "The frozen record echoes the rejected local-directory PATH VALUE. A configured path can be an absolute host path, so the candidate reports the failure class without the value.",
+      "supersededIn": 82,
+      "decision": "Diagnostics never echo configured path values, field names, or transport text; absolute host paths never reach report-safe output. Recorded 2026-09-23 during the security and lifecycle repair.",
+      "oracleRecordSha256": "d88458bdd5519c6b9d8d7a550705804261dee150322ab9e86d47ac40829bb38c",
+      "record": {
+        "outcome": "COMPLETED",
+        "result": {
+          "cases": [
+            {
+              "config": {
+                "godot": {
+                  "activeInstallation": null,
+                  "discoverOnPath": true,
+                  "installations": {}
+                },
+                "quality": {
+                  "reviewProvider": null
+                },
+                "references": {},
+                "sandbox": {
+                  "backend": "auto",
+                  "profile": "inspect"
+                }
+              },
+              "diagnostics": {
+                "credentialRefs": [],
+                "fileState": "missing",
+                "loaded": true,
+                "overrideInUse": false,
+                "sections": [
+                  {
+                    "name": "sandbox",
+                    "present": false
+                  },
+                  {
+                    "name": "godot",
+                    "present": false
+                  },
+                  {
+                    "name": "quality",
+                    "present": false
+                  },
+                  {
+                    "name": "references",
+                    "present": false
+                  }
+                ],
+                "unknownFields": [],
+                "validationErrors": []
+              },
+              "referenceConfigError": null,
+              "reviewProviderId": "deterministic-fake",
+              "status": "ok"
+            },
+            {
+              "config": {
+                "godot": {
+                  "activeInstallation": "stable",
+                  "discoverOnPath": false,
+                  "installations": {
+                    "stable": {
+                      "editionHint": "standard",
+                      "path": "/opt/godot"
+                    }
+                  }
+                },
+                "quality": {
+                  "reviewProvider": "deterministic-fake"
+                },
+                "references": {
+                  "aa": {
+                    "description": "Assets",
+                    "kind": "local-directory",
+                    "path": "/srv/assets"
+                  },
+                  "bb": {
+                    "kind": "repository",
+                    "ref": {
+                      "commit": "0123456",
+                      "kind": "commit"
+                    },
+                    "repository": "godotengine/godot"
+                  }
+                },
+                "sandbox": {
+                  "backend": "anthropic-runtime",
+                  "profile": "develop-offline"
+                }
+              },
+              "diagnostics": {
+                "credentialRefs": [],
+                "fileState": "readable",
+                "loaded": true,
+                "overrideInUse": false,
+                "sections": [
+                  {
+                    "name": "sandbox",
+                    "present": true
+                  },
+                  {
+                    "name": "godot",
+                    "present": true
+                  },
+                  {
+                    "name": "quality",
+                    "present": true
+                  },
+                  {
+                    "name": "references",
+                    "present": true
+                  }
+                ],
+                "unknownFields": [],
+                "validationErrors": []
+              },
+              "referenceConfigError": null,
+              "reviewProviderId": "deterministic-fake",
+              "status": "ok"
+            },
+            {
+              "category": "INVALID_VALUE",
+              "diagnostics": {
+                "credentialRefs": [],
+                "fileState": "readable",
+                "loaded": false,
+                "overrideInUse": false,
+                "sections": [
+                  {
+                    "name": "sandbox",
+                    "present": false
+                  },
+                  {
+                    "name": "godot",
+                    "present": false
+                  },
+                  {
+                    "name": "quality",
+                    "present": false
+                  },
+                  {
+                    "name": "references",
+                    "present": false
+                  }
+                ],
+                "unknownFields": [],
+                "validationErrors": [
+                  "INVALID_VALUE"
+                ]
+              },
+              "status": "error"
+            },
+            {
+              "category": "INVALID_VALUE",
+              "diagnostics": {
+                "credentialRefs": [],
+                "fileState": "readable",
+                "loaded": false,
+                "overrideInUse": false,
+                "sections": [
+                  {
+                    "name": "sandbox",
+                    "present": true
+                  },
+                  {
+                    "name": "godot",
+                    "present": false
+                  },
+                  {
+                    "name": "quality",
+                    "present": false
+                  },
+                  {
+                    "name": "references",
+                    "present": false
+                  }
+                ],
+                "unknownFields": [],
+                "validationErrors": [
+                  "INVALID_VALUE"
+                ]
+              },
+              "status": "error"
+            },
+            {
+              "category": "INVALID_VALUE",
+              "diagnostics": {
+                "credentialRefs": [],
+                "fileState": "readable",
+                "loaded": false,
+                "overrideInUse": false,
+                "sections": [
+                  {
+                    "name": "sandbox",
+                    "present": true
+                  },
+                  {
+                    "name": "godot",
+                    "present": false
+                  },
+                  {
+                    "name": "quality",
+                    "present": false
+                  },
+                  {
+                    "name": "references",
+                    "present": false
+                  }
+                ],
+                "unknownFields": [],
+                "validationErrors": [
+                  "INVALID_VALUE"
+                ]
+              },
+              "status": "error"
+            },
+            {
+              "category": "INVALID_VALUE",
+              "diagnostics": {
+                "credentialRefs": [],
+                "fileState": "readable",
+                "loaded": false,
+                "overrideInUse": false,
+                "sections": [
+                  {
+                    "name": "sandbox",
+                    "present": true
+                  },
+                  {
+                    "name": "godot",
+                    "present": false
+                  },
+                  {
+                    "name": "quality",
+                    "present": false
+                  },
+                  {
+                    "name": "references",
+                    "present": false
+                  }
+                ],
+                "unknownFields": [],
+                "validationErrors": [
+                  "INVALID_VALUE"
+                ]
+              },
+              "status": "error"
+            },
+            {
+              "category": "INVALID_VALUE",
+              "diagnostics": {
+                "credentialRefs": [],
+                "fileState": "readable",
+                "loaded": false,
+                "overrideInUse": false,
+                "sections": [
+                  {
+                    "name": "sandbox",
+                    "present": false
+                  },
+                  {
+                    "name": "godot",
+                    "present": true
+                  },
+                  {
+                    "name": "quality",
+                    "present": false
+                  },
+                  {
+                    "name": "references",
+                    "present": false
+                  }
+                ],
+                "unknownFields": [],
+                "validationErrors": [
+                  "INVALID_VALUE"
+                ]
+              },
+              "status": "error"
+            },
+            {
+              "category": "INVALID_VALUE",
+              "diagnostics": {
+                "credentialRefs": [],
+                "fileState": "readable",
+                "loaded": false,
+                "overrideInUse": false,
+                "sections": [
+                  {
+                    "name": "sandbox",
+                    "present": false
+                  },
+                  {
+                    "name": "godot",
+                    "present": true
+                  },
+                  {
+                    "name": "quality",
+                    "present": false
+                  },
+                  {
+                    "name": "references",
+                    "present": false
+                  }
+                ],
+                "unknownFields": [],
+                "validationErrors": [
+                  "INVALID_VALUE"
+                ]
+              },
+              "status": "error"
+            },
+            {
+              "category": "INVALID_VALUE",
+              "diagnostics": {
+                "credentialRefs": [],
+                "fileState": "readable",
+                "loaded": false,
+                "overrideInUse": false,
+                "sections": [
+                  {
+                    "name": "sandbox",
+                    "present": false
+                  },
+                  {
+                    "name": "godot",
+                    "present": false
+                  },
+                  {
+                    "name": "quality",
+                    "present": false
+                  },
+                  {
+                    "name": "references",
+                    "present": true
+                  }
+                ],
+                "unknownFields": [],
+                "validationErrors": [
+                  "INVALID_VALUE"
+                ]
+              },
+              "status": "error"
+            },
+            {
+              "category": "INVALID_VALUE",
+              "diagnostics": {
+                "credentialRefs": [],
+                "fileState": "readable",
+                "loaded": false,
+                "overrideInUse": false,
+                "sections": [
+                  {
+                    "name": "sandbox",
+                    "present": false
+                  },
+                  {
+                    "name": "godot",
+                    "present": true
+                  },
+                  {
+                    "name": "quality",
+                    "present": false
+                  },
+                  {
+                    "name": "references",
+                    "present": false
+                  }
+                ],
+                "unknownFields": [],
+                "validationErrors": [
+                  "INVALID_VALUE"
+                ]
+              },
+              "status": "error"
+            },
+            {
+              "category": "UNKNOWN_REVIEW_PROVIDER",
+              "diagnostics": {
+                "credentialRefs": [],
+                "fileState": "readable",
+                "loaded": true,
+                "overrideInUse": false,
+                "sections": [
+                  {
+                    "name": "sandbox",
+                    "present": false
+                  },
+                  {
+                    "name": "godot",
+                    "present": false
+                  },
+                  {
+                    "name": "quality",
+                    "present": true
+                  },
+                  {
+                    "name": "references",
+                    "present": false
+                  }
+                ],
+                "unknownFields": [],
+                "validationErrors": []
+              },
+              "status": "error"
+            },
+            {
+              "category": "INVALID_JSON",
+              "diagnostics": {
+                "credentialRefs": [],
+                "fileState": "readable",
+                "loaded": false,
+                "overrideInUse": false,
+                "sections": [
+                  {
+                    "name": "sandbox",
+                    "present": false
+                  },
+                  {
+                    "name": "godot",
+                    "present": false
+                  },
+                  {
+                    "name": "quality",
+                    "present": false
+                  },
+                  {
+                    "name": "references",
+                    "present": false
+                  }
+                ],
+                "unknownFields": [],
+                "validationErrors": [
+                  "INVALID_JSON"
+                ]
+              },
+              "status": "error"
+            },
+            {
+              "config": {
+                "godot": {
+                  "activeInstallation": null,
+                  "discoverOnPath": true,
+                  "installations": {}
+                },
+                "quality": {
+                  "reviewProvider": null
+                },
+                "references": {},
+                "sandbox": {
+                  "backend": "auto",
+                  "profile": "inspect"
+                }
+              },
+              "diagnostics": {
+                "credentialRefs": [],
+                "fileState": "readable",
+                "loaded": true,
+                "overrideInUse": false,
+                "sections": [
+                  {
+                    "name": "sandbox",
+                    "present": false
+                  },
+                  {
+                    "name": "godot",
+                    "present": false
+                  },
+                  {
+                    "name": "quality",
+                    "present": false
+                  },
+                  {
+                    "name": "references",
+                    "present": false
+                  }
+                ],
+                "unknownFields": [],
+                "validationErrors": []
+              },
+              "referenceConfigError": null,
+              "reviewProviderId": "deterministic-fake",
+              "status": "ok"
+            },
+            {
+              "category": "TOO_LARGE",
+              "diagnostics": {
+                "credentialRefs": [],
+                "fileState": "readable",
+                "loaded": false,
+                "overrideInUse": false,
+                "sections": [
+                  {
+                    "name": "sandbox",
+                    "present": false
+                  },
+                  {
+                    "name": "godot",
+                    "present": false
+                  },
+                  {
+                    "name": "quality",
+                    "present": false
+                  },
+                  {
+                    "name": "references",
+                    "present": false
+                  }
+                ],
+                "unknownFields": [],
+                "validationErrors": [
+                  "TOO_LARGE"
+                ]
+              },
+              "status": "error"
+            },
+            {
+              "category": "NOT_REGULAR",
+              "diagnostics": {
+                "credentialRefs": [],
+                "fileState": "unreadable",
+                "loaded": false,
+                "overrideInUse": false,
+                "sections": [
+                  {
+                    "name": "sandbox",
+                    "present": false
+                  },
+                  {
+                    "name": "godot",
+                    "present": false
+                  },
+                  {
+                    "name": "quality",
+                    "present": false
+                  },
+                  {
+                    "name": "references",
+                    "present": false
+                  }
+                ],
+                "unknownFields": [],
+                "validationErrors": [
+                  "NOT_REGULAR"
+                ]
+              },
+              "status": "error"
+            },
+            {
+              "config": {
+                "godot": {
+                  "activeInstallation": null,
+                  "discoverOnPath": true,
+                  "installations": {}
+                },
+                "quality": {
+                  "reviewProvider": null
+                },
+                "references": {
+                  "aa": {
+                    "kind": "local-directory",
+                    "path": "relative"
+                  }
+                },
+                "sandbox": {
+                  "backend": "auto",
+                  "profile": "inspect"
+                }
+              },
+              "diagnostics": {
+                "credentialRefs": [],
+                "fileState": "readable",
+                "loaded": true,
+                "overrideInUse": false,
+                "sections": [
+                  {
+                    "name": "sandbox",
+                    "present": false
+                  },
+                  {
+                    "name": "godot",
+                    "present": false
+                  },
+                  {
+                    "name": "quality",
+                    "present": false
+                  },
+                  {
+                    "name": "references",
+                    "present": true
+                  }
+                ],
+                "unknownFields": [],
+                "validationErrors": []
+              },
+              "referenceConfigError": "Reference \"aa\": The local-directory path must be absolute; relative paths are not resolved.",
+              "reviewProviderId": "deterministic-fake",
+              "status": "ok"
+            },
+            {
+              "config": {
+                "godot": {
+                  "activeInstallation": null,
+                  "discoverOnPath": true,
+                  "installations": {}
+                },
+                "quality": {
+                  "reviewProvider": null
+                },
+                "references": {
+                  "aa": {
+                    "kind": "repository",
+                    "repository": "https://example.com/org/repo"
+                  }
+                },
+                "sandbox": {
+                  "backend": "auto",
+                  "profile": "inspect"
+                }
+              },
+              "diagnostics": {
+                "credentialRefs": [],
+                "fileState": "readable",
+                "loaded": true,
+                "overrideInUse": false,
+                "sections": [
+                  {
+                    "name": "sandbox",
+                    "present": false
+                  },
+                  {
+                    "name": "godot",
+                    "present": false
+                  },
+                  {
+                    "name": "quality",
+                    "present": false
+                  },
+                  {
+                    "name": "references",
+                    "present": true
+                  }
+                ],
+                "unknownFields": [],
+                "validationErrors": []
+              },
+              "referenceConfigError": "Reference \"aa\": Unsupported repository host \"example.com\"; only github.com is supported.",
+              "reviewProviderId": "deterministic-fake",
+              "status": "ok"
+            }
+          ]
+        },
+        "scenarioId": "user-config-matrix",
+        "subject": "user-config"
+      }
+    }
+  ]
 }

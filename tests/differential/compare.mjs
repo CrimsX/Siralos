@@ -263,6 +263,7 @@ export function runCompare({
   supersededDisclosure = null,
   supersessionsSha256 = null,
   supersessionsEntriesSha256 = null,
+  pinnedEvidence = null,
 }) {
   if (platform !== "windows" && platform !== "posix") {
     throw new Error(`unsupported comparison platform ${JSON.stringify(platform)}`);
@@ -376,6 +377,10 @@ export function runCompare({
     schemaVersion: AUDIT_SCHEMA_VERSION,
     corpusVersion,
     corpusDigest,
+    // Historical evidence identity is deliberately separate from the current
+    // source tree. It contains only digests, ids, and counts — never record
+    // bodies, paths, or secret values.
+    pinnedEvidence,
     sourceIdentity,
     referenceIdentity: sourceIdentity?.reference ?? null,
     candidateIdentity: sourceIdentity?.candidate ?? null,
