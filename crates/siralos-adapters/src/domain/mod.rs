@@ -17,7 +17,10 @@ mod effects;
 mod host;
 pub mod manifest;
 
-pub use effects::{EffectMediation, EffectMediationBounds, MediatedAnswer};
+pub use effects::{
+    EffectMediation, EffectMediationBounds, MAX_EFFECT_COMMAND_BYTES,
+    MAX_EFFECT_PATH_BYTES, MediatedAnswer,
+};
 pub use host::{DomainHost, DomainHostBounds, EffectRequest, QueryOutcome};
 pub use manifest::{
     DOMAIN_MANIFEST_FILE_NAME, MAX_COMPONENT_BYTES, MAX_MANIFEST_BYTES,

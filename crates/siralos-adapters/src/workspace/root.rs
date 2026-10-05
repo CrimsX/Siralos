@@ -20,8 +20,8 @@ pub enum WorkspaceRootError {
 impl fmt::Display for WorkspaceRootError {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::NotAccessible(detail) => {
-                write!(formatter, "Workspace root is not accessible: {detail}")
+            Self::NotAccessible(_) => {
+                formatter.write_str("Workspace root is not accessible.")
             }
             Self::NotADirectory => {
                 formatter.write_str("Workspace root is not a directory.")
@@ -38,11 +38,15 @@ impl std::error::Error for WorkspaceRootError {}
 pub fn resolve_workspace_root(
     cwd: &std::path::Path,
 ) -> Result<PathBuf, WorkspaceRootError> {
-    let canonical = std::fs::canonicalize(cwd).map_err(|error| {
-        WorkspaceRootError::NotAccessible(error.to_string())
+    let canonical = std::fs::canonicalize(cwd).map_err(|_error| {
+        WorkspaceRootError::NotAccessible(
+            "workspace root is not accessible".to_owned(),
+        )
     })?;
-    let metadata = std::fs::metadata(&canonical).map_err(|error| {
-        WorkspaceRootError::NotAccessible(error.to_string())
+    let metadata = std::fs::metadata(&canonical).map_err(|_error| {
+        WorkspaceRootError::NotAccessible(
+            "workspace root is not accessible".to_owned(),
+        )
     })?;
     if !metadata.is_dir() {
         return Err(WorkspaceRootError::NotADirectory);

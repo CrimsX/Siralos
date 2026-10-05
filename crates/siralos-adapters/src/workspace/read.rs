@@ -17,7 +17,8 @@
 //! reference's surface.
 
 use crate::workspace::fs::{
-    BoundedFileRead, DEFAULT_EXCLUDED_DIRECTORIES, decode_utf8, looks_binary,
+    BoundedFileRead, DEFAULT_EXCLUDED_DIRECTORIES, decode_utf8,
+    is_model_protected_workspace_path, looks_binary,
     read_complete_file_bounded, split_into_lines, utf16_len, utf16_slice,
 };
 use crate::workspace::list::excluded_component;
@@ -215,14 +216,21 @@ pub fn read_file(
             return ReadOutcome::Denied { message: rejection.to_string() };
         }
     };
-    if let Some(component) = excluded_component(
+    if excluded_component(
         &resolved.workspace_relative_path,
         &DEFAULT_EXCLUDED_DIRECTORIES,
-    ) {
+    )
+    .is_some()
+    {
         return ReadOutcome::Denied {
-            message: format!(
-                "Path is inside the excluded directory {component}."
-            ),
+            message: "Path is inside the excluded directory.".to_owned(),
+        };
+    }
+    if is_model_protected_workspace_path(&resolved.workspace_relative_path) {
+        return ReadOutcome::Denied {
+            message:
+                "Path is protected from model-facing workspace inspection."
+                    .to_owned(),
         };
     }
     if cancelled {
@@ -230,9 +238,9 @@ pub fn read_file(
     }
     let metadata = match std::fs::symlink_metadata(&resolved.absolute_path) {
         Ok(metadata) => metadata,
-        Err(error) => {
+        Err(_error) => {
             return ReadOutcome::Failed {
-                message: format!("Cannot inspect file: {error}"),
+                message: "Cannot inspect file.".to_owned(),
             };
         }
     };
@@ -316,6 +324,13 @@ pub fn read_file(
             };
         }
         ReadMode::Exact => {}
+    }
+    if input.start_line == 0
+        || input.end_line.is_some_and(|end| end < input.start_line)
+    {
+        return ReadOutcome::Failed {
+            message: "line bounds must be positive and ordered".to_owned(),
+        };
     }
     let lines = split_into_lines(&text);
     let total_lines = lines.len() as u64;
@@ -562,6 +577,30 @@ mod tests {
             read_file(&base, &escape, &WORKSPACE_LIMITS, None, false),
             ReadOutcome::Denied { .. },
         ));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn protected_model_paths_are_denied_before_open() {
+        let base = workspace();
+        std::fs::write(base.join("siralos.toml"), b"key:secret").unwrap();
+        std::fs::write(base.join(".env"), b"SECRET=value").unwrap();
+        std::fs::create_dir_all(base.join(".siralos")).unwrap();
+        std::fs::write(base.join(".siralos/replay-store.json"), b"{}")
+            .unwrap();
+
+        for path in ["siralos.toml", ".env", ".siralos/replay-store.json"] {
+            let input = ReadInput {
+                path: path.to_owned(),
+                start_line: 1,
+                end_line: None,
+                mode: ReadMode::Exact,
+            };
+            assert!(matches!(
+                read_file(&base, &input, &WORKSPACE_LIMITS, None, false),
+                ReadOutcome::Denied { .. }
+            ));
+        }
         let _ = std::fs::remove_dir_all(&base);
     }
 

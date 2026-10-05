@@ -15,10 +15,11 @@
 //! credential or raw body text (only its `sha256`).
 
 use crate::provider::credential::HostCredential;
+use crate::provider::tool_names::ToolNames;
 use crate::provider::{
     CANCELLED_BEFORE_HTTP_CALL, CANCELLED_BEFORE_HTTP_SEND,
     CANCELLED_BEFORE_PROVIDER_START, NO_PROVIDER_RESPONSE_OBSERVED,
-    ReplayHooks, record_outcome,
+    ReplayHooks, record_evidence_outcome_with_secret, record_outcome,
 };
 use serde_json::Value;
 use siralos_core::determinism::{
@@ -37,7 +38,6 @@ use std::rc::Rc;
 /// replaces it in place, and the NEXT `stream()` clones the cell at call
 /// time, so the switched id flows into the request body without
 /// re-composing provider/endpoint/credential.
-#[derive(Debug)]
 pub struct OpenAiProvider {
     /// Redacted credential for openai.
     credential: HostCredential,
@@ -49,11 +49,31 @@ pub struct OpenAiProvider {
     last_replay: RefCell<ProviderReplayAvailability>,
 }
 
+impl std::fmt::Debug for OpenAiProvider {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        formatter
+            .debug_struct("OpenAiProvider")
+            .field("model", &"[CONFIGURED]")
+            .field("credential", &"[REDACTED]")
+            .field("hooks", &self.hooks)
+            .field("last_replay", &self.last_replay)
+            .finish()
+    }
+}
+
 impl OpenAiProvider {
     /// Create a new `OpenAiProvider` with a redacted `HostCredential` and a
     /// bounded `model` id. The credential is held in memory only for the
     /// `ModelProvider` call and never written to `siralos.toml`/`siralos.lock`.
     pub fn new(credential: HostCredential, model: String) -> Self {
+        let model = if siralos_core::composition::is_model_id(&model) {
+            model
+        } else {
+            "invalid-model".to_owned()
+        };
         Self {
             credential,
             model: Rc::new(RefCell::new(model)),
@@ -73,8 +93,11 @@ impl OpenAiProvider {
         clock: Rc<dyn Clock>,
         recorder: Rc<dyn ReplayRecorder>,
     ) -> Self {
-        self.hooks =
-            ReplayHooks { clock: Some(clock), recorder: Some(recorder) };
+        self.hooks = ReplayHooks {
+            clock: Some(clock),
+            recorder: Some(recorder),
+            request_sha256: core::cell::RefCell::new(None),
+        };
         self
     }
 
@@ -90,13 +113,37 @@ impl OpenAiProvider {
     /// cell, so a session `/model` switch takes effect without
     /// re-composing provider/endpoint/credential.
     pub fn set_model(&self, model: String) {
-        *self.model.borrow_mut() = model;
+        if siralos_core::composition::is_model_id(&model) {
+            *self.model.borrow_mut() = model;
+        }
     }
 
     /// The model id the NEXT `stream()` will send.
     #[must_use]
     pub fn live_model(&self) -> String {
         self.model.borrow().clone()
+    }
+
+    /// Fetch models from this provider's fixed OpenAI route. The
+    /// workspace's configured endpoint is intentionally not consulted.
+    pub fn fetch_models(&self) -> Result<Vec<String>, String> {
+        crate::provider::generic::fetch_models(
+            CHAT_BASE_URL,
+            Some(&self.credential),
+        )
+    }
+
+    /// Fetch models while allowing a caller-owned interrupt to release the
+    /// blocking probe.
+    pub fn fetch_models_cancellable(
+        &self,
+        cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<Vec<String>, String> {
+        crate::provider::generic::fetch_models_cancellable(
+            CHAT_BASE_URL,
+            Some(&self.credential),
+            cancelled,
+        )
     }
 }
 
@@ -115,11 +162,22 @@ impl ModelProvider for OpenAiProvider {
         request: &'a ModelRequest,
         cancellation: CancellationSignal<'a>,
     ) -> Self::Stream<'a> {
+        *self.last_replay.borrow_mut() =
+            ProviderReplayAvailability::Unavailable {
+                reason: "stream has not completed".to_owned(),
+            };
         if cancellation.is_cancelled() {
             return Box::new(std::iter::once(ProviderEvent::Cancelled {
                 message: CANCELLED_BEFORE_PROVIDER_START.to_owned(),
             }));
         }
+        *self.hooks.request_sha256.borrow_mut() =
+            Some(crate::provider::request_sha256_for_route(
+                request,
+                "openai",
+                CHAT_BASE_URL,
+                "openai-completions",
+            ));
         let model = self.model.borrow().clone();
         let credential =
             String::from_utf8_lossy(self.credential.as_bytes()).to_string();
@@ -162,16 +220,25 @@ impl OpenAiProvider {
         last_replay: &RefCell<ProviderReplayAvailability>,
     ) -> Vec<ProviderEvent> {
         if cancellation.is_cancelled() {
+            *last_replay.borrow_mut() =
+                ProviderReplayAvailability::Unavailable {
+                    reason: "call cancelled before HTTP request".to_owned(),
+                };
             return vec![ProviderEvent::Cancelled {
                 message: CANCELLED_BEFORE_HTTP_CALL.to_owned(),
             }];
         }
+        let tool_names = ToolNames::new(
+            request.tools.iter().map(|tool| tool.name.as_str()),
+        );
         let client = match crate::provider::build_http_client() {
             Ok(client) => client,
-            Err(err) => {
-                let events = vec![ProviderEvent::Failed(format!(
-                    "openai client build failed: {err}"
-                ))];
+            Err(_err) => {
+                // Status-only: the transport's own error text is never
+                // reported (it can carry a proxy URL or environment detail).
+                let events = vec![ProviderEvent::Failed(
+                    "openai client build failed".to_owned(),
+                )];
                 record_outcome(hooks, last_replay, "openai", model, None, "");
                 return events;
             }
@@ -202,7 +269,7 @@ impl OpenAiProvider {
                     };
                     messages.push(serde_json::json!({
                         "role": "assistant",
-                        "tool_calls": [{"id": call_id, "type": "function", "function": {"name": tool_name, "arguments": args_str}}]
+                        "tool_calls": [{"id": call_id, "type": "function", "function": {"name": tool_names.alias(tool_name), "arguments": args_str}}]
                     }));
                 }
                 siralos_core::provider::ConversationItem::ToolResult {
@@ -225,7 +292,7 @@ impl OpenAiProvider {
         for tool in &request.tools {
             tools_json.push(serde_json::json!({
                 "type": "function",
-                "function": {"name": tool.name, "description": tool.description, "parameters": tool.input_schema}
+                "function": {"name": tool_names.alias(&tool.name), "description": tool.description, "parameters": tool.input_schema}
             }));
         }
         let mut body =
@@ -241,11 +308,13 @@ impl OpenAiProvider {
         let pipeline = crate::provider::run_chat_pipeline(
             "openai",
             model,
+            &chat_completions_url(base_url),
             client
                 .post(chat_completions_url(base_url))
                 .header("Authorization", format!("Bearer {credential}"))
                 .header("Content-Type", "application/json")
                 .json(&body),
+            Some(credential),
             cancellation,
             hooks,
             last_replay,
@@ -261,68 +330,308 @@ impl OpenAiProvider {
             } => (status, text, value),
         };
         let mut events = Vec::new();
-        let choices = value
-            .get("choices")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
+        let mut saw_usable_event = false;
+        let reject = |reason: &'static str| {
+            crate::provider::record_evidence_outcome_with_secret(
+                hooks,
+                last_replay,
+                "openai",
+                model,
+                Some(status.as_u16()),
+                &text,
+                Some(credential),
+            );
+            vec![ProviderEvent::Failed(reason.to_owned())]
+        };
+        if value.get("error").is_some() {
+            return reject("openai response contains an explicit error");
+        }
+        let choices = match value.get("choices").and_then(|v| v.as_array()) {
+            Some(choices) if !choices.is_empty() => choices,
+            _ => {
+                crate::provider::record_evidence_outcome_with_secret(
+                    hooks,
+                    last_replay,
+                    "openai",
+                    model,
+                    Some(status.as_u16()),
+                    &text,
+                    Some(credential),
+                );
+                return vec![ProviderEvent::Failed(
+                    "openai response did not contain a usable completion"
+                        .to_owned(),
+                )];
+            }
+        };
         for choice in choices {
-            let message =
-                choice.get("message").cloned().unwrap_or(Value::Null);
-            if let Some(content) =
-                message.get("content").and_then(|v| v.as_str())
+            if choice.get("error").is_some()
+                || choice
+                    .get("finish_reason")
+                    .and_then(Value::as_str)
+                    .is_some_and(|reason| reason.eq_ignore_ascii_case("error"))
             {
-                if !content.is_empty() {
-                    events.push(ProviderEvent::Event(ModelEvent::TextDelta {
-                        text: content.to_owned(),
-                    }));
+                return reject(
+                    "openai response choice contains an explicit error",
+                );
+            }
+            let Some(message) =
+                choice.get("message").filter(|value| value.is_object())
+            else {
+                record_evidence_outcome_with_secret(
+                    hooks,
+                    last_replay,
+                    "openai",
+                    model,
+                    Some(status.as_u16()),
+                    &text,
+                    Some(credential),
+                );
+                return vec![ProviderEvent::Failed(
+                    "openai response choice is missing an object message"
+                        .to_owned(),
+                )];
+            };
+            let mut invalid_text = false;
+            if let Some(content) = message.get("content") {
+                let mut add_text = |text: &str| {
+                    if text.is_empty() {
+                        invalid_text = true;
+                        return;
+                    }
+                    {
+                        if text.chars().any(|character| {
+                            character.is_control()
+                                && !matches!(character, '\n' | '\r' | '\t')
+                        }) {
+                            invalid_text = true;
+                            return;
+                        }
+                        events.push(ProviderEvent::Event(
+                            ModelEvent::TextDelta {
+                                text: text.replace('\r', ""),
+                            },
+                        ));
+                        saw_usable_event = true;
+                    }
+                };
+                if content.is_null() {
+                } else if let Some(text) = content.as_str() {
+                    add_text(text);
+                } else if let Some(parts) = content.as_array() {
+                    if parts.is_empty() {
+                        return reject(
+                            "openai response content array is empty",
+                        );
+                    }
+                    for part in parts {
+                        let Some(object) = part.as_object() else {
+                            return reject(
+                                "openai response content block must be an object",
+                            );
+                        };
+                        let kind = object
+                            .get("type")
+                            .and_then(Value::as_str)
+                            .unwrap_or("text");
+                        if matches!(
+                            kind,
+                            "text" | "output_text" | "input_text"
+                        ) {
+                            let Some(text) =
+                                object.get("text").and_then(Value::as_str)
+                            else {
+                                return reject(
+                                    "openai response content block needs text",
+                                );
+                            };
+                            add_text(text);
+                        } else {
+                            return reject(
+                                "openai response content block type is not supported",
+                            );
+                        }
+                    }
+                } else {
+                    return reject(
+                        "openai response message content has an invalid shape",
+                    );
                 }
             }
-            if let Some(tool_calls) =
-                message.get("tool_calls").and_then(|v| v.as_array())
-            {
+            if let Some(reasoning) = message.get("reasoning") {
+                if !reasoning.is_null() {
+                    let Some(reasoning) = reasoning.as_str() else {
+                        return reject(
+                            "openai response reasoning must be a string",
+                        );
+                    };
+                    if reasoning.is_empty() {
+                        return reject("openai response reasoning is empty");
+                    }
+                    if reasoning.chars().any(|character| {
+                        character.is_control()
+                            && !matches!(character, '\n' | '\r' | '\t')
+                    }) {
+                        return reject(
+                            "openai response reasoning contains disallowed controls",
+                        );
+                    }
+                    events.push(ProviderEvent::Event(
+                        ModelEvent::ReasoningDelta {
+                            text: reasoning.to_owned(),
+                        },
+                    ));
+                    saw_usable_event = true;
+                }
+            }
+            if invalid_text {
+                record_evidence_outcome_with_secret(
+                    hooks,
+                    last_replay,
+                    "openai",
+                    model,
+                    Some(status.as_u16()),
+                    &text,
+                    Some(credential),
+                );
+                return vec![ProviderEvent::Failed(
+                    "openai response text contains disallowed controls"
+                        .to_owned(),
+                )];
+            }
+            if let Some(tool_calls) = message.get("tool_calls") {
+                let Some(tool_calls) = tool_calls.as_array() else {
+                    return reject(
+                        "openai response tool_calls must be an array",
+                    );
+                };
                 for call in tool_calls {
-                    let id = call
-                        .get("id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_owned();
+                    let id =
+                        call.get("id").and_then(|v| v.as_str()).unwrap_or("");
                     let name = call
                         .get("function")
                         .and_then(|v| v.get("name"))
                         .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_owned();
-                    let args_str = call
+                        .unwrap_or("");
+                    if id.is_empty()
+                        || name.is_empty()
+                        || id.len() > 256
+                        || id.chars().any(|character| character.is_control())
+                        || name.len() > crate::provider::tool_names::MAX_PROVIDER_TOOL_NAME_BYTES
+                        || name.chars().any(|character| character.is_control())
+                    {
+                        record_evidence_outcome_with_secret(
+                            hooks,
+                            last_replay,
+                            "openai",
+                            model,
+                            Some(status.as_u16()),
+                            &text,
+                            Some(credential),
+                        );
+                        return vec![ProviderEvent::Failed(
+                            "openai response contains an invalid tool call".to_owned(),
+                        )];
+                    }
+                    let Some(args_str) = call
                         .get("function")
                         .and_then(|v| v.get("arguments"))
                         .and_then(|v| v.as_str())
-                        .unwrap_or("{}");
-                    let input_val = serde_json::from_str::<Value>(args_str)
-                        .unwrap_or(Value::String(args_str.to_owned()));
-                    if id.is_empty() || name.is_empty() {
-                        continue;
+                    else {
+                        record_evidence_outcome_with_secret(
+                            hooks,
+                            last_replay,
+                            "openai",
+                            model,
+                            Some(status.as_u16()),
+                            &text,
+                            Some(credential),
+                        );
+                        return vec![ProviderEvent::Failed(
+                            "openai response tool call is missing arguments"
+                                .to_owned(),
+                        )];
+                    };
+                    let Ok(input_val) =
+                        serde_json::from_str::<Value>(args_str)
+                    else {
+                        record_evidence_outcome_with_secret(
+                            hooks,
+                            last_replay,
+                            "openai",
+                            model,
+                            Some(status.as_u16()),
+                            &text,
+                            Some(credential),
+                        );
+                        return vec![ProviderEvent::Failed(
+                            "openai response tool arguments are not valid JSON".to_owned(),
+                        )];
+                    };
+                    if !input_val.is_object() {
+                        record_evidence_outcome_with_secret(
+                            hooks,
+                            last_replay,
+                            "openai",
+                            model,
+                            Some(status.as_u16()),
+                            &text,
+                            Some(credential),
+                        );
+                        return vec![ProviderEvent::Failed(
+                            "openai response tool arguments must be a JSON object"
+                                .to_owned(),
+                        )];
                     }
                     let input =
                         siralos_core::provider::ToolCallInput::from_value(
                             input_val,
                         );
                     events.push(ProviderEvent::Event(ModelEvent::ToolCall {
-                        call_id: id,
-                        tool_name: name,
+                        call_id: id.to_owned(),
+                        tool_name: name.to_owned(),
                         input,
                     }));
+                    saw_usable_event = true;
                 }
             }
         }
+        if !saw_usable_event {
+            crate::provider::record_evidence_outcome_with_secret(
+                hooks,
+                last_replay,
+                "openai",
+                model,
+                Some(status.as_u16()),
+                &text,
+                Some(credential),
+            );
+            return vec![ProviderEvent::Failed(
+                "openai response did not contain a usable completion"
+                    .to_owned(),
+            )];
+        }
+        events = tool_names.restore_events(events);
+        let mut redactor =
+            crate::provider::StreamingSecretRedactor::new(Some(credential));
+        events = events
+            .into_iter()
+            .map(|event| redactor.redact_event(event))
+            .collect();
+        if let Some(tail) = redactor.finish() {
+            events.push(ProviderEvent::Event(ModelEvent::TextDelta {
+                text: tail,
+            }));
+        }
         events.push(ProviderEvent::Event(ModelEvent::Completed));
-        record_outcome(
+        crate::provider::record_outcome_with_secret(
             hooks,
             last_replay,
             "openai",
             model,
             Some(status.as_u16()),
             &text,
+            Some(credential),
         );
         events
     }
@@ -342,7 +651,7 @@ mod tests {
     };
     use crate::provider::ReplayHooks;
     use crate::provider::probe::{
-        ERROR_STATUSES, Fixture, error_bodies, reason, retaining_hooks, serve,
+        ERROR_STATUSES, Fixture, error_bodies, retaining_hooks, serve,
         serve_truncated,
     };
     use siralos_core::determinism::ProviderReplayAvailability;
@@ -510,39 +819,23 @@ mod tests {
         // Recorded baseline, not an approved-parity claim: these assertions
         // describe what this client does today at each (status, body) pair.
         for status in ERROR_STATUSES {
-            for (label, body) in error_bodies() {
+            for (_label, body) in error_bodies() {
                 let server = serve(Fixture { status, body: body.clone() });
                 let events =
                     drive(&server.base_url, CancellationToken::new().signal());
                 let _ = server.recorded();
                 let message = failed_message(&events);
-                // Recorded: the message embeds `reqwest`'s full status line
-                // (`400 Bad Request`), not the bare numeric code, which is what
-                // the generic path prints.
                 assert!(
-                    message.starts_with(&format!("openai error {status} ")),
+                    message.starts_with(&format!("openai error {status}")),
                     "{message}"
                 );
+                assert!(!message.contains("<html>"), "{message}");
+                assert!(!message.contains("rate limiting"), "{message}");
                 assert!(
-                    message.contains(&format!("{status} {}", reason(status))),
-                    "{message}"
-                );
-                // The whole body never reaches the event: the snippet is 512
-                // characters, so a 10 KB body cannot inflate the diagnostic.
-                assert!(
-                    message.len() <= 512 + 64,
+                    message.len() <= 128,
                     "status {status}: {} bytes",
                     message.len()
                 );
-                if label.contains("html") {
-                    // Recorded: this client keeps the raw HTML snippet, however
-                    // large the body is — the 512-character cut lands after the
-                    // markup in both HTML fixtures.
-                    assert!(message.contains("<html>"), "{message}");
-                }
-                // Recorded: this client appends no rate-limit hint, unlike the
-                // generic path's `http_error_message`.
-                assert!(!message.contains("rate limiting"), "{message}");
             }
         }
     }
@@ -668,7 +961,7 @@ mod tests {
         let _ = server.recorded();
         let message = failed_message(&events);
         assert!(
-            message.starts_with("openai response JSON parse failed: "),
+            message.starts_with("openai response JSON parse failed"),
             "{message}"
         );
         assert!(
@@ -691,7 +984,7 @@ mod tests {
         let _ = server.recorded();
         let message = failed_message(&events);
         assert!(
-            message.starts_with("openai response read failed: "),
+            message.starts_with("openai response read failed"),
             "{message}"
         );
     }

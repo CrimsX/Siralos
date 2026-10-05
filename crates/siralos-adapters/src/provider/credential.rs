@@ -32,12 +32,41 @@ impl HostCredential {
                     "A credential key: value must be non-empty.".to_owned()
                 );
             }
+            if inner.len()
+                > siralos_core::composition::MAX_PROFILE_CREDENTIAL_KEY_BYTES
+            {
+                return Err(format!(
+                    "The credential key value exceeds the {}-byte bound.",
+                    siralos_core::composition::MAX_PROFILE_CREDENTIAL_KEY_BYTES
+                ));
+            }
+            if inner.contains('\0') {
+                return Err("A credential must not contain NUL.".to_owned());
+            }
             return Ok(Self { bytes: inner.as_bytes().to_vec() });
         }
         // Bare legacy compat: treat as env-var name.
         if siralos_core::composition::is_credential_env_name(value) {
             let var = std::env::var(value)
                 .map_err(|_| format!("env var {value} is not set"))?;
+            if var.is_empty() {
+                return Err(
+                    "A resolved credential must not be empty.".to_owned()
+                );
+            }
+            if var.len()
+                > siralos_core::composition::MAX_PROFILE_CREDENTIAL_KEY_BYTES
+            {
+                return Err(format!(
+                    "The resolved credential exceeds the {}-byte bound.",
+                    siralos_core::composition::MAX_PROFILE_CREDENTIAL_KEY_BYTES
+                ));
+            }
+            if var.contains('\0') {
+                return Err(
+                    "A resolved credential must not contain NUL.".to_owned()
+                );
+            }
             return Ok(Self { bytes: var.into_bytes() });
         }
         Err("A credential must be \"env:NAME\" or \"key:VALUE\" where NAME matches [A-Z0-9_]{1,64}.".to_owned())
@@ -62,7 +91,37 @@ impl HostCredential {
         }
         let var = std::env::var(name)
             .map_err(|_| format!("env var {name} is not set"))?;
+        if var.is_empty() {
+            return Err("A resolved credential must not be empty.".to_owned());
+        }
+        if var.len()
+            > siralos_core::composition::MAX_PROFILE_CREDENTIAL_KEY_BYTES
+        {
+            return Err(format!(
+                "The resolved credential exceeds the {}-byte bound.",
+                siralos_core::composition::MAX_PROFILE_CREDENTIAL_KEY_BYTES
+            ));
+        }
+        if var.contains('\0') {
+            return Err(
+                "A resolved credential must not contain NUL.".to_owned()
+            );
+        }
         Ok(Self { bytes: var.into_bytes() })
+    }
+
+    /// Redact this credential's raw and JSON-escaped forms from text that
+    /// may cross a diagnostic boundary.
+    #[must_use]
+    pub fn redact_text(&self, text: &str) -> String {
+        let secret = String::from_utf8_lossy(self.as_bytes());
+        crate::provider::redact_sensitive(text, Some(&secret))
+    }
+
+    /// Compare two resolved credentials without exposing their bytes.
+    #[must_use]
+    pub fn same_credential(&self, other: &Self) -> bool {
+        self.bytes == other.bytes
     }
 
     /// Expose the bytes only to the `ModelProvider` adapters in this crate.

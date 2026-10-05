@@ -9,11 +9,13 @@
 
 use crate::workspace::fs::{
     BoundedFileRead, DEFAULT_EXCLUDED_DIRECTORIES, decode_utf8,
-    fold_path_component, looks_binary, read_complete_file_bounded,
-    split_into_lines, utf16_index_of, utf16_slice,
+    fold_path_component, is_link_or_reparse,
+    is_model_protected_workspace_path, looks_binary,
+    read_complete_file_bounded, split_into_lines, utf16_index_of, utf16_slice,
 };
 use crate::workspace::resolve::resolve_workspace_path;
 
+use siralos_core::provider::CancellationSignal;
 use siralos_core::workspace::bounds::WorkspaceLimits;
 
 use std::path::{Path, PathBuf};
@@ -40,6 +42,8 @@ pub enum TruncationReason {
     MatchLimit,
     /// The maximum directory depth was exceeded.
     DepthBudget,
+    /// An entry or file could not be inspected completely.
+    Unreadable,
 }
 
 impl TruncationReason {
@@ -55,6 +59,7 @@ impl TruncationReason {
             Self::TimeBudget => "time_budget",
             Self::MatchLimit => "match_limit",
             Self::DepthBudget => "depth_budget",
+            Self::Unreadable => "unreadable",
         }
     }
 }
@@ -162,12 +167,57 @@ pub fn parse_search_input(
     };
     Ok(SearchInput { query, path, max_results: requested })
 }
+trait SearchCancellation {
+    fn is_cancelled(&self) -> bool;
+}
+
+struct FrozenSearchCancellation(bool);
+
+impl SearchCancellation for FrozenSearchCancellation {
+    fn is_cancelled(&self) -> bool {
+        self.0
+    }
+}
+
+impl SearchCancellation for CancellationSignal<'_> {
+    fn is_cancelled(&self) -> bool {
+        CancellationSignal::is_cancelled(self)
+    }
+}
+
 /// Search the workspace with the reference budgets and semantics.
+///
+/// This compatibility entry point retains the historical frozen boolean.
+/// Tool execution uses [`search_with_cancellation`] so cancellation is
+/// observed throughout the traversal instead of only at entry.
 pub fn search(
     root: &Path,
     input: &SearchInput,
     limits: &WorkspaceLimits,
     cancelled: bool,
+) -> SearchOutcome {
+    let control = FrozenSearchCancellation(cancelled);
+    search_with_control(root, input, limits, &control)
+}
+
+/// Search while observing a live Host cancellation signal.
+///
+/// The signal is kept by reference for the entire traversal and is polled
+/// at directory, entry, metadata, and bounded-read boundaries.
+pub(crate) fn search_with_cancellation(
+    root: &Path,
+    input: &SearchInput,
+    limits: &WorkspaceLimits,
+    cancellation: CancellationSignal<'_>,
+) -> SearchOutcome {
+    search_with_control(root, input, limits, &cancellation)
+}
+
+fn search_with_control<C: SearchCancellation>(
+    root: &Path,
+    input: &SearchInput,
+    limits: &WorkspaceLimits,
+    control: &C,
 ) -> SearchOutcome {
     let resolved = match resolve_workspace_path(root, &input.path) {
         Ok(resolved) => resolved,
@@ -185,7 +235,14 @@ pub fn search(
             ),
         };
     }
-    if cancelled {
+    if is_model_protected_workspace_path(&resolved.workspace_relative_path) {
+        return SearchOutcome::Denied {
+            message:
+                "Path is protected from model-facing workspace inspection."
+                    .to_owned(),
+        };
+    }
+    if control.is_cancelled() {
         return SearchOutcome::Cancelled;
     }
     let fold = fold_component_platform();
@@ -223,7 +280,7 @@ pub fn search(
         depth: 0,
     }];
     while let Some(directory) = pending.pop() {
-        if cancelled {
+        if control.is_cancelled() {
             return SearchOutcome::Cancelled;
         }
         if Instant::now() >= deadline {
@@ -237,12 +294,24 @@ pub fn search(
             stop_search!(TruncationReason::DepthBudget);
         }
         let mut names: Vec<String> = Vec::new();
+        if control.is_cancelled() {
+            return SearchOutcome::Cancelled;
+        }
         let entries = match std::fs::read_dir(&directory.absolute) {
             Ok(entries) => entries,
-            Err(_) => continue,
+            Err(_) => {
+                if control.is_cancelled() {
+                    return SearchOutcome::Cancelled;
+                }
+                skipped_files = skipped_files.saturating_add(1);
+                stop_search!(TruncationReason::Unreadable);
+            }
         };
+        if control.is_cancelled() {
+            return SearchOutcome::Cancelled;
+        }
         for entry in entries {
-            if cancelled {
+            if control.is_cancelled() {
                 return SearchOutcome::Cancelled;
             }
             entries_examined += 1;
@@ -251,9 +320,21 @@ pub fn search(
             }
             let entry = match entry {
                 Ok(entry) => entry,
-                Err(_) => continue,
+                Err(_) => {
+                    if control.is_cancelled() {
+                        return SearchOutcome::Cancelled;
+                    }
+                    skipped_files = skipped_files.saturating_add(1);
+                    stop_search!(TruncationReason::Unreadable);
+                }
             };
-            let name = entry.file_name().to_string_lossy().into_owned();
+            if control.is_cancelled() {
+                return SearchOutcome::Cancelled;
+            }
+            let Ok(name) = entry.file_name().into_string() else {
+                skipped_files = skipped_files.saturating_add(1);
+                continue;
+            };
             let folded = fold_path_component(&name, fold);
             if DEFAULT_EXCLUDED_DIRECTORIES
                 .iter()
@@ -265,22 +346,35 @@ pub fn search(
         }
         names.sort();
         for name in names {
-            if cancelled {
+            if control.is_cancelled() {
                 return SearchOutcome::Cancelled;
             }
             if Instant::now() >= deadline {
                 stop_search!(TruncationReason::TimeBudget);
             }
+            let relative = child_relative_path(&directory.relative, &name);
+            if is_model_protected_workspace_path(&relative) {
+                skipped_files += 1;
+                continue;
+            }
+            if control.is_cancelled() {
+                return SearchOutcome::Cancelled;
+            }
             let absolute = directory.absolute.join(&name);
             let stats = match std::fs::symlink_metadata(&absolute) {
                 Ok(stats) => stats,
                 Err(_) => {
-                    skipped_files += 1;
-                    continue;
+                    if control.is_cancelled() {
+                        return SearchOutcome::Cancelled;
+                    }
+                    skipped_files = skipped_files.saturating_add(1);
+                    stop_search!(TruncationReason::Unreadable);
                 }
             };
-            let file_type = stats.file_type();
-            if file_type.is_symlink() {
+            if control.is_cancelled() {
+                return SearchOutcome::Cancelled;
+            }
+            if is_link_or_reparse(&stats) {
                 skipped_files += 1;
                 continue;
             }
@@ -308,7 +402,7 @@ pub fn search(
                 stop_search!(TruncationReason::ScanBudget);
             }
             scanned_files += 1;
-            if cancelled {
+            if control.is_cancelled() {
                 return SearchOutcome::Cancelled;
             }
             let bytes = match read_complete_file_bounded(
@@ -317,10 +411,16 @@ pub fn search(
             ) {
                 BoundedFileRead::Complete(bytes) => bytes,
                 _ => {
-                    skipped_files += 1;
-                    continue;
+                    if control.is_cancelled() {
+                        return SearchOutcome::Cancelled;
+                    }
+                    skipped_files = skipped_files.saturating_add(1);
+                    stop_search!(TruncationReason::Unreadable);
                 }
             };
+            if control.is_cancelled() {
+                return SearchOutcome::Cancelled;
+            }
             input_bytes += bytes.len() as u64;
             if input_bytes > limits.max_search_input_bytes as u64 {
                 stop_search!(TruncationReason::InputBudget);
@@ -336,12 +436,14 @@ pub fn search(
                     continue;
                 }
             };
-            let relative_path =
-                child_relative_path(&directory.relative, &name);
+            if control.is_cancelled() {
+                return SearchOutcome::Cancelled;
+            }
+            let relative_path = relative;
             let lines = split_into_lines(&text);
             for (line_index, line) in lines.iter().enumerate() {
                 if (line_index & 63) == 0 {
-                    if cancelled {
+                    if control.is_cancelled() {
                         return SearchOutcome::Cancelled;
                     }
                     if Instant::now() >= deadline {
@@ -351,22 +453,29 @@ pub fn search(
                 if let Some(column) = utf16_index_of(line, &input.query) {
                     let match_text =
                         utf16_slice(line, limits.max_search_line_length_chars);
+                    let next_output_bytes =
+                        output_bytes.saturating_add(match_text.len() as u64);
+                    if next_output_bytes
+                        > limits.max_search_output_bytes as u64
+                    {
+                        stop_search!(TruncationReason::OutputBudget);
+                    }
+                    output_bytes = next_output_bytes;
                     matches.push(SearchMatch {
                         path: relative_path.clone(),
                         line: line_index as u64 + 1,
                         column: column as u64 + 1,
                         text: match_text.to_owned(),
                     });
-                    output_bytes += match_text.len() as u64;
-                    if output_bytes > limits.max_search_output_bytes as u64 {
-                        stop_search!(TruncationReason::OutputBudget);
-                    }
                     if matches.len() >= input.max_results {
                         stop_search!(TruncationReason::MatchLimit);
                     }
                 }
             }
         }
+    }
+    if control.is_cancelled() {
+        return SearchOutcome::Cancelled;
     }
     matches.sort_by(compare_matches);
     SearchOutcome::Success {
@@ -408,11 +517,12 @@ fn compare_matches(a: &SearchMatch, b: &SearchMatch) -> std::cmp::Ordering {
 #[cfg(test)]
 mod tests {
     use super::{
-        SearchInput, SearchOutcome, TruncationReason, parse_search_input,
-        search,
+        SearchCancellation, SearchInput, SearchOutcome, TruncationReason,
+        parse_search_input, search, search_with_control,
     };
     use crate::test_support::unique;
     use siralos_core::workspace::bounds::WORKSPACE_LIMITS;
+    use std::cell::Cell;
 
     fn workspace() -> std::path::PathBuf {
         let base = std::env::temp_dir().join(format!(
@@ -480,6 +590,40 @@ mod tests {
         assert!(truncated);
         assert_eq!(truncation_reason, Some(TruncationReason::MatchLimit));
         assert_eq!(matches.len(), 1);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    struct FlippingCancellation {
+        checks: Cell<usize>,
+        cancel_after: usize,
+    }
+
+    impl SearchCancellation for FlippingCancellation {
+        fn is_cancelled(&self) -> bool {
+            let check = self.checks.get();
+            self.checks.set(check + 1);
+            check >= self.cancel_after
+        }
+    }
+
+    #[test]
+    fn live_cancellation_is_polled_during_traversal() {
+        let base = workspace();
+        let input = SearchInput {
+            query: "needle".to_owned(),
+            path: ".".to_owned(),
+            max_results: WORKSPACE_LIMITS.max_search_matches,
+        };
+        let cancellation =
+            FlippingCancellation { checks: Cell::new(0), cancel_after: 16 };
+        let outcome = search_with_control(
+            &base,
+            &input,
+            &WORKSPACE_LIMITS,
+            &cancellation,
+        );
+        assert!(matches!(outcome, SearchOutcome::Cancelled));
+        assert!(cancellation.checks.get() > 16);
         let _ = std::fs::remove_dir_all(&base);
     }
 

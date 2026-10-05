@@ -22,9 +22,81 @@ use siralos_core::context::ContextPolicy;
 use siralos_core::tool::capability::CapabilityId;
 use siralos_core::tool::permission::PermissionRule;
 use std::path::Path;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+
+/// Filesystem identity evidence captured with one profile revision.
+///
+/// Content hashes cannot distinguish an A→B→A sequence when a filesystem
+/// restores the same bytes. The portable evidence below is deliberately
+/// fail-closed: when the platform cannot provide it, the snapshot is not
+/// bindable and cannot authorize a write. Unix adds the stable device/inode
+/// pair and change times; other targets use the strongest stable std metadata
+/// available without enabling an unstable platform API.
+#[derive(Clone, PartialEq, Eq)]
+struct ProfileFileIdentity {
+    length: u64,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+    #[cfg(unix)]
+    modified_seconds: i64,
+    #[cfg(unix)]
+    modified_nanoseconds: i64,
+    #[cfg(unix)]
+    changed_seconds: i64,
+    #[cfg(unix)]
+    changed_nanoseconds: i64,
+    #[cfg(not(unix))]
+    modified: Option<std::time::SystemTime>,
+    #[cfg(not(unix))]
+    created: Option<std::time::SystemTime>,
+}
+
+fn profile_file_identity(
+    metadata: &std::fs::Metadata,
+) -> Option<ProfileFileIdentity> {
+    if !metadata.is_file() {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Some(ProfileFileIdentity {
+            length: metadata.len(),
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            modified_seconds: metadata.mtime(),
+            modified_nanoseconds: metadata.mtime_nsec(),
+            changed_seconds: metadata.ctime(),
+            changed_nanoseconds: metadata.ctime_nsec(),
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let modified = metadata.modified().ok();
+        let created = metadata.created().ok();
+        if modified.is_none() && created.is_none() {
+            return None;
+        }
+        Some(ProfileFileIdentity { length: metadata.len(), modified, created })
+    }
+}
 
 /// Maximum complete profile-document size in UTF-8 bytes.
-pub const MAX_PROFILE_DOCUMENT_BYTES: usize = 16 * 1024;
+pub const MAX_PROFILE_DOCUMENT_BYTES: usize =
+    crate::domain::manifest::MAX_SIRALOS_TOML_BYTES;
+/// Maximum number of skill names selected by one profile.
+pub const MAX_PROFILE_SKILL_ENTRIES: usize = 128;
+/// Maximum UTF-8 bytes in one selected skill name.
+pub const MAX_PROFILE_SKILL_NAME_BYTES: usize = 128;
+/// Maximum number of selected plugin ids in one profile.
+pub const MAX_PROFILE_PLUGIN_ENTRIES: usize = 16;
+/// Maximum bytes in one selected plugin id.
+pub const MAX_PROFILE_PLUGIN_ID_BYTES: usize = 64;
 
 /// A typed profile-document parse failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +130,228 @@ pub enum WorkspaceProfileLoad {
     },
 }
 
+/// One exact profile-document read and its parse outcome. The raw bytes stay
+/// private so diagnostics cannot accidentally persist a credential; callers
+/// receive only the digest/length and detached parsed load state.
+#[derive(Clone)]
+pub struct WorkspaceProfileSnapshot {
+    load: WorkspaceProfileLoad,
+    raw_sha256: String,
+    raw_len: usize,
+    // Whether the target existed when this snapshot was observed. This is
+    // separate from `WorkspaceProfileLoad::Absent`, because an empty present
+    // file has no profile but must not authorize an absent-target commit.
+    present: bool,
+    // Filesystem identity evidence for a present target. It is deliberately
+    // private and is carried only into a one-shot write token.
+    file_identity: Option<ProfileFileIdentity>,
+    // A snapshot may be produced by a failed lstat/read. Such a snapshot must
+    // not become a write expectation: an absent-file digest would otherwise
+    // look like permission to create a file after an unreadable target.
+    bindable: bool,
+    // All tokens minted from this observation share this gate. Keeping the
+    // gate on the snapshot prevents two independent `write_token()` calls
+    // from replaying the same observed revision.
+    write_authority: Arc<AtomicBool>,
+}
+
+impl PartialEq for WorkspaceProfileSnapshot {
+    fn eq(&self, other: &Self) -> bool {
+        self.load == other.load
+            && self.raw_sha256 == other.raw_sha256
+            && self.raw_len == other.raw_len
+            && self.present == other.present
+            && self.file_identity == other.file_identity
+            && self.bindable == other.bindable
+    }
+}
+
+impl Eq for WorkspaceProfileSnapshot {}
+
+/// A secret-free, one-shot identity for one observed profile-document
+/// revision.
+///
+/// This is the only profile write input that may cross the frontend/worker
+/// boundary. It contains no parsed profile fields, raw bytes, credential, or
+/// endpoint. A writer must compare the current bounded bytes and filesystem
+/// identity with this token before it parses or replaces them. Clones share
+/// the one-shot gate: an attempted mutation consumes the authority, so a
+/// retry must reload and observe a new revision.
+#[derive(Clone)]
+pub struct WorkspaceProfileWriteToken {
+    raw_sha256: String,
+    raw_len: usize,
+    present: bool,
+    file_identity: Option<ProfileFileIdentity>,
+    consumed: Arc<AtomicBool>,
+}
+
+impl PartialEq for WorkspaceProfileWriteToken {
+    fn eq(&self, other: &Self) -> bool {
+        self.raw_sha256 == other.raw_sha256
+            && self.raw_len == other.raw_len
+            && self.present == other.present
+            && self.file_identity == other.file_identity
+            && self.consumed.load(Ordering::Acquire)
+                == other.consumed.load(Ordering::Acquire)
+    }
+}
+
+impl Eq for WorkspaceProfileWriteToken {}
+
+impl std::fmt::Debug for WorkspaceProfileWriteToken {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        formatter
+            .debug_struct("WorkspaceProfileWriteToken")
+            .field("raw_sha256", &self.raw_sha256)
+            .field("raw_len", &self.raw_len)
+            .field("present", &self.present)
+            .field("identity_present", &self.file_identity.is_some())
+            .field("consumed", &self.consumed.load(Ordering::Acquire))
+            .finish()
+    }
+}
+
+impl WorkspaceProfileWriteToken {
+    /// Return whether `bytes` are the exact content represented by this token.
+    /// `None` means the target was absent when it was observed; an empty file
+    /// is therefore not equivalent to an absent file.
+    #[must_use]
+    pub fn matches_bytes(&self, bytes: Option<&[u8]>) -> bool {
+        match bytes {
+            None => !self.present,
+            Some(bytes) => {
+                self.present
+                    && self.raw_len == bytes.len()
+                    && self.raw_sha256
+                        == siralos_core::identity::sha256_hex(bytes)
+            }
+        }
+    }
+
+    /// Return whether the path and bytes still represent the exact observed
+    /// filesystem revision. This catches a normal A→B→A replacement even
+    /// when the final bytes hash back to the original content. The atomic
+    /// commit primitive separately documents its residual pathname race; this
+    /// check is the immediately preceding identity gate, not a cryptographic
+    /// claim about a hostile process racing `rename`.
+    #[must_use]
+    pub fn matches_path(&self, path: &Path, bytes: Option<&[u8]>) -> bool {
+        if !self.matches_bytes(bytes) {
+            return false;
+        }
+        match (&self.file_identity, bytes) {
+            (None, None) => matches!(
+                std::fs::symlink_metadata(path),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound
+            ),
+            (Some(expected), Some(_)) => {
+                let Ok(metadata) = std::fs::symlink_metadata(path) else {
+                    return false;
+                };
+                !metadata.file_type().is_symlink()
+                    && profile_file_identity(&metadata).as_ref()
+                        == Some(expected)
+            }
+            _ => false,
+        }
+    }
+
+    /// Consume this one-shot write authority.
+    ///
+    /// A token is deliberately not renewable: a failed or stale attempt must
+    /// be followed by a fresh snapshot, rather than replaying an old approval
+    /// after an intervening edit.
+    pub fn consume(&self) -> Result<(), String> {
+        if self.consumed.swap(true, Ordering::AcqRel) {
+            Err("profile write authority is one-shot; reload before retrying"
+                .to_owned())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Whether this token has already been consumed by a mutation attempt.
+    #[must_use]
+    pub fn is_consumed(&self) -> bool {
+        self.consumed.load(Ordering::Acquire)
+    }
+}
+
+impl std::fmt::Debug for WorkspaceProfileSnapshot {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        let load_kind = match &self.load {
+            WorkspaceProfileLoad::Absent => "absent",
+            WorkspaceProfileLoad::Record(_) => "record",
+            WorkspaceProfileLoad::Invalid { .. } => "invalid",
+        };
+        formatter
+            .debug_struct("WorkspaceProfileSnapshot")
+            // `WorkspaceProfileLoad::Record` contains the declared credential;
+            // never derive snapshot debug output from that value.
+            .field("load_kind", &load_kind)
+            .field("raw_sha256", &self.raw_sha256)
+            .field("raw_len", &self.raw_len)
+            .field("present", &self.present)
+            .field("identity_present", &self.file_identity.is_some())
+            .finish()
+    }
+}
+
+impl WorkspaceProfileSnapshot {
+    /// The detached parse outcome.
+    #[must_use]
+    pub fn load(&self) -> &WorkspaceProfileLoad {
+        &self.load
+    }
+
+    /// SHA-256 over the exact bytes read once from `siralos.toml`.
+    #[must_use]
+    pub fn raw_sha256(&self) -> &str {
+        &self.raw_sha256
+    }
+
+    /// Exact byte length of the source document.
+    #[must_use]
+    pub fn raw_len(&self) -> usize {
+        self.raw_len
+    }
+
+    /// Project this observed revision into a secret-free write token.
+    ///
+    /// `None` means the source could not be read completely enough to bind a
+    /// later mutation to it (for example an unreadable or oversize target).
+    /// Callers must refuse such a snapshot rather than treating it as absent.
+    #[must_use]
+    pub fn write_token(&self) -> Option<WorkspaceProfileWriteToken> {
+        self.bindable.then(|| WorkspaceProfileWriteToken {
+            raw_sha256: self.raw_sha256.clone(),
+            raw_len: self.raw_len,
+            present: self.present,
+            file_identity: self.file_identity.clone(),
+            consumed: Arc::clone(&self.write_authority),
+        })
+    }
+}
+
+/// Load only a secret-free write identity for the workspace profile.
+///
+/// This convenience seam is for frontends that must retain a revision across
+/// an approval or form-completion boundary without carrying the parsed
+/// profile (which may contain a credential) into their state.
+#[must_use]
+pub fn load_workspace_profile_write_token(
+    root: &Path,
+) -> Option<WorkspaceProfileWriteToken> {
+    load_workspace_profile_snapshot(root).write_token()
+}
+
 /// Load the workspace profile from `<root>/siralos.toml`. The workspace
 /// record file is shared with `[plugins]` (decision 38/39), so this
 /// reader validates only the `[profile]` subtree and treats a missing
@@ -72,9 +366,9 @@ pub fn load_workspace_profile(root: &Path) -> WorkspaceProfileLoad {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return WorkspaceProfileLoad::Absent;
         }
-        Err(error) => {
+        Err(_error) => {
             return WorkspaceProfileLoad::Invalid {
-                diagnostic: format!("siralos.toml is unreadable: {error}"),
+                diagnostic: "siralos.toml is unreadable".to_owned(),
             };
         }
     };
@@ -98,9 +392,9 @@ pub fn load_workspace_profile(root: &Path) -> WorkspaceProfileLoad {
                 diagnostic: "siralos.toml must be a regular file; refusing symlink or special file".to_owned(),
             };
         }
-        BoundedFileRead::IoError(error) => {
+        BoundedFileRead::IoError(_error) => {
             return WorkspaceProfileLoad::Invalid {
-                diagnostic: format!("siralos.toml is unreadable: {error}"),
+                diagnostic: "siralos.toml is unreadable".to_owned(),
             };
         }
     };
@@ -115,18 +409,190 @@ pub fn load_workspace_profile(root: &Path) -> WorkspaceProfileLoad {
     load_workspace_profile_text(&text)
 }
 
+/// Parse exact already-read profile bytes without touching the filesystem.
+/// Writers use this for staged-file verification so credential-bearing bytes
+/// are never copied into a second temporary directory.
+#[must_use]
+pub fn parse_workspace_profile_bytes(bytes: &[u8]) -> WorkspaceProfileLoad {
+    if bytes.len() > MAX_PROFILE_DOCUMENT_BYTES {
+        return WorkspaceProfileLoad::Invalid {
+            diagnostic: format!(
+                "siralos.toml exceeds the {MAX_SIRALOS_TOML_BYTES}-byte bound."
+            ),
+        };
+    }
+    match String::from_utf8(bytes.to_vec()) {
+        Ok(text) => load_workspace_profile_text(&text),
+        Err(_) => WorkspaceProfileLoad::Invalid {
+            diagnostic: "siralos.toml is not valid UTF-8.".to_owned(),
+        },
+    }
+}
+
+/// composition/reload seam; callers retain the returned digest and use this
+/// same object for all decisions instead of re-reading a second revision.
+#[must_use]
+pub fn load_workspace_profile_snapshot(
+    root: &Path,
+) -> WorkspaceProfileSnapshot {
+    let path = root.join(SIRALOS_TOML_FILE_NAME);
+    let metadata = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return WorkspaceProfileSnapshot {
+                load: WorkspaceProfileLoad::Absent,
+                raw_sha256: siralos_core::identity::sha256_hex(&[]),
+                raw_len: 0,
+                present: false,
+                file_identity: None,
+                bindable: true,
+                write_authority: Arc::new(AtomicBool::new(false)),
+            };
+        }
+        Err(_error) => {
+            return WorkspaceProfileSnapshot {
+                load: WorkspaceProfileLoad::Invalid {
+                    diagnostic: "siralos.toml is unreadable".to_owned(),
+                },
+                raw_sha256: siralos_core::identity::sha256_hex(&[]),
+                raw_len: 0,
+                present: true,
+                file_identity: None,
+                bindable: false,
+                write_authority: Arc::new(AtomicBool::new(false)),
+            };
+        }
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return WorkspaceProfileSnapshot {
+            load: WorkspaceProfileLoad::Invalid {
+                diagnostic: "siralos.toml must be a regular file; refusing symlink or special file".to_owned(),
+            },
+            raw_sha256: siralos_core::identity::sha256_hex(&[]),
+            raw_len: 0,
+            present: true,
+            file_identity: None,
+            bindable: false,
+            write_authority: Arc::new(AtomicBool::new(false)),
+        };
+    }
+    let file_identity = profile_file_identity(&metadata);
+    let bytes = match read_complete_file_bounded(&path, MAX_SIRALOS_TOML_BYTES)
+    {
+        BoundedFileRead::Complete(bytes) => bytes,
+        BoundedFileRead::TooLarge => {
+            return WorkspaceProfileSnapshot {
+                load: WorkspaceProfileLoad::Invalid {
+                    diagnostic: format!(
+                        "siralos.toml exceeds the {MAX_SIRALOS_TOML_BYTES}-byte bound."
+                    ),
+                },
+                raw_sha256: String::new(),
+                raw_len: 0,
+                present: true,
+                file_identity: None,
+                bindable: false,
+                write_authority: Arc::new(AtomicBool::new(false)),
+            };
+        }
+        BoundedFileRead::NotReadable => {
+            return WorkspaceProfileSnapshot {
+                load: WorkspaceProfileLoad::Invalid {
+                    diagnostic: "siralos.toml must be a regular file; refusing symlink or special file".to_owned(),
+                },
+                raw_sha256: String::new(),
+                raw_len: 0,
+                present: true,
+                file_identity: None,
+                bindable: false,
+                write_authority: Arc::new(AtomicBool::new(false)),
+            };
+        }
+        BoundedFileRead::IoError(_error) => {
+            return WorkspaceProfileSnapshot {
+                load: WorkspaceProfileLoad::Invalid {
+                    diagnostic: "siralos.toml is unreadable".to_owned(),
+                },
+                raw_sha256: String::new(),
+                raw_len: 0,
+                present: true,
+                file_identity: None,
+                bindable: false,
+                write_authority: Arc::new(AtomicBool::new(false)),
+            };
+        }
+    };
+    let final_metadata = match std::fs::symlink_metadata(&path) {
+        Ok(metadata)
+            if !metadata.file_type().is_symlink() && metadata.is_file() =>
+        {
+            metadata
+        }
+        _ => {
+            return WorkspaceProfileSnapshot {
+                load: WorkspaceProfileLoad::Invalid {
+                    diagnostic: "siralos.toml changed while being read"
+                        .to_owned(),
+                },
+                raw_sha256: String::new(),
+                raw_len: 0,
+                present: true,
+                file_identity: None,
+                bindable: false,
+                write_authority: Arc::new(AtomicBool::new(false)),
+            };
+        }
+    };
+    let final_identity = profile_file_identity(&final_metadata);
+    if file_identity != final_identity {
+        return WorkspaceProfileSnapshot {
+            load: WorkspaceProfileLoad::Invalid {
+                diagnostic: "siralos.toml changed while being read".to_owned(),
+            },
+            raw_sha256: String::new(),
+            raw_len: 0,
+            present: true,
+            file_identity: None,
+            bindable: false,
+            write_authority: Arc::new(AtomicBool::new(false)),
+        };
+    }
+    let raw_len = bytes.len();
+    let raw_sha256 = siralos_core::identity::sha256_hex(&bytes);
+    let load = match String::from_utf8(bytes.clone()) {
+        Ok(text) => load_workspace_profile_text(&text),
+        Err(_) => WorkspaceProfileLoad::Invalid {
+            diagnostic: "siralos.toml is not valid UTF-8.".to_owned(),
+        },
+    };
+    let bindable = file_identity.is_some();
+    WorkspaceProfileSnapshot {
+        load,
+        raw_sha256,
+        raw_len,
+        present: true,
+        file_identity,
+        bindable,
+        write_authority: Arc::new(AtomicBool::new(false)),
+    }
+}
+
 fn load_workspace_profile_text(text: &str) -> WorkspaceProfileLoad {
+    if text.len() > MAX_PROFILE_DOCUMENT_BYTES {
+        return WorkspaceProfileLoad::Invalid {
+            diagnostic: format!(
+                "siralos.toml exceeds the {MAX_PROFILE_DOCUMENT_BYTES}-byte bound."
+            ),
+        };
+    }
     if text.trim().is_empty() {
         return WorkspaceProfileLoad::Absent;
     }
     let value: toml::Value = match toml::from_str(text) {
         Ok(value) => value,
-        Err(error) => {
+        Err(_) => {
             return WorkspaceProfileLoad::Invalid {
-                diagnostic: format!(
-                    "siralos.toml does not parse: {}",
-                    error.message()
-                ),
+                diagnostic: "siralos.toml does not parse".to_owned(),
             };
         }
     };
@@ -158,14 +624,14 @@ pub fn parse_profile_document(
             "The profile document exceeds the {MAX_PROFILE_DOCUMENT_BYTES}-byte bound."
         )));
     }
-    let value: toml::Value =
-        toml::from_str(raw).map_err(|err| error(err.message()))?;
+    let value: toml::Value = toml::from_str(raw)
+        .map_err(|_| error("The profile document TOML syntax is invalid."))?;
     let root = value
         .as_table()
         .ok_or_else(|| error("The profile document must be a table."))?;
     for key in root.keys() {
         if key != "profile" {
-            return Err(error(format!("Unknown document field {key:?}.")));
+            return Err(error("Unknown document field."));
         }
     }
     let Some(profile) = value.get("profile") else {
@@ -194,9 +660,7 @@ fn parse_context_control(
     };
     for key in table.keys() {
         if key != "kind" && key != "digest" {
-            return Err(error(format!(
-                "Unknown profile context field {key:?}."
-            )));
+            return Err(error("Unknown profile context field."));
         }
     }
     let Some(kind) = table.get("kind").and_then(toml::Value::as_str) else {
@@ -254,16 +718,21 @@ pub fn parse_profile_value(
             && key != "protocol"
             && key != "model_display_name"
         {
-            return Err(error(format!("Unknown profile field {key:?}.")));
+            return Err(error("Unknown profile field."));
         }
     }
     let Some(name) = profile.get("name").and_then(toml::Value::as_str) else {
         return Err(error("The [profile] table requires a string name."));
     };
     if name.len() > MAX_PROFILE_NAME_BYTES {
-        return Err(error(format!(
-            "The profile name exceeds the {MAX_PROFILE_NAME_BYTES}-byte bound."
-        )));
+        // Bound and validity are distinct diagnostics: the bound case names the
+        // limit, and neither message echoes the rejected name.
+        return Err(error("The profile name exceeds the 64-byte bound."));
+    }
+    if name.is_empty() || name.chars().any(char::is_control) {
+        return Err(error(
+            "The profile name must be non-empty and control-free.",
+        ));
     }
     let mut overlay = Vec::new();
     if let Some(permissions) = profile.get("permissions") {
@@ -278,15 +747,18 @@ pub fn parse_profile_value(
             )));
         }
         for (capability, rule) in table {
-            let capability_id = CapabilityId::parse(capability)
-                .map_err(|err| error(err.to_string()))?;
+            let capability_id =
+                CapabilityId::parse(capability).map_err(|_| {
+                    error("The profile contains an invalid capability id.")
+                })?;
             let Some(rule_text) = rule.as_str() else {
-                return Err(error(format!(
-                    "The rule for capability {capability:?} must be a string."
-                )));
+                return Err(error(
+                    "The rule for a profile capability must be a string."
+                        .to_owned(),
+                ));
             };
             let requested = PermissionRule::parse(rule_text).ok_or_else(|| {
-                error(format!("The rule for capability {capability:?} must be one of allow, ask, deny."))
+                error("The rule for a profile capability must be one of allow, ask, deny.")
             })?;
             overlay.push(ProfileOverlayEntry {
                 capability: capability_id,
@@ -302,12 +774,29 @@ pub fn parse_profile_value(
             ));
         };
         let mut ids = Vec::new();
+        if list.len() > MAX_PROFILE_PLUGIN_ENTRIES {
+            return Err(error(
+                "The [profile.plugins] selection exceeds its entry bound."
+                    .to_owned(),
+            ));
+        }
+        let mut seen = std::collections::BTreeSet::new();
         for id in list {
             let Some(text) = id.as_str() else {
                 return Err(error(
                     "Each profile plugin id must be a string.".to_owned(),
                 ));
             };
+            if text.is_empty()
+                || text.len() > MAX_PROFILE_PLUGIN_ID_BYTES
+                || text.chars().any(char::is_control)
+                || !seen.insert(text)
+            {
+                return Err(error(
+                    "Each profile plugin id must be a unique printable name."
+                        .to_owned(),
+                ));
+            }
             ids.push(text.to_owned());
         }
         plugins = Some(ids);
@@ -322,12 +811,29 @@ pub fn parse_profile_value(
             return Err(error("The [profile.skills] entry must be an array."));
         };
         let mut names = Vec::new();
+        if list.len() > MAX_PROFILE_SKILL_ENTRIES {
+            return Err(error(
+                "The [profile.skills] selection exceeds its entry bound."
+                    .to_owned(),
+            ));
+        }
+        let mut seen = std::collections::BTreeSet::new();
         for skill_name in list {
             let Some(text) = skill_name.as_str() else {
                 return Err(error(
                     "Each profile skill name must be a string.".to_owned(),
                 ));
             };
+            if text.is_empty()
+                || text.len() > MAX_PROFILE_SKILL_NAME_BYTES
+                || text.chars().any(char::is_control)
+                || !seen.insert(text)
+            {
+                return Err(error(
+                    "Each profile skill name must be a unique printable name."
+                        .to_owned(),
+                ));
+            }
             names.push(text.to_owned());
         }
         skills = Some(names);
@@ -408,9 +914,9 @@ pub fn parse_profile_value(
         };
         for key in table.keys() {
             if key != "enabled" {
-                return Err(error(format!(
-                    "Unknown profile context_system field {key:?}."
-                )));
+                return Err(error(
+                    "Unknown profile context_system field.".to_owned(),
+                ));
             }
         }
         let Some(flag) = table.get("enabled").and_then(toml::Value::as_bool)
@@ -484,18 +990,50 @@ pub fn parse_profile_value(
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_PROFILE_DOCUMENT_BYTES, parse_profile_document};
+    use super::{
+        MAX_PROFILE_DOCUMENT_BYTES, SIRALOS_TOML_FILE_NAME,
+        WorkspaceProfileLoad, load_workspace_profile_snapshot,
+        parse_profile_document,
+    };
     use siralos_core::tool::permission::PermissionRule;
 
     fn workspace() -> std::path::PathBuf {
+        // Nanosecond time alone can repeat across parallel test threads; the
+        // counter makes each fixture directory unique within the process.
+        static NEXT_NONCE: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
-        let path = std::env::temp_dir()
-            .join(format!("siralos-profile-tests-{nonce}"));
+        let sequence =
+            NEXT_NONCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "siralos-profile-tests-{}-{nonce}-{sequence}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&path).expect("temp root");
         path
+    }
+
+    #[test]
+    fn profile_debug_never_exposes_literal_credentials_or_endpoints() {
+        let root = workspace();
+        let document = "[profile]\nname = \"dev\"\ncredential = \"key:literal-secret\"\nendpoint = \"https://user:pass@example.com/v1?token=top-secret\"\n";
+        std::fs::write(root.join(SIRALOS_TOML_FILE_NAME), document)
+            .expect("profile document");
+        let snapshot = load_workspace_profile_snapshot(&root);
+        let snapshot_debug = format!("{snapshot:?}");
+        let load_debug = match snapshot.load() {
+            WorkspaceProfileLoad::Record(record) => format!("{record:?}"),
+            other => panic!("expected record, got {other:?}"),
+        };
+        for rendered in [snapshot_debug, load_debug] {
+            assert!(!rendered.contains("literal-secret"), "{rendered}");
+            assert!(!rendered.contains("top-secret"), "{rendered}");
+            assert!(!rendered.contains("user:pass"), "{rendered}");
+        }
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -597,7 +1135,14 @@ mod tests {
         let document = format!("[profile]\nname = \"{name}\"\n");
         let error =
             parse_profile_document(&document).expect_err("name refused");
-        assert!(error.message.contains("byte bound"));
+        // The bound case names the limit and never the rejected name; the
+        // control-free case is a distinct diagnostic.
+        assert!(error.message.contains("64-byte bound"));
+        assert!(!error.message.contains(&name));
+        let control = "[profile]\nname = \"a\\u0001b\"\n";
+        let error = parse_profile_document(control)
+            .expect_err("control character refused");
+        assert!(error.message.contains("control-free"));
         let oversized = format!(
             "[profile]\nname = \"big\"\n\n[profile.permissions]\n\"c.x\" = \"deny\"\n\n[padding]\nvalue = \"{}\"\n",
             "p".repeat(MAX_PROFILE_DOCUMENT_BYTES)
@@ -643,9 +1188,13 @@ plugins = ["guest", "alpha"]
 name = "dev"
 plugins = ["guest", "guest"]
 "#;
-        let record = parse_profile_document(duplicate).expect("shape ok");
-        let error = record.validate().expect_err("dup refused by core");
-        assert!(error.message.contains("more than once"));
+        let error = parse_profile_document(duplicate)
+            .expect_err("dup refused at parse");
+        assert!(
+            error.message.contains("unique printable name"),
+            "{}",
+            error.message
+        );
         let malformed = r#"
 [profile]
 name = "dev"
@@ -958,5 +1507,56 @@ widgets = ["x"]
             record.protocol,
             siralos_core::composition::Protocol::AnthropicMessages
         );
+    }
+
+    #[test]
+    fn write_token_distinguishes_absent_from_empty_present() {
+        let root = workspace();
+        let absent = super::load_workspace_profile_write_token(&root)
+            .expect("absent token");
+        assert!(absent.matches_bytes(None));
+        assert!(!absent.matches_bytes(Some(&[])));
+
+        std::fs::write(root.join("siralos.toml"), b"").expect("empty profile");
+        let empty = super::load_workspace_profile_write_token(&root)
+            .expect("empty-present token");
+        assert!(empty.matches_bytes(Some(&[])));
+        assert!(!empty.matches_bytes(None));
+    }
+
+    #[test]
+    fn write_token_rejects_aba_identity_and_is_one_shot() {
+        let root = workspace();
+        let path = root.join("siralos.toml");
+        let original = b"[profile]\nname = \"dev\"\nmodel = \"a\"\n";
+        std::fs::write(&path, original).expect("write original");
+        let snapshot = super::load_workspace_profile_snapshot(&root);
+        let token = snapshot.write_token().expect("original token");
+        let sibling = snapshot.write_token().expect("sibling token");
+        let cloned_snapshot = snapshot.clone();
+        let cloned_sibling =
+            cloned_snapshot.write_token().expect("cloned token");
+        assert!(token.matches_path(&path, Some(original)));
+
+        // A transient different revision followed by byte-identical A is
+        // still a different filesystem observation. Recreating the path gives
+        // the portable identity evidence a deterministic A→B→A case.
+        std::fs::write(&path, b"[profile]\nname = \"dev\"\nmodel = \"b\"\n")
+            .expect("write intervening");
+        std::fs::remove_file(&path).expect("remove intervening");
+        std::fs::write(&path, original).expect("restore original bytes");
+        assert!(
+            !token.matches_path(&path, Some(original)),
+            "content equality must not resurrect an ABA-stale write authority"
+        );
+
+        assert!(token.consume().is_ok());
+        assert!(sibling.consume().is_err());
+        assert!(cloned_sibling.consume().is_err());
+
+        let one_shot = super::load_workspace_profile_write_token(&root)
+            .expect("fresh token");
+        assert!(one_shot.consume().is_ok());
+        assert!(one_shot.consume().is_err());
     }
 }

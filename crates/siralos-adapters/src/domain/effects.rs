@@ -8,7 +8,7 @@
 //! denied by policy. A denial is typed and never escalates.
 
 use siralos_core::domain::capability::CapabilityGrant;
-use siralos_core::domain::failure::ResourceExceededKind;
+use siralos_core::domain::failure::{DomainFailure, ResourceExceededKind};
 
 use crate::workspace::read::{ReadInput, ReadMode, read_file};
 use crate::workspace::resolve::resolve_workspace_path;
@@ -19,6 +19,83 @@ use siralos_core::workspace::bounds::{WORKSPACE_LIMITS, WorkspaceLimits};
 /// declares the same vocabulary structurally.
 pub const CAPABILITY_WORKSPACE_READ: &str = "workspace-read";
 pub const CAPABILITY_PROCESS_EXEC: &str = "process-exec";
+
+/// Maximum workspace-relative path bytes accepted at the effect boundary.
+pub const MAX_EFFECT_PATH_BYTES: usize = 1024;
+
+/// Maximum process command bytes accepted at the effect boundary.
+pub const MAX_EFFECT_COMMAND_BYTES: usize = 8192;
+
+/// Host ceilings for mediated effect bounds. [`EffectMediationBounds`] is a
+/// public struct, so a direct caller could otherwise set `usize::MAX`/`u64::MAX`
+/// and bypass every production ceiling by constructing the mediator itself.
+pub const MAX_MEDIATED_ANSWER_BYTES: usize = 1024 * 1024;
+/// Upper bound for one mediated workspace read.
+pub const MAX_MEDIATED_WORKSPACE_READ_BYTES: u64 = 64 * 1024 * 1024;
+/// Upper bound for mediated host calls per activation session.
+pub const MAX_MEDIATED_HOST_CALLS: u32 = 10_000;
+
+/// Clamp caller-supplied bounds to the Host ceilings.
+#[must_use]
+pub fn clamped_mediation_bounds(
+    mut bounds: EffectMediationBounds,
+) -> EffectMediationBounds {
+    bounds.max_answer_bytes =
+        bounds.max_answer_bytes.min(MAX_MEDIATED_ANSWER_BYTES);
+    bounds.max_workspace_read_bytes =
+        bounds.max_workspace_read_bytes.min(MAX_MEDIATED_WORKSPACE_READ_BYTES);
+    bounds.max_host_calls = bounds.max_host_calls.min(MAX_MEDIATED_HOST_CALLS);
+    bounds
+}
+
+/// Validate an untrusted effect request before any WIT-side conversion.
+///
+/// The bounds are intentionally fixed Host ceilings rather than
+/// caller-controlled values: an import or a guest export must not be able
+/// to turn an arbitrary string into a large host allocation merely by
+/// crossing the component boundary. The workspace read's requested byte
+/// count is capped separately by [`EffectMediationBounds`].
+pub(crate) fn validate_effect_request(
+    request: &crate::domain::host::EffectRequest,
+) -> Result<(), DomainFailure> {
+    match request {
+        crate::domain::host::EffectRequest::WorkspaceRead((
+            path,
+            max_bytes,
+        )) => {
+            if path.len() > MAX_EFFECT_PATH_BYTES {
+                return Err(DomainFailure::InvalidInput {
+                    reason:
+                        "effect workspace path exceeds the host byte bound"
+                            .to_owned(),
+                });
+            }
+            if path.is_empty() || *max_bytes == 0 {
+                return Err(DomainFailure::InvalidInput {
+                    reason: "invalid workspace-read request".to_owned(),
+                });
+            }
+            if siralos_core::workspace::path::validate_relative_path(path)
+                .is_err()
+            {
+                return Err(DomainFailure::InvalidInput {
+                    reason: "invalid workspace-read path".to_owned(),
+                });
+            }
+        }
+        crate::domain::host::EffectRequest::ProcessExec(command) => {
+            if command.len() > MAX_EFFECT_COMMAND_BYTES
+                || command.as_bytes().contains(&0)
+                || command.trim().is_empty()
+            {
+                return Err(DomainFailure::InvalidInput {
+                    reason: "invalid process-exec request".to_owned(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
 
 /// Bounds applied by the effect mediator.
 #[derive(Debug, Clone, Copy)]
@@ -75,6 +152,9 @@ impl EffectMediator {
         root: std::path::PathBuf,
         bounds: EffectMediationBounds,
     ) -> Self {
+        // The public constructor is an authority surface: clamp before the
+        // counters are derived from them.
+        let bounds = clamped_mediation_bounds(bounds);
         Self {
             grant,
             root,
@@ -82,6 +162,13 @@ impl EffectMediator {
             remaining_calls: bounds.max_host_calls,
             cancelled: false,
         }
+    }
+
+    /// The effective, clamped bounds this session runs under.
+    #[must_use]
+    #[cfg(test)]
+    pub fn bounds(&self) -> EffectMediationBounds {
+        self.bounds
     }
 
     /// Cancel further mediated effects.
@@ -105,7 +192,15 @@ impl EffectMediator {
                 ResourceExceededKind::HostCalls,
             );
         }
+        // Every import call, including a malformed or oversized request,
+        // consumes the Host-call budget. Validation still precedes any
+        // filesystem work or capability-dependent effect.
         self.remaining_calls -= 1;
+        if validate_effect_request(request).is_err() {
+            return EffectMediation::Answer(MediatedAnswer::Error(
+                "effect request rejected by host".to_owned(),
+            ));
+        }
         match request {
             crate::domain::host::EffectRequest::WorkspaceRead((
                 path,
@@ -162,13 +257,26 @@ impl EffectMediator {
                 ) {
                     crate::workspace::read::ReadOutcome::Success {
                         content,
+                        truncated,
                         ..
                     } => {
-                        let mut answer = content;
-                        if answer.len() > self.bounds.max_answer_bytes {
-                            answer.truncate(self.bounds.max_answer_bytes);
+                        if truncated {
+                            return EffectMediation::Answer(
+                                MediatedAnswer::Error(
+                                    "workspace read was truncated by the host bound"
+                                        .to_owned(),
+                                ),
+                            );
                         }
-                        EffectMediation::Answer(MediatedAnswer::Ok(answer))
+                        if content.len() > self.bounds.max_answer_bytes {
+                            return EffectMediation::Answer(
+                                MediatedAnswer::Error(
+                                    "workspace read exceeded the mediated answer bound"
+                                        .to_owned(),
+                                ),
+                            );
+                        }
+                        EffectMediation::Answer(MediatedAnswer::Ok(content))
                     }
                     crate::workspace::read::ReadOutcome::Denied {
                         message,
@@ -232,7 +340,9 @@ impl EffectMediator {
 mod tests {
     use super::{
         CAPABILITY_WORKSPACE_READ, EffectMediation, EffectMediationBounds,
-        EffectMediator, MediatedAnswer,
+        EffectMediator, MAX_EFFECT_COMMAND_BYTES, MAX_MEDIATED_ANSWER_BYTES,
+        MAX_MEDIATED_HOST_CALLS, MAX_MEDIATED_WORKSPACE_READ_BYTES,
+        MediatedAnswer,
     };
     use siralos_core::domain::capability::HostAuthority;
     use siralos_core::domain::failure::ResourceExceededKind;
@@ -330,6 +440,54 @@ mod tests {
     }
 
     #[test]
+    fn invalid_import_requests_still_consume_host_call_budget() {
+        let authority =
+            HostAuthority::parse(&[CAPABILITY_WORKSPACE_READ.to_owned()])
+                .unwrap();
+        let request =
+            siralos_core::domain::capability::CapabilityRequest::parse(&[
+                CAPABILITY_WORKSPACE_READ.to_owned(),
+            ])
+            .unwrap();
+        let grant = match siralos_core::domain::capability::decide_grant(
+            &request, &authority,
+        ) {
+            siralos_core::domain::capability::GrantDecision::Granted(
+                grant,
+            ) => grant,
+            siralos_core::domain::capability::GrantDecision::Denied {
+                ..
+            } => {
+                panic!("fixture grant must succeed");
+            }
+        };
+        let mut mediator = EffectMediator::new(
+            grant,
+            std::env::temp_dir(),
+            EffectMediationBounds {
+                max_answer_bytes: 4096,
+                max_workspace_read_bytes: 4096,
+                max_host_calls: 1,
+            },
+        );
+        let oversized = "x".repeat(MAX_EFFECT_COMMAND_BYTES + 1);
+        assert!(matches!(
+            mediator.mediate(
+                &crate::domain::host::EffectRequest::ProcessExec(oversized)
+            ),
+            EffectMediation::Answer(MediatedAnswer::Error(_))
+        ));
+        assert!(matches!(
+            mediator.mediate(
+                &crate::domain::host::EffectRequest::ProcessExec(
+                    "x".to_owned()
+                )
+            ),
+            EffectMediation::ResourceExceeded(ResourceExceededKind::HostCalls)
+        ));
+    }
+
+    #[test]
     fn cancelled_mediation_returns_cancelled() {
         let authority = HostAuthority::parse(&[]).unwrap();
         let request =
@@ -361,5 +519,41 @@ mod tests {
             &crate::domain::host::EffectRequest::ProcessExec("x".to_owned()),
         );
         assert_eq!(answer, EffectMediation::Answer(MediatedAnswer::Cancelled));
+    }
+
+    #[test]
+    fn public_constructor_clamps_unbounded_bounds() {
+        let authority = HostAuthority::parse(&[]).unwrap();
+        let request =
+            siralos_core::domain::capability::CapabilityRequest::parse(&[])
+                .unwrap();
+        let grant = match siralos_core::domain::capability::decide_grant(
+            &request, &authority,
+        ) {
+            siralos_core::domain::capability::GrantDecision::Granted(
+                grant,
+            ) => grant,
+            siralos_core::domain::capability::GrantDecision::Denied {
+                ..
+            } => {
+                panic!("empty grant must succeed");
+            }
+        };
+        let mediator = EffectMediator::new(
+            grant,
+            std::env::temp_dir(),
+            EffectMediationBounds {
+                max_answer_bytes: usize::MAX,
+                max_workspace_read_bytes: u64::MAX,
+                max_host_calls: u32::MAX,
+            },
+        );
+        let bounds = mediator.bounds();
+        assert_eq!(bounds.max_answer_bytes, MAX_MEDIATED_ANSWER_BYTES);
+        assert_eq!(
+            bounds.max_workspace_read_bytes,
+            MAX_MEDIATED_WORKSPACE_READ_BYTES
+        );
+        assert_eq!(bounds.max_host_calls, MAX_MEDIATED_HOST_CALLS);
     }
 }

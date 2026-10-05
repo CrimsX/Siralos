@@ -41,6 +41,37 @@ pub const CHECKPOINT_DIR_MAX_ENTRIES: usize = 3;
 /// Default checkpoint count bound for bounded enumeration.
 pub const DEFAULT_MAX_CHECKPOINTS: usize = 100;
 
+#[cfg(windows)]
+fn is_link_or_reparse(metadata: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    metadata.file_type().is_symlink()
+        || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_link_or_reparse(metadata: &std::fs::Metadata) -> bool {
+    metadata.file_type().is_symlink()
+}
+
+fn validate_checkpoint_directory(
+    path: &Path,
+) -> Result<std::fs::Metadata, CheckpointStoreError> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|_error| {
+        // The OS error text carries the absolute path; the report-safe
+        // projection must not.
+        CheckpointStoreError::Invalid(
+            "Checkpoint directory is unavailable".to_owned(),
+        )
+    })?;
+    if is_link_or_reparse(&metadata) || !metadata.is_dir() {
+        return Err(CheckpointStoreError::Invalid(
+            "Checkpoint directory must be a real directory".to_owned(),
+        ));
+    }
+    Ok(metadata)
+}
+
 /// Checkpoint id pattern (`cp_<hex-or-dash>`, at least 10 tail chars).
 pub fn is_valid_checkpoint_id(id: &str) -> bool {
     id.len() > 3
@@ -104,13 +135,31 @@ impl std::error::Error for CheckpointStoreError {}
 
 /// A bounded checkpoint inspection store over the reference storage
 /// layout. One clear owner per workspace checkpoint root.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CheckpointStore {
     workspace_root: PathBuf,
     checkpoint_root: PathBuf,
     workspace_fingerprint: String,
     max_preimage_bytes: u64,
     max_checkpoints: usize,
+}
+
+impl std::fmt::Debug for CheckpointStore {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        // Both roots are absolute host paths; a report-safe projection must
+        // never carry them.
+        formatter
+            .debug_struct("CheckpointStore")
+            .field("workspace_root", &"[ABSOLUTE]")
+            .field("checkpoint_root", &"[ABSOLUTE]")
+            .field("workspace_fingerprint", &"[HASH]")
+            .field("max_preimage_bytes", &self.max_preimage_bytes)
+            .field("max_checkpoints", &self.max_checkpoints)
+            .finish()
+    }
 }
 
 /// Open (or create) a checkpoint store outside the workspace. The root
@@ -121,29 +170,41 @@ pub fn open_checkpoint_store(
     checkpoint_root: &Path,
 ) -> Result<CheckpointStore, CheckpointStoreError> {
     let canonical_workspace =
-        std::fs::canonicalize(workspace_root).map_err(|error| {
-            CheckpointStoreError::RootUnavailable(format!(
-                "Checkpoint store paths cannot be resolved: {error}"
-            ))
+        std::fs::canonicalize(workspace_root).map_err(|_error| {
+            CheckpointStoreError::RootUnavailable(
+                "Checkpoint store paths cannot be resolved".to_owned(),
+            )
         })?;
-    if !checkpoint_root.exists() {
-        std::fs::create_dir_all(checkpoint_root).map_err(|error| {
-            CheckpointStoreError::RootUnavailable(format!(
-                "Checkpoint root cannot be created: {error}"
-            ))
+    if checkpoint_root.exists() {
+        let supplied_metadata = std::fs::symlink_metadata(checkpoint_root)
+            .map_err(|_error| {
+                CheckpointStoreError::RootUnavailable(
+                    "Checkpoint root cannot be inspected".to_owned(),
+                )
+            })?;
+        if is_link_or_reparse(&supplied_metadata)
+            || !supplied_metadata.is_dir()
+        {
+            return Err(CheckpointStoreError::RootIsLink);
+        }
+    } else {
+        std::fs::create_dir_all(checkpoint_root).map_err(|_error| {
+            CheckpointStoreError::RootUnavailable(
+                "Checkpoint root cannot be created".to_owned(),
+            )
         })?;
     }
     let canonical_root =
-        std::fs::canonicalize(checkpoint_root).map_err(|error| {
-            CheckpointStoreError::RootUnavailable(format!(
-                "Checkpoint root cannot be resolved: {error}"
-            ))
+        std::fs::canonicalize(checkpoint_root).map_err(|_error| {
+            CheckpointStoreError::RootUnavailable(
+                "Checkpoint root cannot be resolved".to_owned(),
+            )
         })?;
     let root_metadata =
-        std::fs::symlink_metadata(&canonical_root).map_err(|error| {
-            CheckpointStoreError::RootUnavailable(format!(
-                "Checkpoint root cannot be inspected: {error}"
-            ))
+        std::fs::symlink_metadata(&canonical_root).map_err(|_error| {
+            CheckpointStoreError::RootUnavailable(
+                "Checkpoint root cannot be inspected".to_owned(),
+            )
         })?;
     if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
         return Err(CheckpointStoreError::RootIsLink);
@@ -451,6 +512,7 @@ impl CheckpointStore {
         id: &str,
     ) -> Result<LoadedMetadata, CheckpointStoreError> {
         let directory = self.checkpoint_directory(id)?;
+        validate_checkpoint_directory(&directory)?;
         let metadata_path = directory.join("metadata.json");
         let metadata = match std::fs::symlink_metadata(&metadata_path) {
             Ok(metadata) => metadata,
@@ -485,9 +547,9 @@ impl CheckpointStore {
                     "Checkpoint metadata is missing or a symbolic link: {id}."
                 )));
             }
-            BoundedFileRead::IoError(error) => {
+            BoundedFileRead::IoError(_error) => {
                 return Err(CheckpointStoreError::Invalid(format!(
-                    "Checkpoint metadata cannot be read: {id}: {error}"
+                    "Checkpoint metadata cannot be read: {id}."
                 )));
             }
         };
@@ -527,8 +589,17 @@ impl CheckpointStore {
                 if names.len() > self.max_checkpoints {
                     break;
                 }
-                let name = entry.file_name().to_string_lossy().into_owned();
+                let Ok(name) = entry.file_name().into_string() else {
+                    continue;
+                };
                 if name.starts_with("cp_") {
+                    let path = entry.path();
+                    let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+                        continue;
+                    };
+                    if is_link_or_reparse(&metadata) || !metadata.is_dir() {
+                        continue;
+                    }
                     names.push(name);
                 }
             }
@@ -558,10 +629,10 @@ impl CheckpointStore {
     ) -> Result<(), CheckpointStoreError> {
         let serialized =
             serde_json::to_string_pretty(&serialize_checkpoint(checkpoint))
-                .map_err(|error| {
-                    CheckpointStoreError::WriteFailed(format!(
-                        "Checkpoint metadata cannot be serialized: {error}"
-                    ))
+                .map_err(|_error| {
+                    CheckpointStoreError::WriteFailed(
+                        "Checkpoint metadata cannot be serialized".to_owned(),
+                    )
                 })?;
         self.write_metadata_serialized(checkpoint, &serialized)
     }
@@ -572,13 +643,25 @@ impl CheckpointStore {
         checkpoint: &FileCheckpoint,
         serialized: &str,
     ) -> Result<(), CheckpointStoreError> {
-        let directory = self.checkpoint_directory(&checkpoint.id)?;
-        if !directory.is_dir() {
-            return Err(CheckpointStoreError::WriteFailed(format!(
-                "Checkpoint directory is missing: {}.",
-                checkpoint.id
-            )));
+        let parsed = parse_metadata(
+            serialized,
+            &checkpoint.id,
+            &self.workspace_fingerprint,
+            self.max_preimage_bytes,
+        )?;
+        if &parsed.checkpoint != checkpoint {
+            return Err(CheckpointStoreError::WriteFailed(
+                "Checkpoint metadata does not match the supplied record"
+                    .to_owned(),
+            ));
         }
+        let directory = self.checkpoint_directory(&checkpoint.id)?;
+        validate_checkpoint_directory(&directory).map_err(|_| {
+            CheckpointStoreError::WriteFailed(format!(
+                "Checkpoint directory is unavailable: {}.",
+                checkpoint.id
+            ))
+        })?;
         let staged = crate::atomic::stage_atomic(
             &directory,
             "metadata.json",
@@ -586,15 +669,15 @@ impl CheckpointStore {
             serialized.as_bytes(),
             Some(0o600),
         )
-        .map_err(|error| {
-            CheckpointStoreError::WriteFailed(format!(
-                "Checkpoint metadata cannot be staged: {error}"
-            ))
+        .map_err(|_error| {
+            CheckpointStoreError::WriteFailed(
+                "Checkpoint metadata cannot be staged".to_owned(),
+            )
         })?;
-        staged.commit().map_err(|error| {
-            CheckpointStoreError::WriteFailed(format!(
-                "Checkpoint metadata cannot be committed: {error}"
-            ))
+        staged.commit().map_err(|_error| {
+            CheckpointStoreError::WriteFailed(
+                "Checkpoint metadata cannot be committed".to_owned(),
+            )
         })?;
         Ok(())
     }

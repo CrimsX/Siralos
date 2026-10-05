@@ -275,7 +275,15 @@ fn build_manifest(root: &Path, limits: &ReferenceLimits) -> ManifestOutcome {
                     reason: "Reference manifest is too large: entry budget exceeded.".to_owned(),
                 };
             }
-            names.insert(entry.file_name().to_string_lossy().into_owned());
+            let file_name = entry.file_name();
+            let Some(name) = file_name.to_str() else {
+                return ManifestOutcome::Failed {
+                    reason:
+                        "Reference manifest contains an unsupported filename"
+                            .to_owned(),
+                };
+            };
+            names.insert(name.to_owned());
         }
         for name in names {
             let absolute = directory.join(&name);
@@ -296,7 +304,7 @@ fn build_manifest(root: &Path, limits: &ReferenceLimits) -> ManifestOutcome {
                 }
             };
             let file_type = metadata.file_type();
-            if file_type.is_symlink() {
+            if crate::workspace::fs::is_link_or_reparse(&metadata) {
                 // Symlinks are never traversed and never enter the manifest.
                 continue;
             }
@@ -384,10 +392,12 @@ fn hash_file_bounded(
 }
 
 fn describe_fs_error(error: &std::io::Error) -> String {
+    // Class only: the OS message carries the absolute path, which must never
+    // reach a typed, report-safe reason.
     match error.kind() {
         std::io::ErrorKind::NotFound => "no such file or directory".to_owned(),
         std::io::ErrorKind::PermissionDenied => "permission denied".to_owned(),
-        _ => error.to_string(),
+        _ => "filesystem operation failed".to_owned(),
     }
 }
 

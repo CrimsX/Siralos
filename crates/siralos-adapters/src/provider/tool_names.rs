@@ -84,7 +84,12 @@ impl ToolNames {
                 .iter()
                 .any(|(taken, owner)| taken == &alias && owner != real)
             {
-                alias = format!("{base}_{suffix}");
+                let suffix_text = format!("_{suffix}");
+                let keep = MAX_PROVIDER_TOOL_NAME_BYTES
+                    .saturating_sub(suffix_text.len());
+                let mut shortened = base.clone();
+                shortened.truncate(keep.min(shortened.len()));
+                alias = format!("{shortened}{suffix_text}");
                 suffix += 1;
             }
             pairs.push((alias, real.to_owned()));

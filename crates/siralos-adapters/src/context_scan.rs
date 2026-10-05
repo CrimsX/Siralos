@@ -17,6 +17,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use siralos_core::context_graph::{
     ContextGraph, ContextGraphError, ContextNode, ContextNodeKind,
@@ -28,6 +29,7 @@ use siralos_core::context_representation::{
 use siralos_core::language::structure::{
     DEFAULT_SUMMARY_MAX_BYTES, SUMMARY_FOOTER, SUMMARY_TRUNCATION_MARKER,
 };
+use siralos_core::provider::CancellationSignal;
 
 // ---------------------------------------------------------------------------
 // Bounds
@@ -45,6 +47,12 @@ pub struct ScanBounds {
 /// Default B1 bounds: 256 nodes, 65536 bytes/file.
 pub const DEFAULT_SCAN_BOUNDS: ScanBounds =
     ScanBounds { max_nodes: 256, max_file_bytes: 65536 };
+
+const SCAN_ENTRIES_PER_NODE: usize = 16;
+const MIN_SCAN_ENTRIES: usize = 4096;
+const MAX_SCAN_ENTRIES: usize = 16_384;
+const MAX_SCAN_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_PROTECTED_COUNT_ENTRIES: usize = 1024;
 
 // ---------------------------------------------------------------------------
 // Scan primitives
@@ -70,9 +78,10 @@ pub struct BoundedScan {
     pub protected_skipped: usize,
     /// Oversized files skipped (no partial read, no digest).
     pub oversized_skipped: usize,
-    /// Candidate files not admitted due to node-cap truncation.
+    /// Discovered candidate files not admitted due to a shared node or byte
+    /// budget.
     pub files_not_scanned: usize,
-    /// True when truncation occurred.
+    /// True when a traversal, node, or byte budget truncated the scan.
     pub truncated: bool,
 }
 
@@ -96,80 +105,312 @@ impl std::fmt::Display for ScanError {
 
 impl std::error::Error for ScanError {}
 
+const WORKSPACE_INSPECTION_UNAVAILABLE: &str =
+    "workspace unavailable: cannot inspect workspace";
+const WORKSPACE_NOT_DIRECTORY: &str = "workspace unavailable: not a directory";
+const WORKSPACE_READ_UNAVAILABLE: &str =
+    "workspace unavailable: cannot read workspace";
+const WORKSPACE_ENTRY_UNAVAILABLE: &str =
+    "workspace unavailable: cannot inspect workspace entry";
+const WORKSPACE_UNSUPPORTED_NAME: &str =
+    "workspace unavailable: unsupported workspace entry name";
+const WORKSPACE_GRAPH_UNAVAILABLE: &str =
+    "workspace context unavailable: graph binding failed";
+const WORKSPACE_STORE_UNAVAILABLE: &str =
+    "workspace context unavailable: context store build failed";
+const WORKSPACE_CONTEXT_CHANGED: &str =
+    "workspace context unavailable: context changed during materialization";
+const WORKSPACE_CONTEXT_REREAD_FAILED: &str =
+    "workspace context unavailable: context re-read failed";
+const WORKSPACE_CONTEXT_BUDGET: &str =
+    "workspace context unavailable: context byte budget exceeded";
+const SCAN_CANCELLED: &str = "workspace scan cancelled";
+const SCAN_DEADLINE_EXCEEDED: &str = "workspace scan deadline exceeded";
+
+fn scan_error(message: &'static str) -> ScanError {
+    ScanError::Unavailable { message: message.to_owned() }
+}
+
+fn usize_as_u64(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+/// Optional cancellation/deadline observation for bounded workspace scans.
+///
+/// The no-cancellation constructor preserves the historical API; callers
+/// that own a Host cancellation signal can pass it to the control-aware scan
+/// and observe cancellation during directory traversal and bounded re-reads.
+#[derive(Clone, Copy)]
+pub struct ScanControl<'a> {
+    cancellation: Option<CancellationSignal<'a>>,
+    deadline: Option<Instant>,
+}
+
+impl<'a> ScanControl<'a> {
+    /// Construct a control with no cancellation or deadline.
+    #[must_use]
+    pub fn none() -> Self {
+        Self { cancellation: None, deadline: None }
+    }
+
+    /// Construct a control from a Host cancellation signal and optional
+    /// monotonic deadline.
+    #[must_use]
+    pub fn new(
+        cancellation: Option<CancellationSignal<'a>>,
+        deadline: Option<Instant>,
+    ) -> Self {
+        Self { cancellation, deadline }
+    }
+
+    fn check(&self) -> Result<(), ScanError> {
+        if let Some(signal) = self.cancellation {
+            if signal.is_cancelled() {
+                return Err(scan_error(SCAN_CANCELLED));
+            }
+        }
+        if let Some(deadline) = self.deadline {
+            if Instant::now() >= deadline {
+                return Err(scan_error(SCAN_DEADLINE_EXCEEDED));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Shared resource accounting for one complete scan traversal. The
+/// entry and byte counters are deliberately outside the directory loop: a
+/// directory cannot reset either budget for its children.
+struct ScanBudget {
+    max_file_bytes: usize,
+    max_bytes: u64,
+    max_entries: usize,
+    entries_examined: usize,
+    bytes_read: u64,
+    truncated: bool,
+}
+
+impl ScanBudget {
+    fn new(bounds: ScanBounds) -> Self {
+        // The entry ceiling leaves bounded room for directory nodes while
+        // still making the traversal work independent of tree shape. The
+        // absolute ceilings also bound caller-supplied oversized values. They
+        // are intentionally private: the public bounds contract remains the
+        // two pinned B1 dimensions.
+        let max_entries = bounds
+            .max_nodes
+            .saturating_mul(SCAN_ENTRIES_PER_NODE)
+            .saturating_add(1)
+            .clamp(MIN_SCAN_ENTRIES, MAX_SCAN_ENTRIES);
+        let max_bytes = usize_as_u64(bounds.max_nodes)
+            .saturating_mul(usize_as_u64(bounds.max_file_bytes))
+            .min(MAX_SCAN_BYTES);
+        Self {
+            max_file_bytes: bounds.max_file_bytes,
+            max_bytes,
+            max_entries,
+            entries_examined: 0,
+            bytes_read: 0,
+            truncated: false,
+        }
+    }
+
+    fn consume_entry(&mut self) -> bool {
+        if self.entries_examined >= self.max_entries {
+            self.truncated = true;
+            return false;
+        }
+        self.entries_examined += 1;
+        true
+    }
+
+    fn remaining_bytes(&self) -> u64 {
+        self.max_bytes.saturating_sub(self.bytes_read)
+    }
+
+    fn read_limit(&self) -> usize {
+        let limit =
+            self.remaining_bytes().min(usize_as_u64(self.max_file_bytes));
+        usize::try_from(limit).unwrap_or(self.max_file_bytes)
+    }
+
+    fn charge_read(&mut self, bytes: usize) {
+        self.bytes_read = self
+            .bytes_read
+            .saturating_add(usize_as_u64(bytes))
+            .min(self.max_bytes);
+    }
+
+    fn charge_failed_read(&mut self) {
+        self.bytes_read = self.max_bytes;
+        self.truncated = true;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Protected predicate
 // ---------------------------------------------------------------------------
 
 fn is_protected(relative: &str) -> bool {
-    // Any-depth AGENTS.md (exact file name match on last component).
-    if let Some(last) = relative.rsplit('/').next() {
-        if last == "AGENTS.md" {
-            return true;
-        }
+    crate::workspace::fs::is_model_protected_workspace_path(relative)
+}
+
+fn is_real_directory(metadata: &std::fs::Metadata) -> bool {
+    !crate::workspace::fs::is_link_or_reparse(metadata) && metadata.is_dir()
+}
+
+fn is_real_file(metadata: &std::fs::Metadata) -> bool {
+    !crate::workspace::fs::is_link_or_reparse(metadata) && metadata.is_file()
+}
+
+fn ensure_real_directory(
+    path: &Path,
+    unavailable: &'static str,
+    not_directory: &'static str,
+) -> Result<std::fs::Metadata, ScanError> {
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|_| scan_error(unavailable))?;
+    if !is_real_directory(&metadata) {
+        return Err(scan_error(not_directory));
     }
-    // .siralos/** and .git/** at any depth: any path component equals the directory name.
-    for component in relative.split('/') {
-        if component == ".siralos" || component == ".git" {
-            return true;
-        }
-    }
-    false
+    Ok(metadata)
+}
+
+fn open_real_directory(path: &Path) -> Result<std::fs::ReadDir, ScanError> {
+    ensure_real_directory(
+        path,
+        WORKSPACE_READ_UNAVAILABLE,
+        WORKSPACE_NOT_DIRECTORY,
+    )?;
+    let read = std::fs::read_dir(path)
+        .map_err(|_| scan_error(WORKSPACE_READ_UNAVAILABLE))?;
+    ensure_real_directory(
+        path,
+        WORKSPACE_READ_UNAVAILABLE,
+        WORKSPACE_NOT_DIRECTORY,
+    )?;
+    Ok(read)
 }
 
 // ---------------------------------------------------------------------------
 // Deterministic walk (bounded, lexicographic)
 // ---------------------------------------------------------------------------
 
-fn collect_all_files(root: &Path) -> Result<Vec<String>, ScanError> {
-    // Depth-first stack of directories to visit (relative).
-    let mut dirs: Vec<PathBuf> = vec![PathBuf::new()];
+fn relative_path(parent: &str, name: &str) -> String {
+    if parent.is_empty() {
+        name.to_owned()
+    } else {
+        format!("{parent}/{name}")
+    }
+}
+
+fn count_protected_entries(
+    directory: &Path,
+    budget: &mut ScanBudget,
+    control: ScanControl<'_>,
+    protected_skipped: &mut usize,
+) -> Result<(), ScanError> {
+    let mut children = open_real_directory(directory)?;
+    // The local cap bounds telemetry work for one protected tree; every
+    // counted child still consumes the one shared traversal entry budget.
+    for _ in 0..MAX_PROTECTED_COUNT_ENTRIES {
+        control.check()?;
+        let Some(entry) = children.next() else {
+            return Ok(());
+        };
+        entry.map_err(|_| scan_error(WORKSPACE_READ_UNAVAILABLE))?;
+        if !budget.consume_entry() {
+            return Ok(());
+        }
+        *protected_skipped = protected_skipped.saturating_add(1);
+    }
+    // Reaching the local telemetry cap is itself truncation when another
+    // child exists. Do not report an exact protected count for an undercount.
+    control.check()?;
+    match children.next() {
+        Some(Ok(_)) => budget.truncated = true,
+        None => {}
+        Some(Err(_)) => budget.truncated = true,
+    }
+    Ok(())
+}
+
+fn collect_all_files(
+    root: &Path,
+    budget: &mut ScanBudget,
+    control: ScanControl<'_>,
+) -> Result<(Vec<String>, usize), ScanError> {
+    // Keep one shared entry counter for the whole walk. A child directory
+    // never receives a fresh entry allowance.
+    let mut dirs: Vec<String> = vec![String::new()];
     let mut files: Vec<String> = Vec::new();
+    let mut protected_skipped = 0usize;
 
     while let Some(rel_dir) = dirs.pop() {
-        let abs_dir = if rel_dir.as_os_str().is_empty() {
+        control.check()?;
+        let abs_dir = if rel_dir.is_empty() {
             root.to_path_buf()
         } else {
             root.join(&rel_dir)
         };
-        let read = match std::fs::read_dir(&abs_dir) {
-            Ok(handle) => handle,
-            Err(_) => continue,
-        };
-        // Collect entries then sort lexicographically by name.
+        let read = open_real_directory(&abs_dir)?;
+        // Sorting each directory is bounded by the global entry budget and
+        // makes filesystem enumeration order irrelevant to the result.
         let mut entries: BTreeMap<String, PathBuf> = BTreeMap::new();
         for entry in read {
-            let entry = match entry {
-                Ok(e) => e,
-                Err(_) => continue,
+            control.check()?;
+            let entry =
+                entry.map_err(|_| scan_error(WORKSPACE_READ_UNAVAILABLE))?;
+            if !budget.consume_entry() {
+                break;
+            }
+            let file_name = entry.file_name();
+            let Some(name) = file_name.to_str() else {
+                return Err(scan_error(WORKSPACE_UNSUPPORTED_NAME));
             };
-            let name = entry.file_name().to_string_lossy().into_owned();
-            // Stable: keep first insertion for duplicate names (should not happen).
+            if name == "." || name == ".." {
+                return Err(scan_error(WORKSPACE_UNSUPPORTED_NAME));
+            }
+            let name = name.to_owned();
             entries.entry(name).or_insert(entry.path());
         }
-        // Sorted by BTreeMap already.
+
         for (name, abs_path) in entries {
-            let rel_path = if rel_dir.as_os_str().is_empty() {
-                PathBuf::from(&name)
-            } else {
-                rel_dir.join(&name)
-            };
-            let rel_str = rel_path.to_string_lossy().replace('\\', "/");
-            let metadata = match std::fs::symlink_metadata(&abs_path) {
-                Ok(m) => m,
-                Err(_) => continue,
-            };
-            let file_type = metadata.file_type();
-            if file_type.is_symlink() {
+            control.check()?;
+            let rel_str = relative_path(&rel_dir, &name);
+            if is_protected(&rel_str) {
+                let protected_dir = std::fs::symlink_metadata(&abs_path)
+                    .map(|metadata| is_real_directory(&metadata))
+                    .map_err(|_| scan_error(WORKSPACE_ENTRY_UNAVAILABLE))?;
+                if protected_dir {
+                    count_protected_entries(
+                        &abs_path,
+                        budget,
+                        control,
+                        &mut protected_skipped,
+                    )?;
+                } else {
+                    protected_skipped = protected_skipped.saturating_add(1);
+                }
                 continue;
             }
-            if file_type.is_dir() {
-                dirs.push(rel_path);
-            } else if file_type.is_file() {
+
+            let metadata = std::fs::symlink_metadata(&abs_path)
+                .map_err(|_| scan_error(WORKSPACE_ENTRY_UNAVAILABLE))?;
+            if crate::workspace::fs::is_link_or_reparse(&metadata) {
+                continue;
+            }
+            if metadata.is_dir() {
+                dirs.push(rel_str);
+            } else if metadata.is_file() {
                 files.push(rel_str);
             }
         }
     }
-    Ok(files)
+
+    files.sort();
+    files.dedup();
+    Ok((files, protected_skipped))
 }
 
 // ---------------------------------------------------------------------------
@@ -181,54 +422,84 @@ pub fn scan_workspace_with_bounds(
     root: &Path,
     bounds: ScanBounds,
 ) -> Result<BoundedScan, ScanError> {
-    // Fail-closed: root must be an accessible directory.
-    let meta = std::fs::symlink_metadata(root).map_err(|error| {
-        ScanError::Unavailable {
-            message: format!("workspace unavailable: {error}"),
-        }
-    })?;
-    if !meta.is_dir() {
-        return Err(ScanError::Unavailable {
-            message: "workspace unavailable: not a directory".to_owned(),
-        });
-    }
-    let mut files = collect_all_files(root)?;
-    files.sort();
+    scan_workspace_with_control(root, bounds, ScanControl::none())
+}
 
+/// Scan a workspace with caller-supplied cancellation and deadline control.
+///
+/// The control is checked between bounded traversal and re-read units; use
+/// [`ScanControl::none`] for the historical uncancellable behavior.
+pub fn scan_workspace_with_control<'a>(
+    root: &Path,
+    bounds: ScanBounds,
+    control: ScanControl<'a>,
+) -> Result<BoundedScan, ScanError> {
+    control.check()?;
+    // Fail-closed: root must be an accessible directory.
+    ensure_real_directory(
+        root,
+        WORKSPACE_INSPECTION_UNAVAILABLE,
+        WORKSPACE_NOT_DIRECTORY,
+    )?;
+    control.check()?;
+
+    let mut budget = ScanBudget::new(bounds);
+    let (files, protected_skipped) =
+        collect_all_files(root, &mut budget, control)?;
+    // The collector may have finished before a concurrent root substitution;
+    // bind file reads to the still-real root before admitting any node.
+    ensure_real_directory(
+        root,
+        WORKSPACE_ENTRY_UNAVAILABLE,
+        WORKSPACE_NOT_DIRECTORY,
+    )?;
     let mut nodes: Vec<ScanNode> = Vec::new();
-    let mut protected_skipped: usize = 0;
     let mut oversized_skipped: usize = 0;
     let mut files_not_scanned: usize = 0;
-    let mut truncated = false;
+    let mut truncated = budget.truncated || files.len() > bounds.max_nodes;
 
     for relative in files {
+        control.check()?;
         if is_protected(&relative) {
-            protected_skipped += 1;
+            // Protected entries are normally removed by collection; retain the
+            // guard at the file boundary so a future collector change cannot
+            // leak one into the result.
             continue;
         }
+        ensure_real_directory(
+            root,
+            WORKSPACE_ENTRY_UNAVAILABLE,
+            WORKSPACE_NOT_DIRECTORY,
+        )?;
         let abs = root.join(&relative);
-        let meta = match std::fs::symlink_metadata(&abs) {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        if !meta.is_file() {
+        let meta = std::fs::symlink_metadata(&abs)
+            .map_err(|_| scan_error(WORKSPACE_ENTRY_UNAVAILABLE))?;
+        if !is_real_file(&meta) {
             continue;
         }
         let size = meta.len();
-        if size > bounds.max_file_bytes as u64 {
-            oversized_skipped += 1;
+        if size > usize_as_u64(bounds.max_file_bytes) {
+            oversized_skipped = oversized_skipped.saturating_add(1);
             continue;
         }
         if nodes.len() >= bounds.max_nodes {
-            files_not_scanned += 1;
+            files_not_scanned = files_not_scanned.saturating_add(1);
+            truncated = true;
+            continue;
+        }
+
+        let read_limit = budget.read_limit();
+        if usize_as_u64(read_limit) < size {
+            files_not_scanned = files_not_scanned.saturating_add(1);
             truncated = true;
             continue;
         }
         match crate::workspace::fs::read_complete_file_bounded(
-            &abs,
-            bounds.max_file_bytes,
+            &abs, read_limit,
         ) {
             crate::workspace::fs::BoundedFileRead::Complete(bytes) => {
+                control.check()?;
+                budget.charge_read(bytes.len());
                 let digest = siralos_core::identity::sha256_hex(&bytes);
                 let len = bytes.len();
                 nodes.push(ScanNode {
@@ -238,12 +509,17 @@ pub fn scan_workspace_with_bounds(
                 });
             }
             crate::workspace::fs::BoundedFileRead::TooLarge => {
-                oversized_skipped += 1;
+                budget.charge_failed_read();
+                if read_limit < bounds.max_file_bytes {
+                    files_not_scanned = files_not_scanned.saturating_add(1);
+                } else {
+                    oversized_skipped = oversized_skipped.saturating_add(1);
+                }
+                truncated = true;
             }
             crate::workspace::fs::BoundedFileRead::NotReadable
             | crate::workspace::fs::BoundedFileRead::IoError(_) => {
-                // Not a readable regular file — no node, no counters beyond truncation.
-                continue;
+                return Err(scan_error(WORKSPACE_ENTRY_UNAVAILABLE));
             }
         }
     }
@@ -253,7 +529,7 @@ pub fn scan_workspace_with_bounds(
         protected_skipped,
         oversized_skipped,
         files_not_scanned,
-        truncated,
+        truncated: truncated || budget.truncated,
     })
 }
 
@@ -373,35 +649,69 @@ pub fn build_workspace_context(
     root: &Path,
     bounds: ScanBounds,
 ) -> Result<WorkspaceContext, ScanError> {
-    let scan = scan_workspace_with_bounds(root, bounds)?;
-    let graph =
-        bind_scan_to_graph(&scan).map_err(|error| ScanError::Unavailable {
-            message: format!("graph binding failed: {error}"),
-        })?;
+    build_workspace_context_with_control(root, bounds, ScanControl::none())
+}
+
+/// Build bounded workspace context with caller-supplied cancellation/deadline
+/// control. The no-control [`build_workspace_context`] wrapper preserves the
+/// historical API.
+pub fn build_workspace_context_with_control<'a>(
+    root: &Path,
+    bounds: ScanBounds,
+    control: ScanControl<'a>,
+) -> Result<WorkspaceContext, ScanError> {
+    let scan = scan_workspace_with_control(root, bounds, control)?;
+    ensure_real_directory(
+        root,
+        WORKSPACE_CONTEXT_CHANGED,
+        WORKSPACE_CONTEXT_CHANGED,
+    )?;
+    let graph = bind_scan_to_graph(&scan)
+        .map_err(|_| scan_error(WORKSPACE_GRAPH_UNAVAILABLE))?;
+    let mut reread_budget = ScanBudget::new(bounds);
     let mut sets: Vec<NodeRepresentationSet> =
         Vec::with_capacity(scan.nodes.len());
     for node in &scan.nodes {
+        control.check()?;
+        ensure_real_directory(
+            root,
+            WORKSPACE_CONTEXT_CHANGED,
+            WORKSPACE_CONTEXT_CHANGED,
+        )?;
         let abs = root.join(&node.relative_path);
+        let metadata = std::fs::symlink_metadata(&abs)
+            .map_err(|_| scan_error(WORKSPACE_CONTEXT_CHANGED))?;
+        if !is_real_file(&metadata)
+            || metadata.len() > usize_as_u64(bounds.max_file_bytes)
+        {
+            return Err(scan_error(WORKSPACE_CONTEXT_CHANGED));
+        }
+        let read_limit = reread_budget.read_limit();
+        if usize_as_u64(read_limit) < metadata.len() {
+            return Err(scan_error(WORKSPACE_CONTEXT_BUDGET));
+        }
         let bytes = match crate::workspace::fs::read_complete_file_bounded(
-            &abs,
-            bounds.max_file_bytes,
+            &abs, read_limit,
         ) {
-            crate::workspace::fs::BoundedFileRead::Complete(b) => b,
+            crate::workspace::fs::BoundedFileRead::Complete(bytes) => bytes,
             crate::workspace::fs::BoundedFileRead::TooLarge => {
-                return Err(ScanError::Unavailable {
-                    message: format!(
-                        "unexpected oversized on re-read: {}",
-                        node.relative_path
-                    ),
-                });
+                reread_budget.charge_failed_read();
+                return Err(scan_error(WORKSPACE_CONTEXT_CHANGED));
             }
             crate::workspace::fs::BoundedFileRead::NotReadable
             | crate::workspace::fs::BoundedFileRead::IoError(_) => {
-                return Err(ScanError::Unavailable {
-                    message: format!("re-read failed: {}", node.relative_path),
-                });
+                return Err(scan_error(WORKSPACE_CONTEXT_REREAD_FAILED));
             }
         };
+        control.check()?;
+        reread_budget.charge_read(bytes.len());
+        // The second complete read is the identity check. Keep this after
+        // every bounded read; a changed file never becomes a summary.
+        let reread_digest = siralos_core::identity::sha256_hex(&bytes);
+        control.check()?;
+        if reread_digest != node.content_digest {
+            return Err(scan_error(WORKSPACE_CONTEXT_CHANGED));
+        }
         let summary_text = render_l1_summary(&bytes);
         let identity_content = node.content_digest.clone();
         let identity_digest = content_digest_of(&identity_content);
@@ -424,16 +734,12 @@ pub fn build_workspace_context(
         ];
         let set =
             NodeRepresentationSet::build(node.relative_path.clone(), reps)
-                .map_err(|error| ScanError::Unavailable {
-                    message: format!("store build failed: {error}"),
-                })?;
+                .map_err(|_| scan_error(WORKSPACE_STORE_UNAVAILABLE))?;
         sets.push(set);
     }
-    let store = ContextRepresentationStore::build(sets).map_err(|error| {
-        ScanError::Unavailable {
-            message: format!("store build failed: {error}"),
-        }
-    })?;
+    let store = ContextRepresentationStore::build(sets)
+        .map_err(|_| scan_error(WORKSPACE_STORE_UNAVAILABLE))?;
+    control.check()?;
     Ok(WorkspaceContext { scan, graph, store })
 }
 
@@ -451,12 +757,17 @@ pub fn build_workspace_context_default(
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_SCAN_BOUNDS, ScanBounds, ScanError, bind_scan_to_graph,
-        classify_node, is_protected, scan_workspace,
-        scan_workspace_with_bounds,
+        DEFAULT_SCAN_BOUNDS, MAX_PROTECTED_COUNT_ENTRIES, MAX_SCAN_BYTES,
+        MAX_SCAN_ENTRIES, SCAN_CANCELLED, SCAN_DEADLINE_EXCEEDED, ScanBounds,
+        ScanBudget, ScanControl, ScanError, WORKSPACE_INSPECTION_UNAVAILABLE,
+        bind_scan_to_graph, classify_node, collect_all_files, is_protected,
+        scan_workspace, scan_workspace_with_bounds,
+        scan_workspace_with_control,
     };
     use siralos_core::context_graph::ContextNodeKind;
+    use siralos_core::provider::CancellationToken;
     use std::path::Path;
+    use std::time::Instant;
 
     fn tmp_root(label: &str) -> PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -583,6 +894,71 @@ mod tests {
     }
 
     #[test]
+    fn protected_entry_count_is_bounded_without_reset() {
+        let root = tmp_root("protected-bound");
+        for index in 0..=MAX_PROTECTED_COUNT_ENTRIES {
+            write(
+                &root,
+                &format!(".siralos/entry-{index:04}.txt"),
+                b"protected",
+            );
+        }
+        let scan = scan_workspace(&root).unwrap();
+        assert_eq!(scan.protected_skipped, MAX_PROTECTED_COUNT_ENTRIES);
+        assert!(scan.truncated);
+        assert!(scan.nodes.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_boundary_rejects_symlink_without_enumerating_target() {
+        use std::os::unix::fs::symlink;
+
+        let root = tmp_root("directory-link");
+        let target = tmp_root("directory-link-target");
+        write(&target, "secret.txt", b"outside");
+        let link = root.join("link");
+        symlink(&target, &link).expect("create symlink");
+
+        let error = match super::open_real_directory(&link) {
+            Ok(_) => panic!("symlink directory was accepted"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error,
+            ScanError::Unavailable {
+                message: super::WORKSPACE_NOT_DIRECTORY.to_owned(),
+            }
+        );
+        assert!(target.join("secret.txt").is_file());
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&target);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_root_is_rejected_before_traversal() {
+        use std::os::unix::fs::symlink;
+
+        let parent = tmp_root("root-link-parent");
+        let target = tmp_root("root-link-target");
+        write(&target, "secret.txt", b"outside");
+        let link = parent.join("workspace");
+        symlink(&target, &link).expect("create symlink");
+
+        let error = scan_workspace(&link).unwrap_err();
+        assert_eq!(
+            error,
+            ScanError::Unavailable {
+                message: super::WORKSPACE_NOT_DIRECTORY.to_owned(),
+            }
+        );
+        let _ = std::fs::remove_dir_all(&parent);
+        let _ = std::fs::remove_dir_all(&target);
+    }
+
+    #[test]
     fn digest_correctness_over_exact_bytes() {
         let root = tmp_root("digest");
         let content = b"hello world\nsecond line\n";
@@ -601,8 +977,93 @@ mod tests {
             Path::new("/tmp/siralos-scan-missing-workspace-zzz-404-not-exist");
         let _ = std::fs::remove_dir_all(missing);
         let err = scan_workspace(missing).unwrap_err();
-        assert!(matches!(err, ScanError::Unavailable { .. }));
+        assert_eq!(
+            err,
+            ScanError::Unavailable {
+                message: WORKSPACE_INSPECTION_UNAVAILABLE.to_owned(),
+            }
+        );
+        assert!(!err.to_string().contains("siralos-scan-missing"));
         // Never panic.
+    }
+
+    #[test]
+    fn traversal_entry_budget_is_shared_across_directories() {
+        let root = tmp_root("global-entries");
+        write(&root, "a/one.txt", b"a");
+        write(&root, "a/two.txt", b"a");
+        write(&root, "b/one.txt", b"b");
+        write(&root, "b/two.txt", b"b");
+
+        let bounds = ScanBounds { max_nodes: 1, max_file_bytes: 16 };
+        let mut budget = ScanBudget::new(bounds);
+        budget.max_entries = 3;
+        let (files, _) =
+            collect_all_files(&root, &mut budget, ScanControl::none())
+                .unwrap();
+
+        assert_eq!(budget.entries_examined, budget.max_entries);
+        assert!(budget.truncated);
+        assert_eq!(files.len(), 1, "the child walk cannot reset the cap");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn traversal_byte_budget_is_charged_once_for_the_whole_walk() {
+        let bounds = ScanBounds { max_nodes: 4, max_file_bytes: 4 };
+        let mut budget = ScanBudget::new(bounds);
+        budget.charge_read(4);
+        assert_eq!(budget.remaining_bytes(), 12);
+        assert_eq!(budget.read_limit(), 4);
+        budget.charge_read(8);
+        assert_eq!(budget.remaining_bytes(), 4);
+        assert_eq!(budget.read_limit(), 4);
+    }
+
+    #[test]
+    fn traversal_budget_caps_extreme_caller_values() {
+        let budget = ScanBudget::new(ScanBounds {
+            max_nodes: usize::MAX,
+            max_file_bytes: usize::MAX,
+        });
+        assert_eq!(budget.max_entries, MAX_SCAN_ENTRIES);
+        assert_eq!(budget.max_bytes, MAX_SCAN_BYTES);
+    }
+
+    #[test]
+    fn cancellation_and_deadline_are_polled_with_path_free_errors() {
+        let root = tmp_root("control");
+        write(&root, "a.txt", b"a");
+
+        let token = CancellationToken::new();
+        token.cancel();
+        let cancelled = scan_workspace_with_control(
+            &root,
+            DEFAULT_SCAN_BOUNDS,
+            ScanControl { cancellation: Some(token.signal()), deadline: None },
+        )
+        .unwrap_err();
+        assert_eq!(
+            cancelled,
+            ScanError::Unavailable { message: SCAN_CANCELLED.to_owned() }
+        );
+        assert!(!cancelled.to_string().contains("a.txt"));
+
+        let deadline = Instant::now();
+        let expired = scan_workspace_with_control(
+            &root,
+            DEFAULT_SCAN_BOUNDS,
+            ScanControl { cancellation: None, deadline: Some(deadline) },
+        )
+        .unwrap_err();
+        assert_eq!(
+            expired,
+            ScanError::Unavailable {
+                message: SCAN_DEADLINE_EXCEEDED.to_owned(),
+            }
+        );
+        assert!(!expired.to_string().contains("control"));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -1061,7 +1522,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(missing);
         let err = super::build_workspace_context(missing, DEFAULT_SCAN_BOUNDS)
             .unwrap_err();
-        assert!(matches!(err, ScanError::Unavailable { .. }));
+        assert_eq!(
+            err,
+            ScanError::Unavailable {
+                message: WORKSPACE_INSPECTION_UNAVAILABLE.to_owned(),
+            }
+        );
+        assert!(!err.to_string().contains("siralos-build-missing"));
     }
 
     #[test]

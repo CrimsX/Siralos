@@ -29,9 +29,10 @@ use crate::provider::{
     ANTHROPIC_VERSION, CANCELLED_AFTER_HTTP_RESPONSE,
     CANCELLED_BEFORE_HTTP_CALL, CANCELLED_BEFORE_HTTP_SEND,
     CANCELLED_BEFORE_PROVIDER_START, NO_PROVIDER_RESPONSE_OBSERVED,
-    ReplayHooks, record_outcome,
+    ReplayHooks, record_evidence_outcome_with_secret, record_outcome,
+    record_outcome_with_secret,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use siralos_core::composition::Protocol;
 use siralos_core::determinism::{
     Clock, ProviderReplayAvailability, ReplayRecorder,
@@ -49,7 +50,6 @@ use std::rc::Rc;
 /// replaces it in place, and the NEXT `stream()` clones the cell at call
 /// time, so the switched id flows into the request body without
 /// re-composing provider/endpoint/credential.
-#[derive(Debug)]
 pub struct GenericProvider {
     provider: String,
     model: Rc<RefCell<String>>,
@@ -70,6 +70,26 @@ pub struct GenericProvider {
     last_replay: RefCell<ProviderReplayAvailability>,
 }
 
+impl std::fmt::Debug for GenericProvider {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        formatter
+            .debug_struct("GenericProvider")
+            .field("provider", &self.provider.as_str().len())
+            .field("model", &self.model.borrow().len())
+            .field("endpoint", &"[PROJECTED]")
+            .field(
+                "credential",
+                &self.credential.borrow().as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("protocol", &self.protocol.borrow())
+            .field("hooks", &self.hooks)
+            .finish()
+    }
+}
+
 impl GenericProvider {
     /// Create a new `GenericProvider`. `provider` and `model` are bounded
     /// strings validated at the `ProfileRecord` boundary; `credential` is
@@ -81,6 +101,9 @@ impl GenericProvider {
         endpoint: Option<String>,
         credential: Option<HostCredential>,
     ) -> Self {
+        let endpoint = endpoint.filter(|value| {
+            siralos_core::composition::is_valid_http_endpoint(value)
+        });
         Self {
             provider,
             model: Rc::new(RefCell::new(model)),
@@ -103,8 +126,11 @@ impl GenericProvider {
         clock: Rc<dyn Clock>,
         recorder: Rc<dyn ReplayRecorder>,
     ) -> Self {
-        self.hooks =
-            ReplayHooks { clock: Some(clock), recorder: Some(recorder) };
+        self.hooks = ReplayHooks {
+            clock: Some(clock),
+            recorder: Some(recorder),
+            request_sha256: core::cell::RefCell::new(None),
+        };
         self
     }
 
@@ -145,7 +171,26 @@ impl GenericProvider {
     /// this cell, so a session `/reload` takes effect without rebuilding
     /// the provider; `None` restores the provider-neutral placeholder.
     pub fn set_endpoint(&self, endpoint: Option<String>) {
+        if endpoint.as_ref().is_none_or(|value| {
+            siralos_core::composition::is_valid_http_endpoint(value)
+        }) {
+            *self.endpoint.borrow_mut() = endpoint;
+        }
+    }
+
+    /// Validate and apply an endpoint replacement, reporting refusal to the
+    /// caller instead of silently retaining a stale route.
+    pub fn try_set_endpoint(
+        &self,
+        endpoint: Option<String>,
+    ) -> Result<(), String> {
+        if endpoint.as_ref().is_some_and(|value| {
+            !siralos_core::composition::is_valid_http_endpoint(value)
+        }) {
+            return Err("endpoint is not a valid HTTP(S) URL".to_owned());
+        }
         *self.endpoint.borrow_mut() = endpoint;
+        Ok(())
     }
 
     /// The endpoint base the NEXT `stream()` will use (`None` = the
@@ -182,6 +227,51 @@ impl GenericProvider {
     pub fn live_credential(&self) -> Option<HostCredential> {
         self.credential.borrow().clone()
     }
+
+    /// Fetch models from the generic provider's effective live route.
+    pub fn fetch_models(&self) -> Result<Vec<String>, String> {
+        let endpoint = self
+            .live_endpoint()
+            .unwrap_or_else(|| GENERIC_PLACEHOLDER_ENDPOINT.to_owned());
+        let credential = self.live_credential();
+        fetch_models_for_protocol(
+            &endpoint,
+            credential.as_ref(),
+            self.live_protocol(),
+            Some(self.provider.as_str()),
+        )
+    }
+
+    /// Fetch models while allowing the caller to interrupt the blocking
+    /// probe. Cancellable probes are serialized so a cancelled HTTP timeout
+    /// cannot leave an unbounded set of detached workers or credential copies.
+    pub fn fetch_models_cancellable(
+        &self,
+        cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<Vec<String>, String> {
+        // Keep only cheap cell handles while the permit is waiting. The
+        // endpoint and credential snapshots are taken after the single probe
+        // slot is acquired, so queued callers cannot retain credential clones.
+        let endpoint_cell = Rc::clone(&self.endpoint);
+        let credential_cell = Rc::clone(&self.credential);
+        let provider = self.provider.clone();
+        let protocol = self.live_protocol();
+        run_model_listing_probe(cancelled, move || {
+            let endpoint = endpoint_cell
+                .borrow()
+                .clone()
+                .unwrap_or_else(|| GENERIC_PLACEHOLDER_ENDPOINT.to_owned());
+            let credential = credential_cell.borrow().clone();
+            move || {
+                fetch_models_for_protocol(
+                    &endpoint,
+                    credential.as_ref(),
+                    protocol,
+                    Some(provider.as_str()),
+                )
+            }
+        })
+    }
 }
 
 /// Provider-neutral placeholder endpoint used when the generic provider is
@@ -205,6 +295,11 @@ pub(crate) const GENERIC_PLACEHOLDER_MODEL: &str = "generic-model";
 /// working unchanged.
 #[must_use]
 pub fn chat_url(endpoint: &str, protocol: Protocol) -> String {
+    if endpoint.len() > siralos_core::composition::MAX_PROFILE_ENDPOINT_BYTES
+        || !siralos_core::composition::is_valid_http_endpoint(endpoint)
+    {
+        return GENERIC_PLACEHOLDER_ENDPOINT.to_owned();
+    }
     let segment = match protocol {
         Protocol::OpenAiCompletions => "/chat/completions",
         Protocol::OpenAiResponses => "/responses",
@@ -220,11 +315,21 @@ pub fn chat_url(endpoint: &str, protocol: Protocol) -> String {
 
 /// Resolve the model-listing URL for a base `endpoint`.
 ///
-/// Unchanged in every case: `endpoint + "/models"` (trailing slashes on
-/// the endpoint tolerated).
+/// A stored protocol-specific completion URL is normalized back to its base
+/// before appending `/models`; a base URL is used directly.
 #[must_use]
 pub fn models_url(endpoint: &str) -> String {
-    format!("{}/models", endpoint.trim_end_matches('/'))
+    if endpoint.len() > siralos_core::composition::MAX_PROFILE_ENDPOINT_BYTES
+        || !siralos_core::composition::is_valid_http_endpoint(endpoint)
+    {
+        return format!("{GENERIC_PLACEHOLDER_ENDPOINT}/models");
+    }
+    let trimmed = endpoint.trim_end_matches('/');
+    let base = ["/chat/completions", "/responses", "/messages"]
+        .iter()
+        .find_map(|suffix| trimmed.strip_suffix(suffix))
+        .unwrap_or(trimmed);
+    format!("{base}/models")
 }
 
 impl ModelProvider for GenericProvider {
@@ -265,6 +370,10 @@ impl GenericProvider {
         request: ModelRequest,
         cancellation: Option<CancellationSignal<'a>>,
     ) -> Box<dyn Iterator<Item = ProviderEvent> + 'a> {
+        *self.last_replay.borrow_mut() =
+            ProviderReplayAvailability::Unavailable {
+                reason: "stream has not completed".to_owned(),
+            };
         if cancellation.is_some_and(|signal| signal.is_cancelled()) {
             return Box::new(std::iter::once(ProviderEvent::Cancelled {
                 message: CANCELLED_BEFORE_PROVIDER_START.to_owned(),
@@ -287,9 +396,17 @@ impl GenericProvider {
             })
         };
         let protocol = *self.protocol.borrow();
+        let request_sha256 = crate::provider::request_sha256_for_route(
+            &request,
+            &provider,
+            &endpoint,
+            protocol.as_str(),
+        );
+        *self.hooks.request_sha256.borrow_mut() = Some(request_sha256.clone());
         // Host-observed, bounded HTTP call via `reqwest::blocking` with
         // connect/read timeouts. No hidden retry — the `tool-loop` budget
         // is the only retry.
+        let stream_redaction = credential.clone();
         match Self::call_generic(
             &provider,
             &model,
@@ -301,21 +418,41 @@ impl GenericProvider {
             &self.hooks,
             &self.last_replay,
         ) {
-            CallOutcome::Events(events) => Box::new(events.into_iter()),
+            CallOutcome::Events(events) => {
+                let events = if events.is_empty() {
+                    *self.last_replay.borrow_mut() =
+                        ProviderReplayAvailability::Unavailable {
+                            reason: "provider returned no completion event"
+                                .to_owned(),
+                        };
+                    vec![ProviderEvent::Failed(
+                        "provider returned no completion event".to_owned(),
+                    )]
+                } else {
+                    events
+                };
+                Box::new(events.into_iter())
+            }
             CallOutcome::Streaming { response, status, tool_names } => {
                 Box::new(StreamingTurn::new(
                     response,
                     status,
                     provider,
                     model,
+                    Some(request_sha256),
                     &self.hooks,
                     &self.last_replay,
                     cancellation,
                     tool_names,
+                    stream_redaction,
                 ))
             }
         }
     }
+}
+
+fn provider_uses_anthropic_auth(provider: &str) -> bool {
+    provider.eq_ignore_ascii_case("anthropic")
 }
 
 impl GenericProvider {
@@ -332,15 +469,22 @@ impl GenericProvider {
         last_replay: &RefCell<ProviderReplayAvailability>,
     ) -> CallOutcome {
         if cancellation.is_some_and(|signal| signal.is_cancelled()) {
+            *last_replay.borrow_mut() =
+                ProviderReplayAvailability::Unavailable {
+                    reason: "call cancelled before HTTP request".to_owned(),
+                };
             return CallOutcome::Events(vec![ProviderEvent::Cancelled {
                 message: CANCELLED_BEFORE_HTTP_CALL.to_owned(),
             }]);
         }
         let client = match crate::provider::build_http_client() {
             Ok(client) => client,
-            Err(err) => {
+            Err(_err) => {
+                // Status-only: a client-build failure is reported by its class,
+                // never by the transport's own text (which can carry a proxy
+                // URL or other environment detail).
                 let events = vec![ProviderEvent::Failed(format!(
-                    "{provider} client build failed: {err}"
+                    "{provider} client build failed"
                 ))];
                 record_outcome(hooks, last_replay, provider, model, None, "");
                 return CallOutcome::Events(events);
@@ -352,33 +496,79 @@ impl GenericProvider {
         let tool_names = crate::provider::tool_names::ToolNames::new(
             request.tools.iter().map(|tool| tool.name.as_str()),
         );
-        let mut messages = Vec::new();
+        let mut openai_messages = Vec::new();
+        let mut responses_input = Vec::new();
+        let mut anthropic_conversation = Vec::new();
         if let Some(system) = &request.system {
-            messages.push(
+            openai_messages.push(
                 serde_json::json!({"role": "system", "content": system}),
             );
         }
         for item in &request.messages {
             match item {
                 siralos_core::provider::ConversationItem::UserMessage { content } => {
-                    messages.push(serde_json::json!({"role": "user", "content": content}));
+                    openai_messages
+                        .push(serde_json::json!({"role": "user", "content": content}));
+                    responses_input.push(serde_json::json!({
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": content}],
+                    }));
+                    anthropic_conversation.push(serde_json::json!({
+                        "role": "user",
+                        "content": [{"type": "text", "text": content}],
+                    }));
                 }
                 siralos_core::provider::ConversationItem::AssistantMessage { content } => {
-                    messages.push(serde_json::json!({"role": "assistant", "content": content}));
+                    openai_messages.push(serde_json::json!({
+                        "role": "assistant",
+                        "content": content,
+                    }));
+                    responses_input.push(serde_json::json!({
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": content}],
+                    }));
+                    anthropic_conversation.push(serde_json::json!({
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": content}],
+                    }));
                 }
                 siralos_core::provider::ConversationItem::AssistantToolCall {
                     call_id,
                     tool_name,
                     input,
                 } => {
-                    let args_str = match input.value() {
-                        Some(Value::String(s)) => s.clone(),
-                        Some(v) => serde_json::to_string(v).unwrap_or_else(|_| v.to_string()),
-                        None => "{}".to_owned(),
-                    };
-                    messages.push(serde_json::json!({
+                    let args = input
+                        .value()
+                        .filter(|value| value.is_object())
+                        .map(|value| serde_json::to_string(value).unwrap_or_else(|_| "{}".to_owned()))
+                        .unwrap_or_else(|| "{}".to_owned());
+                    let name = tool_names.alias(tool_name);
+                    openai_messages.push(serde_json::json!({
                         "role": "assistant",
-                        "tool_calls": [{"id": call_id, "type": "function", "function": {"name": tool_names.alias(tool_name), "arguments": args_str}}]
+                        "tool_calls": [{
+                            "id": call_id,
+                            "type": "function",
+                            "function": {"name": name, "arguments": args},
+                        }],
+                    }));
+                    responses_input.push(serde_json::json!({
+                        "type": "function_call",
+                        "call_id": call_id,
+                        "name": name,
+                        "arguments": args,
+                    }));
+                    anthropic_conversation.push(serde_json::json!({
+                        "role": "assistant",
+                        "content": [{
+                            "type": "tool_use",
+                            "id": call_id,
+                            "name": name,
+                            "input": input
+                            .value()
+                            .filter(|value| value.is_object())
+                            .cloned()
+                            .unwrap_or_else(|| json!({})),
+                        }],
                     }));
                 }
                 siralos_core::provider::ConversationItem::ToolResult {
@@ -386,6 +576,10 @@ impl GenericProvider {
                     result,
                     ..
                 } => {
+                    let is_error = !matches!(
+                        result,
+                        siralos_core::provider::ToolExecutionResult::Success { .. }
+                    );
                     let content = match result {
                         siralos_core::provider::ToolExecutionResult::Success {
                             output,
@@ -393,31 +587,94 @@ impl GenericProvider {
                         } => output.to_string(),
                         other => other.message().to_owned(),
                     };
-                    messages.push(serde_json::json!({"role": "tool", "tool_call_id": call_id, "content": content}));
+                    openai_messages.push(serde_json::json!({
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": content,
+                    }));
+                    responses_input.push(serde_json::json!({
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": content,
+                    }));
+                    anthropic_conversation.push(serde_json::json!({
+                        "role": "user",
+                        "content": [{
+                            "type": "tool_result",
+                            "tool_use_id": call_id,
+                            "content": content,
+                            "is_error": is_error,
+                        }],
+                    }));
                 }
             }
         }
         let mut tools_json = Vec::new();
         for tool in &request.tools {
-            tools_json.push(serde_json::json!({
-                "type": "function",
-                "function": {"name": tool_names.alias(&tool.name), "description": tool.description, "parameters": tool.input_schema}
-            }));
+            let name = tool_names.alias(&tool.name);
+            tools_json.push(match protocol {
+                Protocol::OpenAiResponses => serde_json::json!({
+                    "type": "function",
+                    "name": name,
+                    "description": tool.description,
+                    "parameters": tool.input_schema,
+                }),
+                Protocol::AnthropicMessages => serde_json::json!({
+                    "name": name,
+                    "description": tool.description,
+                    "input_schema": tool.input_schema,
+                }),
+                Protocol::OpenAiCompletions => serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": tool.description,
+                        "parameters": tool.input_schema,
+                    }
+                }),
+            });
         }
-        let mut body =
-            serde_json::json!({"model": model, "messages": messages});
-        if protocol == Protocol::OpenAiCompletions {
-            // Server-sent events: the streamed deltas are assembled back
-            // into the same events (and the same recording) as before.
-            body["stream"] = Value::Bool(true);
-        }
+        let mut body = match protocol {
+            Protocol::OpenAiCompletions => {
+                let mut value = serde_json::json!({
+                    "model": model,
+                    "messages": openai_messages,
+                });
+                // Server-sent events: the streamed deltas are assembled back
+                // into the same events (and the same recording) as before.
+                value["stream"] = Value::Bool(true);
+                value
+            }
+            Protocol::OpenAiResponses => {
+                let mut value = serde_json::json!({
+                    "model": model,
+                    "input": responses_input,
+                });
+                if let Some(system) = &request.system {
+                    value["instructions"] = Value::String(system.clone());
+                }
+                value
+            }
+            Protocol::AnthropicMessages => {
+                let mut value = serde_json::json!({
+                    "model": model,
+                    "max_tokens": 4096,
+                    "messages": anthropic_conversation,
+                });
+                if let Some(system) = &request.system {
+                    value["system"] = Value::String(system.clone());
+                }
+                value
+            }
+        };
         if !tools_json.is_empty() {
             body["tools"] = Value::Array(tools_json);
         }
-        if let Some(system) = &request.system {
-            body["system"] = Value::String(system.clone());
-        }
         if cancellation.is_some_and(|signal| signal.is_cancelled()) {
+            *last_replay.borrow_mut() =
+                ProviderReplayAvailability::Unavailable {
+                    reason: "call cancelled before HTTP send".to_owned(),
+                };
             return CallOutcome::Events(vec![ProviderEvent::Cancelled {
                 message: CANCELLED_BEFORE_HTTP_SEND.to_owned(),
             }]);
@@ -425,8 +682,8 @@ impl GenericProvider {
         let url = chat_url(endpoint, protocol);
         let mut req =
             client.post(&url).header("Content-Type", "application/json");
-        if let Some(cred) = credential {
-            if provider == "anthropic" {
+        if let Some(cred) = credential.as_deref() {
+            if provider_uses_anthropic_auth(provider) {
                 req = req
                     .header("x-api-key", cred)
                     .header("anthropic-version", ANTHROPIC_VERSION);
@@ -437,15 +694,25 @@ impl GenericProvider {
         let response = req.json(&body).send();
         let response = match response {
             Ok(resp) => resp,
-            Err(err) => {
-                let events = vec![ProviderEvent::Failed(format!(
-                    "{provider} request failed: {err}"
-                ))];
+            Err(_err) => {
+                let events = vec![ProviderEvent::Failed(
+                    crate::provider::redact_sensitive(
+                        &format!(
+                            "{provider} request failed: transport unavailable at {}",
+                            crate::provider::safe_endpoint_for_output(&url)
+                        ),
+                        credential.as_deref(),
+                    ),
+                )];
                 record_outcome(hooks, last_replay, provider, model, None, "");
                 return CallOutcome::Events(events);
             }
         };
         if cancellation.is_some_and(|signal| signal.is_cancelled()) {
+            *last_replay.borrow_mut() =
+                ProviderReplayAvailability::Unavailable {
+                    reason: "call cancelled after HTTP response".to_owned(),
+                };
             return CallOutcome::Events(vec![ProviderEvent::Cancelled {
                 message: CANCELLED_AFTER_HTTP_RESPONSE.to_owned(),
             }]);
@@ -454,35 +721,43 @@ impl GenericProvider {
         if !status.is_success() {
             // A refused request still has a bounded, sanitized body worth
             // reporting; read it once and stop (no stream to iterate).
-            let text = match crate::provider::bounded_body_text(response) {
+            let text = match crate::provider::bounded_body_text_raw(
+                response,
+                credential.as_deref(),
+            ) {
                 Ok(text) => text,
-                Err(err) => {
+                Err(_err) => {
                     let events = vec![ProviderEvent::Failed(format!(
-                        "{provider} response read failed: {err}"
+                        "{provider} response read failed before completion"
                     ))];
+                    // The observed status is evidence even when the body could
+                    // not be read; recording `None` would lose it.
                     record_outcome(
                         hooks,
                         last_replay,
                         provider,
                         model,
-                        None,
+                        Some(status.as_u16()),
                         "",
                     );
                     return CallOutcome::Events(events);
                 }
             };
-            let events = vec![ProviderEvent::Failed(http_error_message(
-                status.as_u16(),
-                &url,
-                &text,
-            ))];
-            record_outcome(
+            let events =
+                vec![ProviderEvent::Failed(http_error_message_with_secret(
+                    status.as_u16(),
+                    &url,
+                    &text,
+                    credential.as_deref(),
+                ))];
+            record_outcome_with_secret(
                 hooks,
                 last_replay,
                 provider,
                 model,
                 Some(status.as_u16()),
                 &text,
+                credential.as_deref(),
             );
             return CallOutcome::Events(events);
         }
@@ -490,18 +765,23 @@ impl GenericProvider {
             // The responses and messages protocols stream DIFFERENT event
             // shapes, so they keep the whole-body path byte-unchanged
             // (no `stream: true` was sent for them).
-            let text = match crate::provider::bounded_body_text(response) {
+            let text = match crate::provider::bounded_body_text_raw(
+                response,
+                credential.as_deref(),
+            ) {
                 Ok(text) => text,
-                Err(err) => {
+                Err(_err) => {
                     let events = vec![ProviderEvent::Failed(format!(
-                        "{provider} response read failed: {err}"
+                        "{provider} response read failed before completion"
                     ))];
+                    // The observed status is evidence even when the body could
+                    // not be read; recording `None` would lose it.
                     record_outcome(
                         hooks,
                         last_replay,
                         provider,
                         model,
-                        None,
+                        Some(status.as_u16()),
                         "",
                     );
                     return CallOutcome::Events(events);
@@ -509,34 +789,70 @@ impl GenericProvider {
             };
             let value: Value = match serde_json::from_str(&text) {
                 Ok(v) => v,
-                Err(err) => {
-                    let snippet: String = text.chars().take(512).collect();
+                Err(_err) => {
                     let events = vec![ProviderEvent::Failed(format!(
-                        "{provider} response JSON parse failed: {err}: {snippet}"
+                        "{provider} response JSON parse failed"
                     ))];
-                    record_outcome(
+                    record_outcome_with_secret(
                         hooks,
                         last_replay,
                         provider,
                         model,
                         Some(status.as_u16()),
                         &text,
+                        credential.as_deref(),
                     );
                     return CallOutcome::Events(events);
                 }
             };
             let _ = &value;
-            let events = tool_names.restore_events(
-                crate::provider::replay::completion_events_from_body(&text),
+            let mut redactor = crate::provider::StreamingSecretRedactor::new(
+                credential.as_deref(),
             );
-            record_outcome(
-                hooks,
-                last_replay,
-                provider,
-                model,
-                Some(status.as_u16()),
-                &text,
-            );
+            // The complete buffered body is not a cross-event stream, so the
+            // redactor's held suffix is not ambiguous here; it is masked rather
+            // than dropped, so a live run and a replay of the same recording
+            // never disagree about how much text was shown.
+            let mut events: Vec<ProviderEvent> = tool_names
+                .restore_events(
+                    crate::provider::replay::completion_events_from_body(
+                        &text,
+                    ),
+                )
+                .into_iter()
+                .map(|event| redactor.redact_event(event))
+                .collect();
+            if let Some(mask) = redactor.finish() {
+                events.push(ProviderEvent::Event(
+                    siralos_core::provider::event::ModelEvent::TextDelta {
+                        text: mask,
+                    },
+                ));
+            }
+            if events
+                .iter()
+                .any(|event| matches!(event, ProviderEvent::Failed(_)))
+            {
+                record_evidence_outcome_with_secret(
+                    hooks,
+                    last_replay,
+                    provider,
+                    model,
+                    Some(status.as_u16()),
+                    &text,
+                    credential.as_deref(),
+                );
+            } else {
+                record_outcome_with_secret(
+                    hooks,
+                    last_replay,
+                    provider,
+                    model,
+                    Some(status.as_u16()),
+                    &text,
+                    credential.as_deref(),
+                );
+            }
             return CallOutcome::Events(events);
         }
         // 2xx on the OpenAI-compatible chat path: hand the OPEN response
@@ -569,10 +885,13 @@ struct StreamingTurn<'a> {
     status: u16,
     provider: String,
     model: String,
+    request_sha256: Option<String>,
     hooks: &'a ReplayHooks,
     last_replay: &'a RefCell<ProviderReplayAvailability>,
     cancellation: Option<CancellationSignal<'a>>,
     tool_names: ToolNames,
+    redaction: Option<String>,
+    redactor: crate::provider::StreamingSecretRedactor,
     assembler: crate::provider::sse::CompletionStream,
     pending_bytes: Vec<u8>,
     queued: std::collections::VecDeque<ProviderEvent>,
@@ -595,20 +914,28 @@ impl<'a> StreamingTurn<'a> {
         status: u16,
         provider: String,
         model: String,
+        request_sha256: Option<String>,
         hooks: &'a ReplayHooks,
         last_replay: &'a RefCell<ProviderReplayAvailability>,
         cancellation: Option<CancellationSignal<'a>>,
         tool_names: ToolNames,
+        redaction: Option<String>,
     ) -> Self {
+        let redactor = crate::provider::StreamingSecretRedactor::new(
+            redaction.as_deref(),
+        );
         Self {
             response,
             status,
             provider,
             model,
+            request_sha256,
             hooks,
             last_replay,
             cancellation,
             tool_names,
+            redaction,
+            redactor,
             assembler: crate::provider::sse::CompletionStream::new(
                 crate::provider::MAX_RESPONSE_BYTES,
             ),
@@ -619,25 +946,127 @@ impl<'a> StreamingTurn<'a> {
         }
     }
 
-    /// Record once: the assembled (or plain) body, never raw chunks, so the
-    /// replay store keeps its body-shaped contract.
-    fn record_once(&mut self) {
-        if self.recorded {
-            return;
+    fn redact_events(&mut self, events: Vec<ProviderEvent>) {
+        self.queued.extend(
+            events
+                .into_iter()
+                .map(|event| self.redactor.redact_event(event))
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    fn flush_redaction_tail(&mut self) {
+        if let Some(tail) = self.redactor.finish() {
+            let delta = ProviderEvent::Event(
+                siralos_core::provider::ModelEvent::TextDelta { text: tail },
+            );
+            if let Some(completed) = self.queued.iter().rposition(|event| {
+                matches!(
+                    event,
+                    ProviderEvent::Event(
+                        siralos_core::provider::ModelEvent::Completed
+                    )
+                )
+            }) {
+                self.queued.insert(completed, delta);
+            } else {
+                self.queued.push_back(delta);
+            }
         }
-        self.recorded = true;
-        let body = match self.assembler.plain_body() {
-            Some(body) => body.to_owned(),
-            None => self.assembler.assembled_body().to_string(),
-        };
-        record_outcome(
+    }
+
+    /// replay store keeps its body-shaped contract.
+    fn mark_unavailable(&self, reason: &'static str) {
+        *self.last_replay.borrow_mut() =
+            ProviderReplayAvailability::Unavailable {
+                reason: reason.to_owned(),
+            };
+    }
+
+    fn record_evidence_unavailable(&self, reason: &'static str) {
+        let body =
+            self.assembler.plain_body().map(str::to_owned).unwrap_or_else(
+                || self.assembler.assembled_body().to_string(),
+            );
+        record_evidence_outcome_with_secret(
             self.hooks,
             self.last_replay,
             &self.provider,
             &self.model,
             Some(self.status),
             &body,
+            self.redaction.as_deref(),
         );
+        *self.last_replay.borrow_mut() =
+            ProviderReplayAvailability::Unavailable {
+                reason: reason.to_owned(),
+            };
+    }
+
+    fn record_once(&mut self) {
+        if self.recorded {
+            return;
+        }
+        self.recorded = true;
+        if self.assembler.is_failed() {
+            self.record_evidence_unavailable(
+                "stream failed before a replayable completion",
+            );
+            return;
+        }
+        let body = match self.assembler.plain_body() {
+            Some(body) => {
+                let events =
+                    crate::provider::replay::completion_events_from_body(body);
+                if events
+                    .iter()
+                    .any(|event| matches!(event, ProviderEvent::Failed(_)))
+                {
+                    self.record_evidence_unavailable(
+                        "stream body was not a replayable completion",
+                    );
+                    return;
+                }
+                if events.is_empty() {
+                    self.record_evidence_unavailable(
+                        "stream body produced no usable event",
+                    );
+                    return;
+                }
+                body.to_owned()
+            }
+            None => {
+                if !self.assembler.is_completed() {
+                    self.record_evidence_unavailable(
+                        "stream ended before an explicit completion",
+                    );
+                    return;
+                }
+                self.assembler.assembled_body().to_string()
+            }
+        };
+        if let Some(request_sha256) = self.request_sha256.as_deref() {
+            crate::provider::record_outcome_with_secret_and_request_digest(
+                self.hooks,
+                self.last_replay,
+                &self.provider,
+                &self.model,
+                Some(self.status),
+                &body,
+                self.redaction.as_deref(),
+                request_sha256,
+            );
+        } else {
+            record_outcome_with_secret(
+                self.hooks,
+                self.last_replay,
+                &self.provider,
+                &self.model,
+                Some(self.status),
+                &body,
+                self.redaction.as_deref(),
+            );
+        }
     }
 
     /// Decode the bytes read so far, keeping an incomplete trailing UTF-8
@@ -672,6 +1101,29 @@ impl Iterator for StreamingTurn<'_> {
 
     fn next(&mut self) -> Option<ProviderEvent> {
         loop {
+            // A completed iterator stays completed even if cancellation is
+            // raised after its terminal event. While the turn is still open,
+            // cancellation outranks events already parsed into `queued`, so a
+            // host cancel stops provider text immediately. Once the assembler
+            // has seen the terminal `[DONE]`, the recorded turn is finished and
+            // the queued terminal event is what the transcript must show: a
+            // late cancel must not rewrite a completed response as cancelled.
+            if matches!(&self.state, StreamState::Done) {
+                return None;
+            }
+            if !self.assembler.is_completed()
+                && self
+                    .cancellation
+                    .is_some_and(|signal| signal.is_cancelled())
+            {
+                self.mark_unavailable("stream cancelled");
+                self.state = StreamState::Done;
+                self.queued.clear();
+                return Some(ProviderEvent::Cancelled {
+                    message: "Host cancelled during the streamed response"
+                        .to_owned(),
+                });
+            }
             if let Some(event) = self.queued.pop_front() {
                 return Some(event);
             }
@@ -683,23 +1135,21 @@ impl Iterator for StreamingTurn<'_> {
                 }
                 StreamState::Reading => {}
             }
-            if self.cancellation.is_some_and(|signal| signal.is_cancelled()) {
-                self.record_once();
-                self.state = StreamState::Done;
-                return Some(ProviderEvent::Cancelled {
-                    message: "Host cancelled during the streamed response"
-                        .to_owned(),
-                });
-            }
             let mut buf = [0u8; 8192];
             match std::io::Read::read(&mut self.response, &mut buf) {
                 Ok(0) => {
-                    let events = match self.assembler.plain_body() {
+                    let mut events = match self.assembler.plain_body() {
                         Some(body) => crate::provider::replay::completion_events_from_body(body),
                         None => self.assembler.finish(),
                     };
+                    if events.is_empty() && !self.assembler.is_completed() {
+                        events.push(ProviderEvent::Failed(
+                            "provider returned no completion event".to_owned(),
+                        ));
+                    }
                     let restored = self.tool_names.restore_events(events);
-                    self.queued.extend(restored);
+                    self.redact_events(restored);
+                    self.flush_redaction_tail();
                     self.record_once();
                     self.state = StreamState::Draining;
                 }
@@ -707,23 +1157,25 @@ impl Iterator for StreamingTurn<'_> {
                     self.pending_bytes.extend_from_slice(&buf[..n]);
                     let text = self.take_text();
                     let events = self.assembler.push_chunk(&text);
-                    let failed = matches!(
-                        events.first(),
-                        Some(ProviderEvent::Failed(_))
-                    );
+                    let failed = self.assembler.is_failed()
+                        || events.iter().any(|event| {
+                            matches!(event, ProviderEvent::Failed(_))
+                        });
                     let restored = self.tool_names.restore_events(events);
-                    self.queued.extend(restored);
-                    if failed {
+                    self.redact_events(restored);
+                    if failed || self.assembler.is_completed() {
                         self.record_once();
                         self.state = StreamState::Draining;
                     }
                 }
-                Err(err) => {
+                Err(_err) => {
                     let message = format!(
-                        "{} response read failed: {err}",
+                        "{} response read failed before completion",
                         self.provider
                     );
-                    self.record_once();
+                    self.record_evidence_unavailable(
+                        "response read failed before completion",
+                    );
                     self.state = StreamState::Done;
                     return Some(ProviderEvent::Failed(message));
                 }
@@ -732,16 +1184,22 @@ impl Iterator for StreamingTurn<'_> {
     }
 }
 
+/// Maximum number of model ids accepted from a provider listing.
+pub const MAX_MODEL_IDS: usize = 1_000;
+
+/// Maximum UTF-8 character length of one model id accepted from a provider
+/// listing.
+pub const MAX_MODEL_ID_CHARS: usize = 256;
+
 /// Fetch available models from a provider's OpenAI-compatible `/models` endpoint.
 ///
 /// This is the I6 provider surface for `/models` — a blocking GET to
 /// `{endpoint}/models` with Bearer auth (when a credential is present),
 /// bounded to 1 MiB and sanitized, parsing the OpenAI shape
-/// `{data: [{id: "..."}]}`. The synchronous blocking call freezes the TUI
-/// redraw while waiting — documented architectural constraint (no threads,
-/// single read-owner, stdio frontend byte-unchanged). On error or
-/// unrecognized shape an `Err` with a sanitized `String` is returned, never
-/// echoing the credential.
+/// `{data: [{id: "..."}]}`. The interactive worker path uses a bounded
+/// cancellable helper; direct callers use the same bounded blocking client.
+/// On error or unrecognized shape an `Err` with a sanitized `String` is
+/// returned, never echoing the credential.
 ///
 /// Uses the same bounded `reqwest` pattern as `GenericProvider::call_generic`
 /// and the same credential redaction / 1 MiB cap / recording-hygiene rules
@@ -751,64 +1209,356 @@ pub fn fetch_models(
     endpoint: &str,
     credential: Option<&HostCredential>,
 ) -> Result<Vec<String>, String> {
+    fetch_models_for_protocol(
+        endpoint,
+        credential,
+        Protocol::OpenAiCompletions,
+        None,
+    )
+}
+
+fn fetch_models_for_protocol(
+    endpoint: &str,
+    credential: Option<&HostCredential>,
+    protocol: Protocol,
+    auth_provider: Option<&str>,
+) -> Result<Vec<String>, String> {
     let url = models_url(endpoint);
     // Deliberately NOT `crate::provider::build_http_client()`: this is a
     // user-triggered listing probe that must fail fast, so it keeps its own
     // 5-second request / 3-second connect timeouts. Folding it into the shared
     // helper would change an observable timeout.
     let client = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(5))
         .connect_timeout(std::time::Duration::from_secs(3))
         .build()
         .map_err(|err| format!("client build failed: {err}"))?;
+    let secret =
+        credential.map(|c| String::from_utf8_lossy(c.as_bytes()).to_string());
     let cred_str = credential.map(|c| {
         // `HostCredential` redacted Debug; hold the bearer only for the header.
         String::from_utf8_lossy(c.as_bytes()).to_string()
     });
     let mut req = client.get(&url).header("Content-Type", "application/json");
     if let Some(cred) = cred_str {
-        // I6 specifies Bearer auth from HostCredential (OpenAI-compatible).
-        // For providers that use a different header the generic path still
-        // routes via Bearer — the error surface is honest if rejected.
-        req = req.header("Authorization", format!("Bearer {cred}"));
+        if auth_provider.is_some_and(provider_uses_anthropic_auth)
+            || (auth_provider.is_none()
+                && protocol == Protocol::AnthropicMessages)
+        {
+            req = req.header("x-api-key", cred).header(
+                "anthropic-version",
+                crate::provider::ANTHROPIC_VERSION,
+            );
+        } else {
+            req = req.header("Authorization", format!("Bearer {cred}"));
+        }
     }
-    let response =
-        req.send().map_err(|err| format!("request failed: {err}"))?;
-    let status = response.status();
-    let text = crate::provider::bounded_body_text(response)
-        .map_err(|err| format!("response read failed: {err}"))?;
-    if !status.is_success() {
-        return Err(http_error_message(status.as_u16(), &url, &text));
-    }
-    let value: Value = serde_json::from_str(&text).map_err(|err| {
-        format!("unrecognized response shape: JSON parse failed: {err}")
+    let response = req.send().map_err(|_err| {
+        crate::provider::redact_sensitive(
+            "request failed: transport unavailable",
+            secret.as_deref(),
+        )
     })?;
-    parse_models_shape(&value)
+    let status = response.status();
+    // Status-only: the transport's read error text is never reported.
+    let text =
+        crate::provider::bounded_body_text_raw(response, secret.as_deref())
+            .map_err(|_err| "response read failed".to_owned())?;
+    if !status.is_success() {
+        return Err(http_error_message_with_secret(
+            status.as_u16(),
+            &url,
+            &text,
+            secret.as_deref(),
+        ));
+    }
+    let value: Value = serde_json::from_str(&text).map_err(|_err| {
+        "unrecognized response shape: JSON parse failed".to_owned()
+    })?;
+    parse_models_shape_with_secret(&value, secret.as_deref())
+}
+
+/// The cancellation result shared by all model-listing probe paths.
+const MODEL_LISTING_CANCELLED: &str = "model listing cancelled";
+
+/// A process-wide single-outstanding-probe permit. The blocking HTTP call
+/// cannot be interrupted by this flag, so a cancelled caller must not start an
+/// unbounded number of those calls (or retain an unbounded number of cloned
+/// credentials) while the current call reaches its fixed timeout.
+static MODEL_LISTING_PROBE_ACTIVE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Releases the single model-listing probe slot on every exit path, including
+/// a worker panic.
+struct ModelListingProbePermit;
+
+impl Drop for ModelListingProbePermit {
+    fn drop(&mut self) {
+        MODEL_LISTING_PROBE_ACTIVE
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+/// Acquire the one model-listing probe slot without cloning its request
+/// inputs. Waiters poll the caller's cancellation flag just like the existing
+/// result loop does.
+fn acquire_model_listing_probe(
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<ModelListingProbePermit, String> {
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    loop {
+        if cancelled.load(Ordering::Acquire) {
+            return Err(MODEL_LISTING_CANCELLED.to_owned());
+        }
+        if MODEL_LISTING_PROBE_ACTIVE
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            return Ok(ModelListingProbePermit);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Apply the terminal cancellation precedence rule to a ready probe result.
+fn finish_model_listing_probe<T>(
+    result: Result<T, String>,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<T, String> {
+    if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+        return Err(MODEL_LISTING_CANCELLED.to_owned());
+    }
+    result
+}
+
+/// Run one blocking model-listing probe with a joined result path and a
+/// serialized in-flight worker. On cancellation, the caller returns promptly;
+/// the one worker that is still inside the bounded HTTP timeout owns the
+/// permit until it exits, so a later invocation cannot accumulate another
+/// detached probe or credential clone.
+fn run_model_listing_probe<T, Prepare, Probe>(
+    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    prepare: Prepare,
+) -> Result<T, String>
+where
+    T: Send + 'static,
+    Prepare: FnOnce() -> Probe,
+    Probe: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    use std::sync::atomic::Ordering;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    if cancelled.load(Ordering::Acquire) {
+        return Err(MODEL_LISTING_CANCELLED.to_owned());
+    }
+    let permit = acquire_model_listing_probe(&cancelled)?;
+    // Do not clone endpoint/auth inputs after cancellation wins the slot.
+    if cancelled.load(Ordering::Acquire) {
+        return Err(MODEL_LISTING_CANCELLED.to_owned());
+    }
+    let probe = prepare();
+    if cancelled.load(Ordering::Acquire) {
+        return Err(MODEL_LISTING_CANCELLED.to_owned());
+    }
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let worker = std::thread::spawn(move || {
+        let _permit = permit;
+        let result = probe();
+        let _ = sender.send(result);
+    });
+    loop {
+        if cancelled.load(Ordering::Acquire) {
+            // If the worker has already finished, join it before returning.
+            // Otherwise its RAII permit keeps this the sole in-flight probe
+            // while the bounded HTTP timeout winds down.
+            if worker.is_finished() {
+                let _ = worker.join();
+            }
+            return Err(MODEL_LISTING_CANCELLED.to_owned());
+        }
+        match receiver.recv_timeout(Duration::from_millis(50)) {
+            Ok(result) => {
+                let _ = worker.join();
+                // Cancellation outranks a result that was ready at the
+                // terminal boundary.
+                return finish_model_listing_probe(result, &cancelled);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                let _ = worker.join();
+                return finish_model_listing_probe(
+                    Err("model listing worker ended unexpectedly".to_owned()),
+                    &cancelled,
+                );
+            }
+        }
+    }
+}
+
+/// Fetch an OpenAI-compatible model listing while polling a cancellation
+/// flag. The blocking HTTP probe runs on a bounded helper thread so a TUI
+/// interrupt can return control to the worker; the request itself still has
+/// the fixed five-second timeout, and a cancelled probe never exposes its
+/// result.
+pub fn fetch_models_cancellable(
+    endpoint: &str,
+    credential: Option<&HostCredential>,
+    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<Vec<String>, String> {
+    fetch_models_for_protocol_cancellable(
+        endpoint,
+        credential,
+        Protocol::OpenAiCompletions,
+        None,
+        cancelled,
+    )
+}
+
+fn fetch_models_for_protocol_cancellable(
+    endpoint: &str,
+    credential: Option<&HostCredential>,
+    protocol: Protocol,
+    auth_provider: Option<&str>,
+    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<Vec<String>, String> {
+    run_model_listing_probe(cancelled, || {
+        let endpoint = endpoint.to_owned();
+        let credential = credential.cloned();
+        let auth_provider = auth_provider.map(str::to_owned);
+        move || {
+            fetch_models_for_protocol(
+                &endpoint,
+                credential.as_ref(),
+                protocol,
+                auth_provider.as_deref(),
+            )
+        }
+    })
+}
+
+/// Fetch an Anthropic model listing using the provider's actual auth
+/// headers. Keeping this beside the OpenAI-compatible listing keeps `/models`
+/// on the effective provider route instead of borrowing an unrelated
+/// workspace endpoint or credential.
+pub fn fetch_models_anthropic(
+    endpoint: &str,
+    credential: Option<&HostCredential>,
+) -> Result<Vec<String>, String> {
+    let url = models_url(endpoint);
+    let client = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(5))
+        .connect_timeout(std::time::Duration::from_secs(3))
+        .build()
+        .map_err(|err| format!("client build failed: {err}"))?;
+    let secret =
+        credential.map(|c| String::from_utf8_lossy(c.as_bytes()).to_string());
+    let mut req = client
+        .get(&url)
+        .header("Content-Type", "application/json")
+        .header("anthropic-version", crate::provider::ANTHROPIC_VERSION);
+    if let Some(credential) = credential {
+        req = req.header(
+            "x-api-key",
+            String::from_utf8_lossy(credential.as_bytes()).to_string(),
+        );
+    }
+    let response = req.send().map_err(|_err| {
+        crate::provider::redact_sensitive(
+            "request failed: transport unavailable",
+            secret.as_deref(),
+        )
+    })?;
+    let status = response.status();
+    // Status-only: the transport's read error text is never reported.
+    let text =
+        crate::provider::bounded_body_text_raw(response, secret.as_deref())
+            .map_err(|_err| "response read failed".to_owned())?;
+    if !status.is_success() {
+        return Err(http_error_message_with_secret(
+            status.as_u16(),
+            &url,
+            &text,
+            secret.as_deref(),
+        ));
+    }
+    let value: Value = serde_json::from_str(&text).map_err(|_err| {
+        "unrecognized response shape: JSON parse failed".to_owned()
+    })?;
+    parse_models_shape_with_secret(&value, secret.as_deref())
+}
+
+/// Fetch an Anthropic model listing while polling a cancellation flag.
+pub fn fetch_models_anthropic_cancellable(
+    endpoint: &str,
+    credential: Option<&HostCredential>,
+    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<Vec<String>, String> {
+    run_model_listing_probe(cancelled, || {
+        let endpoint = endpoint.to_owned();
+        let credential = credential.cloned();
+        move || fetch_models_anthropic(&endpoint, credential.as_ref())
+    })
 }
 
 /// Parse the OpenAI models response shape `{data: [{id: "..."}]}` into ids.
 /// Public for tests to inject fixture-shaped responses via existing infra.
 pub fn parse_models_shape(value: &Value) -> Result<Vec<String>, String> {
+    parse_models_shape_with_secret(value, None)
+}
+
+fn parse_models_shape_with_secret(
+    value: &Value,
+    secret: Option<&str>,
+) -> Result<Vec<String>, String> {
     let data =
         value.get("data").and_then(|d| d.as_array()).ok_or_else(|| {
             "unrecognized response shape: expected {data: [{id: \"...\"}]}"
                 .to_owned()
         })?;
-    let mut ids = Vec::new();
-    for entry in data {
-        if let Some(id) = entry.get("id").and_then(|v| v.as_str()) {
-            ids.push(id.to_owned());
-        }
+    if data.len() > MAX_MODEL_IDS {
+        return Err(format!(
+            "provider model listing exceeds the {MAX_MODEL_IDS}-id limit"
+        ));
     }
-    if ids.is_empty() && !data.is_empty() {
-        return Err(
-            "unrecognized response shape: no valid model ids".to_owned()
-        );
+    let mut ids = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for entry in data {
+        let id = entry.get("id").and_then(|v| v.as_str()).ok_or_else(|| {
+            "unrecognized response shape: every model entry needs a string id"
+                .to_owned()
+        })?;
+        if id.chars().count() > MAX_MODEL_ID_CHARS
+            || !siralos_core::composition::is_model_id(id)
+        {
+            return Err(
+                "provider returned an invalid model id (empty, too long, or invalid characters)"
+                    .to_owned(),
+            );
+        }
+        if let Some(secret) = secret {
+            if crate::provider::redact_sensitive(id, Some(secret)) != id {
+                return Err(
+                    "provider returned a model id containing the active credential"
+                        .to_owned(),
+                );
+            }
+        }
+        if !seen.insert(id.to_owned()) {
+            return Err("provider returned duplicate model ids".to_owned());
+        }
+        ids.push(id.to_owned());
     }
     Ok(ids)
 }
 
-/// Bounded, regex-free sanitization for provider error bodies: cut at first `<` (HTML), truncate to 240 chars, filter controls.
+/// Bounded, regex-free sanitization used by legacy focused tests to inspect
+/// the old body-bound helper. Production diagnostics no longer reflect bodies.
+#[cfg(test)]
 fn truncated_sanitized_body(body: &str) -> String {
     let cut_at_html = body.find('<').map(|idx| &body[..idx]).unwrap_or(body);
     let truncated: String = cut_at_html.chars().take(240).collect();
@@ -819,19 +1569,34 @@ fn truncated_sanitized_body(body: &str) -> String {
 }
 
 /// Actionable hint appended when the provider answers HTTP 429 (rate
-/// limiting, e.g. a free-tier key over quota). The bounded truthful detail
-/// (status, URL, bounded body) is always kept; this hint says what to do.
+/// limiting, e.g. a free-tier key over quota). Response bodies are not
+/// included in report-safe errors; this hint describes the status only.
 /// No automatic retry is attempted: retrying into a rate limit makes it
 /// worse.
 pub const RATE_LIMIT_HINT: &str = "the provider is rate limiting this key (HTTP 429) -- wait a moment and retry, or switch model";
 
-/// Build the bounded provider HTTP-error message for `status` at `url`
-/// with raw `body`: the truthful `status` + URL + bounded sanitized body
-/// (decisions 137-138 behaviour, unchanged), plus [`RATE_LIMIT_HINT`]
-/// when the status is 429.
+/// Build a status-only provider HTTP error. The bounded response body is
+/// retained for recording, but never reflected into a user-visible string.
+#[cfg(test)]
 fn http_error_message(status: u16, url: &str, body: &str) -> String {
-    let safe = truncated_sanitized_body(body);
-    let base = format!("response failed: {status} at {url} - {safe}");
+    http_error_message_with_secret(status, url, body, None)
+}
+
+fn http_error_message_with_secret(
+    status: u16,
+    url: &str,
+    _body: &str,
+    secret: Option<&str>,
+) -> String {
+    // Provider-controlled response bytes are retained only in the bounded
+    // recording path. Never reflect even a redacted body into a user-visible
+    // error: arbitrary response data may contain unrelated secrets, URLs, or
+    // control characters that the active-credential redactor cannot know.
+    let safe_url = crate::provider::safe_endpoint_for_output(url);
+    let base = crate::provider::redact_sensitive(
+        &format!("response failed: {status} at {safe_url}"),
+        secret,
+    );
     if status == 429 { format!("{base} ({RATE_LIMIT_HINT})") } else { base }
 }
 
@@ -1001,6 +1766,21 @@ mod tests {
     }
 
     #[test]
+    fn buffered_provider_text_redacts_the_literal_credential() {
+        let server = serve(Fixture {
+            status: 200,
+            body: r#"{"content":[{"type":"text","text":"test-cred"}]}"#
+                .to_owned(),
+        });
+        let events =
+            drive(&server.base_url, Protocol::AnthropicMessages, None);
+        let _ = server.recorded();
+        let rendered = format!("{events:?}");
+        assert!(!rendered.contains("test-cred"), "{rendered}");
+        assert!(rendered.contains("[REDACTED]"), "{rendered}");
+    }
+
+    #[test]
     fn probe_records_that_auth_follows_the_name_not_the_declared_protocol() {
         // Recorded drift: `call_generic` chooses the auth header from the
         // provider NAME, so two requests that declare the same protocol get
@@ -1071,11 +1851,43 @@ mod tests {
     }
 
     #[test]
+    fn streamed_turn_checks_cancellation_before_queued_events() {
+        let mut body = String::new();
+        for index in 0..256 {
+            body.push_str(&format!(
+                "data: {{\"choices\":[{{\"delta\":{{\"content\":\"chunk-{index}\"}}}}]}}\n\n"
+            ));
+        }
+        body.push_str("data: [DONE]\n\n");
+        let server = serve(Fixture { status: 200, body });
+        let provider = GenericProvider::new(
+            "probe-vendor".to_owned(),
+            "probe-model".to_owned(),
+            Some(server.base_url.clone()),
+            None,
+        );
+        let request = probe_request();
+        let token = CancellationToken::new();
+        let mut stream = provider.stream(&request, token.signal());
+        let first = stream.next().expect("first streamed event");
+        assert!(matches!(
+            first,
+            ProviderEvent::Event(ModelEvent::TextDelta { .. })
+        ));
+        token.cancel();
+        let next = stream.next().expect("cancellation event");
+        assert!(matches!(next, ProviderEvent::Cancelled { .. }));
+        assert!(stream.next().is_none());
+        drop(stream);
+        let _ = server.recorded();
+    }
+
+    #[test]
     fn probe_records_the_http_error_matrix() {
         // Recorded baseline, not an approved-parity claim: these assertions
         // describe what this path does today at each (status, body) pair.
         for status in ERROR_STATUSES {
-            for (label, body) in error_bodies() {
+            for (_label, body) in error_bodies() {
                 let server = serve(Fixture { status, body: body.clone() });
                 let events =
                     drive(&server.base_url, Protocol::OpenAiCompletions, None);
@@ -1087,30 +1899,16 @@ mod tests {
                     "{message}"
                 );
                 assert!(
-                    message.len() <= 240 + 512,
+                    message.len() <= 512,
                     "status {status}: {} bytes",
                     message.len()
                 );
-                if label.contains("html") {
-                    // Recorded: this path cuts the body at the first `<`, so no
-                    // markup reaches the diagnostic (the other two keep it).
-                    assert!(!message.contains("<html>"), "{message}");
-                }
-                if label == "10kb-html" {
-                    // Recorded: the cut happens BEFORE the 240-character
-                    // truncation, so the 300-character prefix survives exactly
-                    // its first 240 characters and nothing after the markup
-                    // leaks into the diagnostic.
-                    assert!(
-                        message.contains(&"x".repeat(240)),
-                        "the prefix is kept to the bound: {message}"
-                    );
-                    assert!(!message.contains("<html>"), "{message}");
-                    assert!(!message.contains('z'), "{message}");
-                }
+                assert!(!message.contains("<html>"), "{message}");
                 if status == 429 {
-                    // Recorded: only this path appends an actionable hint.
-                    assert!(message.contains("rate limiting"), "{message}");
+                    assert!(
+                        message.contains(super::RATE_LIMIT_HINT),
+                        "{message}"
+                    );
                 } else {
                     assert!(!message.contains("rate limiting"), "{message}");
                 }
@@ -1206,7 +2004,7 @@ mod tests {
         let _ = server.recorded();
         let message = failed_message(&events);
         assert!(
-            message.starts_with("probe-vendor response JSON parse failed: "),
+            message.starts_with("probe-vendor response JSON parse failed"),
             "{message}"
         );
         assert!(
@@ -1229,7 +2027,7 @@ mod tests {
         let _ = server.recorded();
         let message = failed_message(&events);
         assert!(
-            message.starts_with("probe-vendor response read failed: "),
+            message.starts_with("probe-vendor response read failed"),
             "{message}"
         );
     }
@@ -1409,6 +2207,76 @@ mod tests {
     }
 
     #[test]
+    fn a_pre_cancelled_model_probe_stops_before_spawning_a_request() {
+        let cancelled =
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let error = super::fetch_models_cancellable(
+            "https://user:password@example.invalid/v1?token=secret",
+            None,
+            cancelled,
+        )
+        .expect_err("pre-cancelled probe");
+        assert_eq!(error, "model listing cancelled");
+    }
+
+    #[test]
+    fn model_listing_probe_does_not_prepare_after_pre_cancellation() {
+        use std::sync::atomic::Ordering;
+
+        let cancelled =
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let prepared =
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let prepared_for_probe = prepared.clone();
+        let result: Result<Vec<String>, String> =
+            super::run_model_listing_probe(cancelled, move || {
+                prepared_for_probe.store(true, Ordering::Release);
+                || Ok::<Vec<String>, String>(Vec::new())
+            });
+
+        assert_eq!(result.unwrap_err(), "model listing cancelled");
+        assert!(!prepared.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn model_listing_probe_final_check_rejects_a_ready_result() {
+        let cancelled =
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let result = super::finish_model_listing_probe(
+            Ok::<Vec<String>, String>(vec!["must-not-escape".to_owned()]),
+            &cancelled,
+        );
+
+        assert_eq!(result.unwrap_err(), "model listing cancelled");
+    }
+
+    #[test]
+    fn model_listing_probe_permit_is_released_after_drop() {
+        use std::sync::atomic::Ordering;
+
+        let cancelled =
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let permit = super::acquire_model_listing_probe(&cancelled)
+            .expect("single probe slot");
+        assert!(super::MODEL_LISTING_PROBE_ACTIVE.load(Ordering::Acquire));
+        drop(permit);
+        assert!(!super::MODEL_LISTING_PROBE_ACTIVE.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn a_pre_cancelled_anthropic_probe_stops_before_spawning_a_request() {
+        let cancelled =
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let error = super::fetch_models_anthropic_cancellable(
+            "https://user:password@example.invalid/v1?token=secret",
+            None,
+            cancelled,
+        )
+        .expect_err("pre-cancelled Anthropic probe");
+        assert_eq!(error, "model listing cancelled");
+    }
+
+    #[test]
     fn fetch_models_error_is_bounded_and_has_url_status() {
         // Force a 404 error via unreachable endpoint with body containing html — the error from fetch_models should be bounded
         // We test the helper directly since live fetch would need a server; the shape is verified by error_truncation tests above.
@@ -1420,25 +2288,18 @@ mod tests {
     }
 
     #[test]
-    fn http_429_error_keeps_status_url_body_and_adds_actionable_hint() {
-        // Placeholder host only; no network.
+    fn http_429_error_is_status_only_with_actionable_hint() {
         let url = "https://api.example.com/v1/chat/completions";
-        let body = r#"{"error":{"message":"Provider rate limit exceeded"}}"#;
-        let msg = super::http_error_message(429, url, body);
+        let msg = super::http_error_message(429, url, "provider body");
         assert!(msg.contains("429"), "status must stay: {msg:?}");
-        assert!(msg.contains(url), "URL must stay: {msg:?}");
         assert!(
-            msg.contains("Provider rate limit exceeded"),
-            "bounded body must stay: {msg:?}"
+            msg.contains("https://api.example.com"),
+            "authority must stay: {msg:?}"
         );
-        assert!(
-            msg.contains(super::RATE_LIMIT_HINT),
-            "actionable hint must be added: {msg:?}"
-        );
-        assert!(
-            msg.contains("wait a moment and retry"),
-            "hint must say what to do: {msg:?}"
-        );
+        assert!(!msg.contains("/v1/chat/completions"), "path must be dropped");
+        assert!(!msg.contains("provider body"), "body must not be reflected");
+        assert!(msg.contains(super::RATE_LIMIT_HINT));
+        assert!(msg.contains("wait a moment and retry"));
     }
 
     #[test]
@@ -1453,10 +2314,10 @@ mod tests {
                 msg.contains(&status.to_string()),
                 "status must stay: {msg:?}"
             );
-            assert!(msg.contains(url), "URL must stay: {msg:?}");
+            assert!(msg.contains("https://api.example.com"), "authority");
             assert!(
-                msg.contains("something broke"),
-                "body must stay: {msg:?}"
+                !msg.contains("something broke"),
+                "provider body must not be reflected: {msg:?}"
             );
             assert!(
                 !msg.contains("rate limiting"),
@@ -1466,28 +2327,18 @@ mod tests {
     }
 
     #[test]
-    fn http_429_error_body_stays_bounded() {
-        // The 240-char bound (decisions 137-138) still applies to the body
-        // portion when the 429 hint is appended.
-        let body = "x".repeat(10000);
+    fn http_429_error_body_is_not_reflected() {
+        let body = "LEAKME".repeat(2000);
         let msg = super::http_error_message(
             429,
             "https://api.example.com/v1/chat/completions",
             &body,
         );
         assert!(
-            !msg.contains(&"x".repeat(241)),
-            "body portion must stay bounded: len {}",
-            msg.len()
+            !msg.contains("LEAKME"),
+            "body must not be reflected: {msg:?}"
         );
-        assert!(
-            msg.contains(&"x".repeat(240)),
-            "bounded body prefix must be kept: {msg:?}"
-        );
-        assert!(
-            msg.contains(super::RATE_LIMIT_HINT),
-            "hint must still be added: {msg:?}"
-        );
+        assert!(msg.contains(super::RATE_LIMIT_HINT));
     }
 
     #[test]
@@ -1561,21 +2412,31 @@ mod tests {
     }
 
     #[test]
-    fn models_url_is_base_plus_models_in_every_case() {
-        // Model listing stays exactly as it is: endpoint + "/models".
+    fn models_url_normalizes_protocol_paths() {
         let cases = [
-            "https://api.example.com/v1",
-            "https://api.example.com/v1/",
-            "https://api.example.com/v1/chat/completions",
-            "https://api.example.com/v1/responses",
-            "https://api.example.com/v1/messages",
+            (
+                "https://api.example.com/v1",
+                "https://api.example.com/v1/models",
+            ),
+            (
+                "https://api.example.com/v1/",
+                "https://api.example.com/v1/models",
+            ),
+            (
+                "https://api.example.com/v1/chat/completions",
+                "https://api.example.com/v1/models",
+            ),
+            (
+                "https://api.example.com/v1/responses",
+                "https://api.example.com/v1/models",
+            ),
+            (
+                "https://api.example.com/v1/messages",
+                "https://api.example.com/v1/models",
+            ),
         ];
-        for endpoint in cases {
-            let trimmed = endpoint.trim_end_matches('/');
-            assert_eq!(
-                super::models_url(endpoint),
-                format!("{trimmed}/models")
-            );
+        for (endpoint, expected) in cases {
+            assert_eq!(super::models_url(endpoint), expected);
         }
     }
 }

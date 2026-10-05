@@ -30,10 +30,22 @@ pub enum ProviderKind {
 
 /// Typed refusal for an unregistered provider id. The diagnostic never
 /// echoes the credential.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct UnknownProvider {
     /// The unregistered provider id (bounded, validated at the boundary).
     pub provider_id: String,
+}
+
+impl std::fmt::Debug for UnknownProvider {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        formatter
+            .debug_struct("UnknownProvider")
+            .field("provider_id", &"[CONFIGURED]")
+            .finish()
+    }
 }
 
 impl UnknownProvider {
@@ -67,7 +79,14 @@ pub fn provider_kind_from_str(
         "deterministic-fake" => Ok(ProviderKind::DeterministicFake),
         "openai" => Ok(ProviderKind::OpenAi),
         "anthropic" => Ok(ProviderKind::Anthropic),
-        other => Err(UnknownProvider { provider_id: other.to_owned() }),
+        other => {
+            let safe = if siralos_core::composition::is_provider_id(other) {
+                other
+            } else {
+                "invalid-provider"
+            };
+            Err(UnknownProvider { provider_id: safe.to_owned() })
+        }
     }
 }
 
@@ -122,12 +141,13 @@ impl HostProvider {
         credential: Option<HostCredential>,
         endpoint: Option<String>,
     ) -> Result<Self, String> {
+        let protocol = if provider == "anthropic" {
+            siralos_core::composition::Protocol::AnthropicMessages
+        } else {
+            siralos_core::composition::Protocol::default()
+        };
         Self::from_provider_str_with_protocol(
-            provider,
-            model,
-            credential,
-            endpoint,
-            siralos_core::composition::Protocol::default(),
+            provider, model, credential, endpoint, protocol,
         )
     }
 
@@ -142,14 +162,45 @@ impl HostProvider {
         endpoint: Option<String>,
         protocol: siralos_core::composition::Protocol,
     ) -> Result<Self, String> {
+        if !siralos_core::composition::is_provider_id(provider) {
+            return Err("provider id is invalid".to_owned());
+        }
+        if let Some(model) = model.as_deref() {
+            Self::validate_model_id(model)?;
+        }
+        if let Some(endpoint) = endpoint.as_deref() {
+            if !siralos_core::composition::is_valid_http_endpoint(endpoint) {
+                return Err(
+                    "provider endpoint is not a valid HTTP(S) URL".to_owned()
+                );
+            }
+        }
         if provider == "deterministic-fake" {
             return Ok(Self::Fake(
                 crate::provider::deterministic_fake::DeterministicFakeProvider::new(),
             ));
         }
-        // For known providers, use the typed OpenAi/Anthropic adapters;
-        // for any other provider, use Generic.
+        // Named providers retain their typed, fixed routes. A custom
+        // endpoint/protocol is only valid for an explicitly generic
+        // provider; silently turning `openai`/`anthropic` into a generic
+        // client would send their credential to an arbitrary destination.
         match provider_kind_from_str(provider) {
+            Ok(ProviderKind::OpenAi)
+                if endpoint.is_some()
+                    || protocol
+                        != siralos_core::composition::Protocol::OpenAiCompletions =>
+            {
+                Err("named providers do not accept endpoint or protocol overrides"
+                    .to_owned())
+            }
+            Ok(ProviderKind::Anthropic)
+                if endpoint.is_some()
+                    || protocol
+                        != siralos_core::composition::Protocol::AnthropicMessages =>
+            {
+                Err("named providers do not accept endpoint or protocol overrides"
+                    .to_owned())
+            }
             Ok(ProviderKind::OpenAi) => Self::from_kind_with_model(
                 ProviderKind::OpenAi,
                 credential,
@@ -179,12 +230,22 @@ impl HostProvider {
         }
     }
 
+    fn validate_model_id(model: &str) -> Result<(), String> {
+        if !siralos_core::composition::is_model_id(model) {
+            return Err("provider model id is invalid".to_owned());
+        }
+        Ok(())
+    }
+
     /// Construct a `HostProvider` with an explicit `model` id.
     pub fn from_kind_with_model(
         kind: ProviderKind,
         credential: Option<HostCredential>,
         model: Option<String>,
     ) -> Result<Self, String> {
+        if let Some(model) = model.as_deref() {
+            Self::validate_model_id(model)?;
+        }
         match kind {
             ProviderKind::DeterministicFake => {
                 Ok(Self::Fake(
@@ -243,14 +304,24 @@ impl HostProvider {
     /// adapters read the same cell at `stream()` time, so the switched id
     /// flows into the request body. Provider/endpoint/credential are
     /// never re-composed here (separate approved slice).
-    pub fn set_live_model(&self, model: &str) {
+    pub fn set_live_model(&self, model: &str) -> bool {
+        if Self::validate_model_id(model).is_err() {
+            return false;
+        }
         match self {
-            Self::Fake(_) => {}
-            Self::OpenAi(provider) => provider.set_model(model.to_owned()),
+            Self::Fake(_) => false,
+            Self::OpenAi(provider) => {
+                provider.set_model(model.to_owned());
+                true
+            }
             Self::Anthropic(provider) => {
                 provider.set_model(model.to_owned());
+                true
             }
-            Self::Generic(provider) => provider.set_model(model.to_owned()),
+            Self::Generic(provider) => {
+                provider.set_model(model.to_owned());
+                true
+            }
         }
     }
 
@@ -266,15 +337,41 @@ impl HostProvider {
         }
     }
 
+    /// Whether this provider accepts a live model swap.
+    #[must_use]
+    pub fn supports_live_model(&self) -> bool {
+        matches!(self, Self::OpenAi(_) | Self::Anthropic(_) | Self::Generic(_))
+    }
+
+    /// Whether this provider accepts a live endpoint swap.
+    #[must_use]
+    pub fn supports_live_endpoint(&self) -> bool {
+        matches!(self, Self::Generic(_))
+    }
+
+    /// Whether this provider accepts a live protocol swap.
+    #[must_use]
+    pub fn supports_live_protocol(&self) -> bool {
+        matches!(self, Self::Generic(_))
+    }
+
+    /// Whether this provider accepts a live credential swap.
+    #[must_use]
+    pub fn supports_live_credential(&self) -> bool {
+        matches!(self, Self::Generic(_))
+    }
+
     /// Replace the live endpoint base for the NEXT provider request.
     ///
     /// Only `Generic` carries a configurable endpoint: the named adapters
     /// post to fixed URLs and ignore this. `None` restores the
     /// provider-neutral placeholder. `/reload` uses this to apply a changed
     /// `endpoint` without rebuilding the provider.
-    pub fn set_live_endpoint(&self, endpoint: Option<String>) {
+    pub fn set_live_endpoint(&self, endpoint: Option<String>) -> bool {
         if let Self::Generic(provider) = self {
-            provider.set_endpoint(endpoint);
+            provider.try_set_endpoint(endpoint).is_ok()
+        } else {
+            false
         }
     }
 
@@ -282,9 +379,19 @@ impl HostProvider {
     /// the provider is not endpoint-configurable or has no endpoint set.
     #[must_use]
     pub fn live_endpoint(&self) -> Option<String> {
+        self.effective_endpoint()
+    }
+
+    /// Effective endpoint used by the next request, including fixed routes.
+    #[must_use]
+    pub fn effective_endpoint(&self) -> Option<String> {
         match self {
             Self::Generic(provider) => provider.live_endpoint(),
-            _ => None,
+            Self::OpenAi(_) => Some("https://api.openai.com/v1".to_owned()),
+            Self::Anthropic(_) => {
+                Some("https://api.anthropic.com/v1".to_owned())
+            }
+            Self::Fake(_) => None,
         }
     }
 
@@ -293,9 +400,12 @@ impl HostProvider {
     pub fn set_live_protocol(
         &self,
         protocol: siralos_core::composition::Protocol,
-    ) {
+    ) -> bool {
         if let Self::Generic(provider) = self {
             provider.set_protocol(protocol);
+            true
+        } else {
+            false
         }
     }
 
@@ -308,6 +418,21 @@ impl HostProvider {
         match self {
             Self::Generic(provider) => Some(provider.live_protocol()),
             _ => None,
+        }
+    }
+
+    /// Effective protocol used by the next request, including fixed routes.
+    #[must_use]
+    pub fn effective_protocol(&self) -> siralos_core::composition::Protocol {
+        match self {
+            Self::Generic(provider) => provider.live_protocol(),
+            Self::OpenAi(_) => {
+                siralos_core::composition::Protocol::OpenAiCompletions
+            }
+            Self::Anthropic(_) => {
+                siralos_core::composition::Protocol::AnthropicMessages
+            }
+            Self::Fake(_) => siralos_core::composition::Protocol::default(),
         }
     }
 
@@ -338,6 +463,64 @@ impl HostProvider {
             Self::Generic(provider) => provider.live_credential(),
             _ => None,
         }
+    }
+
+    /// Fetch models through the effective provider instance. Named
+    /// providers use their own fixed route and auth; only Generic consumes
+    /// the live endpoint/credential cells.
+    pub fn fetch_models(&self) -> Result<Vec<String>, String> {
+        match self {
+            Self::Fake(_) => {
+                Err("deterministic-fake has no remote model listing"
+                    .to_owned())
+            }
+            Self::OpenAi(provider) => provider.fetch_models(),
+            Self::Anthropic(provider) => provider.fetch_models(),
+            Self::Generic(provider) => provider.fetch_models(),
+        }
+    }
+
+    /// Fetch models while polling a caller-owned cancellation flag.
+    pub fn fetch_models_cancellable(
+        &self,
+        cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<Vec<String>, String> {
+        match self {
+            Self::Fake(_) => {
+                Err("deterministic-fake has no remote model listing"
+                    .to_owned())
+            }
+            Self::OpenAi(provider) => {
+                provider.fetch_models_cancellable(cancelled)
+            }
+            Self::Anthropic(provider) => {
+                provider.fetch_models_cancellable(cancelled)
+            }
+            Self::Generic(provider) => {
+                provider.fetch_models_cancellable(cancelled)
+            }
+        }
+    }
+
+    /// Construct only for a model-list probe and route it through the same
+    /// effective-provider mapping used for chat requests. This keeps a
+    /// provider-add form from accidentally sending its endpoint/credential
+    /// through the Generic path for a named provider.
+    pub fn fetch_models_for_provider(
+        provider: Option<&str>,
+        endpoint: Option<&str>,
+        credential: Option<HostCredential>,
+        protocol: siralos_core::composition::Protocol,
+    ) -> Result<Vec<String>, String> {
+        let provider = provider.unwrap_or("generic");
+        let provider = Self::from_provider_str_with_protocol(
+            provider,
+            None,
+            credential,
+            endpoint.map(str::to_owned),
+            protocol,
+        )?;
+        provider.fetch_models()
     }
 
     /// Take the last replay availability from the inner provider.
@@ -391,6 +574,18 @@ impl ModelProvider for HostProvider {
             Self::Generic(provider) => {
                 Box::new(provider.stream(request, cancellation))
             }
+        }
+    }
+
+    fn open_stream<'a>(
+        &'a self,
+        request: siralos_core::provider::ModelRequest,
+    ) -> Box<dyn Iterator<Item = ProviderEvent> + 'a> {
+        match self {
+            Self::Fake(provider) => provider.open_stream(request),
+            Self::OpenAi(provider) => provider.open_stream(request),
+            Self::Anthropic(provider) => provider.open_stream(request),
+            Self::Generic(provider) => provider.open_stream(request),
         }
     }
 }

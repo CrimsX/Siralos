@@ -28,6 +28,8 @@ pub const MAX_REFERENCES: usize = 16;
 pub const MAX_IDENTIFIER_LENGTH: usize = 64;
 /// Maximum configured review-provider identifier length.
 pub const MAX_REVIEW_PROVIDER_LENGTH: usize = 128;
+/// Workspace-profile approval is an exact 64-character SHA-256 digest.
+pub const PROFILE_APPROVAL_DIGEST_LENGTH: usize = 64;
 /// Maximum reference description size in UTF-8 bytes.
 pub const MAX_REFERENCE_DESCRIPTION_BYTES: usize = 512;
 /// Maximum local-directory reference path length.
@@ -111,7 +113,7 @@ impl UserGodotEditionHint {
 }
 
 /// One structurally valid configured installation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct UserGodotInstallationConfig {
     /// Absolute installation path as supplied by the user.
     pub path: String,
@@ -119,9 +121,19 @@ pub struct UserGodotInstallationConfig {
     pub edition_hint: UserGodotEditionHint,
 }
 
+impl fmt::Debug for UserGodotInstallationConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("UserGodotInstallationConfig")
+            .field("path", &"[PATH HIDDEN]")
+            .field("edition_hint", &self.edition_hint)
+            .finish()
+    }
+}
+
 /// Generic Godot configuration envelope. R8/R9 own semantic selection and
 /// PATH/engine behavior; this type deliberately does not implement them.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct UserGodotConfig {
     /// Optional configured installation id.
     pub active_installation: Option<String>,
@@ -129,6 +141,20 @@ pub struct UserGodotConfig {
     pub installations: BTreeMap<String, UserGodotInstallationConfig>,
     /// Whether the future Godot adapter may use fixed-name PATH discovery.
     pub discover_on_path: bool,
+}
+
+impl fmt::Debug for UserGodotConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("UserGodotConfig")
+            .field(
+                "active_installation",
+                &self.active_installation.as_ref().map(|_| "[CONFIGURED]"),
+            )
+            .field("installation_count", &self.installations.len())
+            .field("discover_on_path", &self.discover_on_path)
+            .finish()
+    }
 }
 
 /// Quality configuration accepted at R7.4.
@@ -191,7 +217,7 @@ impl UserRepositoryRef {
 /// One structurally valid external reference declaration. Semantic source
 /// validation is exposed separately because the TypeScript application keeps
 /// invalid reference declarations nonfatal at startup.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct UserReferenceConfig {
     /// Reference source kind.
     pub kind: UserReferenceKind,
@@ -205,9 +231,31 @@ pub struct UserReferenceConfig {
     pub description: Option<String>,
 }
 
+impl fmt::Debug for UserReferenceConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("UserReferenceConfig")
+            .field("kind", &self.kind)
+            .field("path", &self.path.as_ref().map(|_| "[PATH HIDDEN]"))
+            .field(
+                "repository",
+                &self.repository.as_ref().map(|_| "[URI HIDDEN]"),
+            )
+            .field(
+                "reference",
+                &self.reference.as_ref().map(|_| "[PROJECTED]"),
+            )
+            .field(
+                "description",
+                &self.description.as_ref().map(|_| "[PROJECTED]"),
+            )
+            .finish()
+    }
+}
+
 /// Parsed user configuration with all absent sections materialized to their
 /// deterministic defaults.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct UserConfig {
     /// Sandbox selection.
     pub sandbox: UserSandboxConfig,
@@ -217,6 +265,25 @@ pub struct UserConfig {
     pub quality: UserQualityConfig,
     /// External reference declarations.
     pub references: BTreeMap<String, UserReferenceConfig>,
+    /// Optional exact SHA-256 approval for a workspace profile that requests
+    /// credential-bearing or otherwise authority-bearing profile fields.
+    pub profile_approval: Option<String>,
+}
+
+impl fmt::Debug for UserConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("UserConfig")
+            .field("sandbox", &self.sandbox)
+            .field("godot", &self.godot)
+            .field("quality", &self.quality)
+            .field("reference_count", &self.references.len())
+            .field(
+                "profile_approval",
+                &self.profile_approval.as_ref().map(|_| "[DIGEST]"),
+            )
+            .finish()
+    }
 }
 
 impl Default for UserConfig {
@@ -233,6 +300,7 @@ impl Default for UserConfig {
             },
             quality: UserQualityConfig { review_provider: None },
             references: BTreeMap::new(),
+            profile_approval: None,
         }
     }
 }
@@ -318,36 +386,63 @@ pub fn default_user_config_path() -> Result<PathBuf, ConfigError> {
 /// primitive. Missing files return defaults and never create a directory or
 /// file. Symlinks and non-regular files are rejected before opening.
 pub fn load_user_config(path: &Path) -> Result<UserConfig, ConfigError> {
+    if let Some(parent) =
+        path.parent().filter(|parent| !parent.as_os_str().is_empty())
+    {
+        // The leaf is lstat-checked below; a redirected state directory would
+        // still point the read at a file the user never configured. Ancestor
+        // directories above the immediate parent are not constrained here: a
+        // home directory may legitimately live under a junction.
+        match std::fs::symlink_metadata(parent) {
+            Ok(metadata)
+                if crate::workspace::fs::is_link_or_reparse(&metadata)
+                    || !metadata.is_dir() =>
+            {
+                return Err(ConfigError::new(
+                    ConfigErrorCategory::NotRegular,
+                    "Siralos configuration directory (path hidden) must be a real directory."
+                        .to_owned(),
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                // An absent state directory is an absent configuration, and
+                // this loader never creates one.
+                return Ok(UserConfig::default());
+            }
+            Err(_error) => {
+                return Err(ConfigError::new(
+                    ConfigErrorCategory::CannotRead,
+                    "Cannot read Siralos configuration (path hidden)."
+                        .to_owned(),
+                ));
+            }
+        }
+    }
     let metadata = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(UserConfig::default());
         }
-        Err(error) => {
+        Err(_error) => {
             return Err(ConfigError::new(
                 ConfigErrorCategory::CannotRead,
-                format!(
-                    "Cannot read Siralos configuration at {}: {error}",
-                    path.display()
-                ),
+                "Cannot read Siralos configuration (path hidden).".to_owned(),
             ));
         }
     };
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(ConfigError::new(
             ConfigErrorCategory::NotRegular,
-            format!(
-                "Siralos configuration at {} is not a regular file.",
-                path.display()
-            ),
+            "Siralos configuration (path hidden) is not a regular file."
+                .to_owned(),
         ));
     }
     if metadata.len() > MAX_CONFIG_FILE_BYTES as u64 {
         return Err(ConfigError::new(
             ConfigErrorCategory::TooLarge,
             format!(
-                "Siralos configuration at {} exceeds the {MAX_CONFIG_FILE_BYTES}-byte limit.",
-                path.display()
+                "Siralos configuration (path hidden) exceeds the {MAX_CONFIG_FILE_BYTES}-byte limit."
             ),
         ));
     }
@@ -357,8 +452,7 @@ pub fn load_user_config(path: &Path) -> Result<UserConfig, ConfigError> {
             return Err(ConfigError::new(
                 ConfigErrorCategory::TooLarge,
                 format!(
-                    "Siralos configuration at {} could not be read within the {MAX_CONFIG_FILE_BYTES}-byte limit.",
-                    path.display()
+                    "Siralos configuration (path hidden) could not be read within the {MAX_CONFIG_FILE_BYTES}-byte limit."
                 ),
             ));
         }
@@ -366,37 +460,29 @@ pub fn load_user_config(path: &Path) -> Result<UserConfig, ConfigError> {
             return Err(ConfigError::new(
                 ConfigErrorCategory::CannotRead,
                 format!(
-                    "Siralos configuration at {} could not be read within the {MAX_CONFIG_FILE_BYTES}-byte limit.",
-                    path.display()
+                    "Siralos configuration (path hidden) could not be read within the {MAX_CONFIG_FILE_BYTES}-byte limit."
                 ),
             ));
         }
-        BoundedFileRead::IoError(error) => {
+        BoundedFileRead::IoError(_error) => {
             return Err(ConfigError::new(
                 ConfigErrorCategory::CannotRead,
-                format!(
-                    "Cannot read Siralos configuration at {}: {error}",
-                    path.display()
-                ),
+                "Cannot read Siralos configuration (path hidden).".to_owned(),
             ));
         }
     };
     let content = decode_utf8(&bytes).ok_or_else(|| {
         ConfigError::new(
             ConfigErrorCategory::InvalidUtf8,
-            format!(
-                "Siralos configuration at {} is not valid UTF-8.",
-                path.display()
-            ),
+            "Siralos configuration (path hidden) is not valid UTF-8."
+                .to_owned(),
         )
     })?;
-    let value: Value = serde_json::from_str(&content).map_err(|error| {
+    let value: Value = serde_json::from_str(&content).map_err(|_error| {
         ConfigError::new(
             ConfigErrorCategory::InvalidJson,
-            format!(
-                "Siralos configuration at {} is not valid JSON: {error}",
-                path.display()
-            ),
+            "Siralos configuration at path hidden is not valid JSON."
+                .to_owned(),
         )
     })?;
     parse_user_config(&value)
@@ -470,6 +556,11 @@ pub fn read_configuration_diagnostics(
         }
         Err(_) => ConfigurationFileState::Unreadable,
     };
+    // The diagnostics projection is a FROZEN differential contract: the pinned
+    // oracle records exactly these four sections (corpus `user-config-matrix`,
+    // parity required), so a section added to the product after the freeze is
+    // parsed and honored but must not appear here. Surfacing it would be a
+    // reviewed oracle amendment, not a code change.
     let mut sections = [
         ConfigurationSectionPresence { name: "sandbox", present: false },
         ConfigurationSectionPresence { name: "godot", present: false },
@@ -506,12 +597,15 @@ pub fn read_configuration_diagnostics(
 /// Parse the JSON representation without accessing the filesystem.
 pub fn parse_user_config(value: &Value) -> Result<UserConfig, ConfigError> {
     let root = object(value, "Siralos configuration")?;
-    if let Some(key) =
-        first_unknown(root, &["sandbox", "godot", "quality", "references"])
+    if first_unknown(
+        root,
+        &["sandbox", "godot", "quality", "references", "profileApproval"],
+    )
+    .is_some()
     {
         return Err(ConfigError::new(
             ConfigErrorCategory::InvalidValue,
-            format!("Unknown Siralos configuration section: {key}."),
+            "Unknown Siralos configuration section.".to_owned(),
         ));
     }
     Ok(UserConfig {
@@ -530,6 +624,10 @@ pub fn parse_user_config(value: &Value) -> Result<UserConfig, ConfigError> {
         references: match root.get("references") {
             Some(value) => parse_references(value)?,
             None => BTreeMap::new(),
+        },
+        profile_approval: match root.get("profileApproval") {
+            None | Some(Value::Null) => None,
+            Some(value) => Some(parse_profile_approval(value)?),
         },
     })
 }
@@ -551,10 +649,10 @@ fn reject_unknown(
     allowed: &[&str],
     subject: &str,
 ) -> Result<(), ConfigError> {
-    if let Some(key) = first_unknown(object, allowed) {
+    if first_unknown(object, allowed).is_some() {
         return Err(ConfigError::new(
             ConfigErrorCategory::InvalidValue,
-            format!("Unknown {subject} key: {key}."),
+            format!("Unknown {subject} key."),
         ));
     }
     Ok(())
@@ -582,10 +680,6 @@ fn string_value<'a>(
     })
 }
 
-fn value_label(value: &Value) -> String {
-    value.to_string()
-}
-
 fn parse_sandbox(value: &Value) -> Result<UserSandboxConfig, ConfigError> {
     let object = object(value, "Siralos configuration section \"sandbox\"")?;
     reject_unknown(
@@ -598,12 +692,11 @@ fn parse_sandbox(value: &Value) -> Result<UserSandboxConfig, ConfigError> {
         Some(value) => match string_value(value, "sandbox.profile")? {
             "inspect" => UserSandboxProfileId::Inspect,
             "develop-offline" => UserSandboxProfileId::DevelopOffline,
-            other => {
+            _other => {
                 return Err(ConfigError::new(
                     ConfigErrorCategory::InvalidValue,
-                    format!(
-                        "Unknown sandbox profile: {other}. Expected one of: inspect, develop-offline."
-                    ),
+                    "Unknown sandbox profile; expected inspect or develop-offline."
+                        .to_owned(),
                 ));
             }
         },
@@ -613,12 +706,11 @@ fn parse_sandbox(value: &Value) -> Result<UserSandboxConfig, ConfigError> {
         Some(value) => match string_value(value, "sandbox.backend")? {
             "auto" => UserSandboxBackendId::Auto,
             "anthropic-runtime" => UserSandboxBackendId::AnthropicRuntime,
-            other => {
+            _other => {
                 return Err(ConfigError::new(
                     ConfigErrorCategory::InvalidValue,
-                    format!(
-                        "Unknown sandbox backend: {other}. Expected one of: auto, anthropic-runtime."
-                    ),
+                    "Unknown sandbox backend; expected auto or anthropic-runtime."
+                        .to_owned(),
                 ));
             }
         },
@@ -655,6 +747,19 @@ fn parse_quality(value: &Value) -> Result<UserQualityConfig, ConfigError> {
     Ok(UserQualityConfig { review_provider })
 }
 
+fn parse_profile_approval(value: &Value) -> Result<String, ConfigError> {
+    let digest = string_value(value, "profileApproval")?;
+    if digest.len() != PROFILE_APPROVAL_DIGEST_LENGTH
+        || !digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(ConfigError::new(
+            ConfigErrorCategory::InvalidValue,
+            "profileApproval must be exactly 64 hexadecimal SHA-256 characters.",
+        ));
+    }
+    Ok(digest.to_ascii_lowercase())
+}
+
 fn parse_godot(value: &Value) -> Result<UserGodotConfig, ConfigError> {
     let object = object(value, "Siralos configuration section \"godot\"")?;
     reject_unknown(
@@ -666,7 +771,10 @@ fn parse_godot(value: &Value) -> Result<UserGodotConfig, ConfigError> {
         None | Some(Value::Null) => None,
         Some(value) => {
             let id = string_value(value, "godot.activeInstallation")?;
-            if id.is_empty() || id.chars().count() > MAX_IDENTIFIER_LENGTH {
+            if id.is_empty()
+                || id.chars().count() > MAX_IDENTIFIER_LENGTH
+                || id.chars().any(char::is_control)
+            {
                 return Err(ConfigError::new(
                     ConfigErrorCategory::InvalidValue,
                     format!(
@@ -714,37 +822,29 @@ fn parse_installations(
     }
     let mut installations = BTreeMap::new();
     for (id, value) in entries {
-        if id.is_empty() || id.chars().count() > MAX_IDENTIFIER_LENGTH {
-            return Err(ConfigError::new(
-                ConfigErrorCategory::InvalidValue,
-                format!(
-                    "Godot installation id \"{id}\" must be non-empty and at most {MAX_IDENTIFIER_LENGTH} characters."
-                ),
-            ));
-        }
-        let installation =
-            object(value, &format!("Godot installation \"{id}\""))?;
-        if let Some(key) =
-            first_unknown(installation, &["path", "editionHint"])
+        if id.is_empty()
+            || id.chars().count() > MAX_IDENTIFIER_LENGTH
+            || id.chars().any(char::is_control)
         {
             return Err(ConfigError::new(
                 ConfigErrorCategory::InvalidValue,
-                format!(
-                    "Unknown Godot installation key: {key} (installation \"{id}\")."
-                ),
+                "Godot installation ids must be non-empty, bounded, and control-free."
+                    .to_owned(),
+            ));
+        }
+        let installation = object(value, "Godot installation")?;
+        if first_unknown(installation, &["path", "editionHint"]).is_some() {
+            return Err(ConfigError::new(
+                ConfigErrorCategory::InvalidValue,
+                "Unknown Godot installation key.".to_owned(),
             ));
         }
         let path = match installation.get("path") {
-            Some(value) => string_value(
-                value,
-                &format!("Godot installation \"{id}\" path"),
-            )?,
+            Some(value) => string_value(value, "Godot installation path")?,
             None => {
                 return Err(ConfigError::new(
                     ConfigErrorCategory::InvalidValue,
-                    format!(
-                        "Godot installation \"{id}\" requires an absolute path."
-                    ),
+                    "Godot installation requires an absolute path.".to_owned(),
                 ));
             }
         };
@@ -756,12 +856,17 @@ fn parse_installations(
                 ),
             ));
         }
+        if path.chars().any(char::is_control) {
+            return Err(ConfigError::new(
+                ConfigErrorCategory::InvalidValue,
+                "Godot installation paths must not contain control characters."
+                    .to_owned(),
+            ));
+        }
         if !is_absolute_path(path) {
             return Err(ConfigError::new(
                 ConfigErrorCategory::InvalidValue,
-                format!(
-                    "Godot installation \"{id}\" path must be absolute: relative paths are rejected."
-                ),
+                "Godot installation path must be absolute.".to_owned(),
             ));
         }
         let edition_hint = match installation.get("editionHint") {
@@ -771,13 +876,11 @@ fn parse_installations(
                     "standard" => UserGodotEditionHint::Standard,
                     "dotnet" => UserGodotEditionHint::Dotnet,
                     "unknown" => UserGodotEditionHint::Unknown,
-                    other => {
+                    _other => {
                         return Err(ConfigError::new(
                             ConfigErrorCategory::InvalidValue,
-                            format!(
-                                "Unknown Godot edition hint: {}. Expected one of: standard, dotnet, unknown.",
-                                value_label(&Value::String(other.to_owned()))
-                            ),
+                            "Unknown Godot edition hint; expected standard, dotnet, or unknown."
+                                .to_owned(),
                         ));
                     }
                 }
@@ -818,16 +921,16 @@ fn parse_references(
                 ),
             ));
         }
-        let declaration = object(value, &format!("Reference \"{alias}\""))?;
-        if let Some(key) = first_unknown(
+        let declaration = object(value, "Reference declaration")?;
+        if first_unknown(
             declaration,
             &["kind", "path", "repository", "ref", "description"],
-        ) {
+        )
+        .is_some()
+        {
             return Err(ConfigError::new(
                 ConfigErrorCategory::InvalidValue,
-                format!(
-                    "Unknown Siralos reference key: {key} (reference \"{alias}\")."
-                ),
+                "Unknown Siralos reference key.".to_owned(),
             ));
         }
         let kind = match declaration.get("kind").and_then(Value::as_str) {
@@ -836,21 +939,15 @@ fn parse_references(
             _ => {
                 return Err(ConfigError::new(
                     ConfigErrorCategory::InvalidValue,
-                    format!(
-                        "Reference \"{alias}\" requires \"kind\" of \"local-directory\" or \"repository\"."
-                    ),
+                    "Reference declaration requires a valid kind.".to_owned(),
                 ));
             }
         };
         let description = match declaration.get("description") {
             None => None,
-            Some(value) => Some(
-                string_value(
-                    value,
-                    &format!("Reference \"{alias}\" description"),
-                )?
-                .to_owned(),
-            ),
+            Some(value) => {
+                Some(string_value(value, "Reference description")?.to_owned())
+            }
         };
         let parsed = match kind {
             UserReferenceKind::LocalDirectory => {
@@ -859,9 +956,8 @@ fn parse_references(
                 {
                     return Err(ConfigError::new(
                         ConfigErrorCategory::InvalidValue,
-                        format!(
-                            "Local-directory reference \"{alias}\" must not declare \"repository\" or \"ref\"."
-                        ),
+                        "Local-directory reference must not declare repository or ref."
+                            .to_owned(),
                     ));
                 }
                 let path = declaration
@@ -871,9 +967,8 @@ fn parse_references(
                     .ok_or_else(|| {
                         ConfigError::new(
                             ConfigErrorCategory::InvalidValue,
-                            format!(
-                                "Local-directory reference \"{alias}\" requires a non-empty \"path\"."
-                            ),
+                            "Local-directory reference requires a non-empty path."
+                                .to_owned(),
                         )
                     })?;
                 UserReferenceConfig {
@@ -888,9 +983,8 @@ fn parse_references(
                 if declaration.contains_key("path") {
                     return Err(ConfigError::new(
                         ConfigErrorCategory::InvalidValue,
-                        format!(
-                            "Repository reference \"{alias}\" must not declare \"path\"."
-                        ),
+                        "Repository reference must not declare a path."
+                            .to_owned(),
                     ));
                 }
                 let repository = declaration
@@ -900,9 +994,8 @@ fn parse_references(
                     .ok_or_else(|| {
                         ConfigError::new(
                             ConfigErrorCategory::InvalidValue,
-                            format!(
-                                "Repository reference \"{alias}\" requires a non-empty \"repository\"."
-                            ),
+                            "Repository reference requires a non-empty repository."
+                                .to_owned(),
                         )
                     })?;
                 let reference = declaration
@@ -925,27 +1018,23 @@ fn parse_references(
 
 fn parse_reference_pin(
     value: &Value,
-    alias: &str,
+    _alias: &str,
 ) -> Result<UserRepositoryRef, ConfigError> {
-    let object = object(value, &format!("Reference \"{alias}\" ref"))?;
-    if let Some(key) =
-        first_unknown(object, &["kind", "commit", "tag", "branch"])
-    {
+    let object = object(value, "Reference ref")?;
+    if first_unknown(object, &["kind", "commit", "tag", "branch"]).is_some() {
         return Err(ConfigError::new(
             ConfigErrorCategory::InvalidValue,
-            format!(
-                "Unknown Siralos reference ref key: {key} (reference \"{alias}\")."
-            ),
+            "Unknown Siralos reference ref key.".to_owned(),
         ));
     }
-    let kind = object.get("kind").and_then(Value::as_str).ok_or_else(|| {
-        ConfigError::new(
-            ConfigErrorCategory::InvalidValue,
-            format!(
-                "Reference \"{alias}\" ref requires \"kind\" of \"commit\", \"tag\", or \"branch\"."
-            ),
-        )
-    })?;
+    let kind =
+        object.get("kind").and_then(Value::as_str).ok_or_else(|| {
+            ConfigError::new(
+                ConfigErrorCategory::InvalidValue,
+                "Reference ref requires kind commit, tag, or branch."
+                    .to_owned(),
+            )
+        })?;
     let value_for_kind = |key: &str| {
         object
             .get(key)
@@ -954,9 +1043,8 @@ fn parse_reference_pin(
             .ok_or_else(|| {
                 ConfigError::new(
                     ConfigErrorCategory::InvalidValue,
-                    format!(
-                        "Reference \"{alias}\" {kind} ref requires a non-empty {kind} string."
-                    ),
+                    "Reference ref requires one non-empty pin value."
+                        .to_owned(),
                 )
             })
     };
@@ -971,9 +1059,8 @@ fn parse_reference_pin(
         _ => {
             return Err(ConfigError::new(
                 ConfigErrorCategory::InvalidValue,
-                format!(
-                    "Reference \"{alias}\" ref requires \"kind\" of \"commit\", \"tag\", or \"branch\"."
-                ),
+                "Reference ref requires kind commit, tag, or branch."
+                    .to_owned(),
             ));
         }
     };
@@ -981,9 +1068,7 @@ fn parse_reference_pin(
         if key != kind && object.contains_key(key) {
             return Err(ConfigError::new(
                 ConfigErrorCategory::InvalidValue,
-                format!(
-                    "Reference \"{alias}\" {kind} ref must not declare \"{key}\"; a ref pins exactly one of commit/tag/branch."
-                ),
+                "Reference ref must declare exactly one pin value.".to_owned(),
             ));
         }
     }
@@ -1018,7 +1103,7 @@ pub fn reference_configuration_error(config: &UserConfig) -> Option<String> {
                 }
                 if !is_absolute_path(path) {
                     return Some(format!(
-                        "Reference \"{alias}\": The local-directory path \"{path}\" is not absolute; relative paths are not resolved."
+                        "Reference \"{alias}\": The local-directory path must be absolute; relative paths are not resolved."
                     ));
                 }
             }
@@ -1029,7 +1114,6 @@ pub fn reference_configuration_error(config: &UserConfig) -> Option<String> {
                     return Some(format!("Reference \"{alias}\": {reason}"));
                 }
                 if let Some(pin) = &reference.reference {
-                    let value = pin.value();
                     let valid = match pin {
                         UserRepositoryRef::Commit(value) => {
                             value.len() <= MAX_COMMIT_LENGTH
@@ -1054,7 +1138,7 @@ pub fn reference_configuration_error(config: &UserConfig) -> Option<String> {
                             UserRepositoryRef::Branch(_) => "branch",
                         };
                         return Some(format!(
-                            "Reference \"{alias}\": The {label} \"{value}\" is malformed; {label}s use letters, digits, \".\", \"_\", \"-\", \"/\" and are at most {} characters.",
+                            "Reference \"{alias}\": The {label} is malformed; {label}s use letters, digits, \".\", \"_\", \"-\", \"/\" and are at most {} characters.",
                             if label == "commit" {
                                 MAX_COMMIT_LENGTH
                             } else {
@@ -1353,10 +1437,15 @@ mod tests {
         })).expect("structural config");
         assert_eq!(
             reference_configuration_error(&config).as_deref(),
+            // The alias is a user-chosen key, not a filesystem path, so it may
+            // be echoed; the offending path value may not.
             Some(
-                "Reference \"aa\": The local-directory path \"relative\" is not absolute; relative paths are not resolved."
+                "Reference \"aa\": The local-directory path must be absolute; relative paths are not resolved."
             )
         );
+        let reported =
+            reference_configuration_error(&config).unwrap_or_default();
+        assert!(!reported.contains("\"relative\""), "{reported}");
     }
 
     #[test]

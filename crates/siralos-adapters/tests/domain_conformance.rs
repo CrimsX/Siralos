@@ -180,6 +180,23 @@ fn wrong_declared_digest_is_rejected_at_install() {
 }
 
 #[test]
+fn component_byte_bound_is_enforced_before_install() {
+    let root = temp_dir("component-bound");
+    let component = root.join("component.wasm");
+    let bytes = b"component-bytes";
+    fs::write(&component, bytes).expect("component bytes");
+
+    let mut bounds = default_bounds();
+    bounds.max_component_bytes = bytes.len() - 1;
+    let mut host = make_host(&component, &root, bounds);
+    let failure = host
+        .install(package("conformance-domain", &sha256_hex(bytes), ABI))
+        .expect_err("oversized component is rejected before install");
+    assert_eq!(failure.code(), "INVALID_INPUT");
+    assert_eq!(host.state().as_str(), "absent");
+}
+
+#[test]
 fn stale_bytes_fail_activation_before_semantic_work() {
     let root = temp_dir("stale");
     let mut host = make_host(
@@ -867,9 +884,105 @@ fn effect_answer_payload_cannot_bypass_the_host_visible_bound() {
         .request_effect(EffectRequest::ProcessExec("big".to_owned()))
         .expect_err("oversized guest-forged answer is rejected");
     assert_eq!(failure.code(), "RESOURCE_EXCEEDED");
-    // Normal effect answers still work.
+    // A guest that fabricated an answer it never received loses the session
+    // with it: the host does not keep mediating effects for a domain that has
+    // already proven it answers for itself.
+    assert!(
+        matches!(
+            host.request_effect(EffectRequest::ProcessExec("x".to_owned())),
+            Err(DomainFailure::NotActive)
+        ),
+        "a forged answer must not leave the session active"
+    );
+    // After a real re-activation, ordinary effect answers work again: the
+    // forged answer cost the session, not the installation.
+    host.activate(
+        request("conformance-domain", CONFORMANCE_DIGEST),
+        RuntimeCheckResult::Ready,
+    )
+    .expect("re-activation");
     match host.request_effect(EffectRequest::ProcessExec("x".to_owned())) {
         Ok(MediatedAnswer::Denied(_)) => {}
+        other => panic!("unexpected answer: {other:?}"),
+    }
+}
+
+#[test]
+fn oversized_effect_arguments_are_refused_before_wit_round_trip() {
+    let root = temp_dir("effect-input-bound");
+    let mut bounds = default_bounds();
+    bounds.effects.max_host_calls = 1;
+    let mut host = make_host(
+        &fixtures().join("conformance-domain.component.wasm"),
+        &root,
+        bounds,
+    );
+    activate_fixture(&mut host, CONFORMANCE_DIGEST).expect("activation");
+
+    let oversized_path =
+        "a".repeat(siralos_adapters::domain::MAX_EFFECT_PATH_BYTES + 1);
+    let failure = host
+        .request_effect(EffectRequest::WorkspaceRead((oversized_path, 1)))
+        .expect_err(
+            "oversized workspace path is rejected before WIT conversion",
+        );
+    assert_eq!(failure.code(), "INVALID_INPUT");
+
+    for invalid_path in ["", "../outside", "/outside"] {
+        let failure = host
+            .request_effect(EffectRequest::WorkspaceRead((
+                invalid_path.to_owned(),
+                1,
+            )))
+            .expect_err(
+                "invalid workspace path is rejected before WIT conversion",
+            );
+        assert_eq!(failure.code(), "INVALID_INPUT");
+    }
+    let failure = host
+        .request_effect(EffectRequest::WorkspaceRead((
+            "notes.txt".to_owned(),
+            0,
+        )))
+        .expect_err(
+            "zero workspace-read bound is rejected before WIT conversion",
+        );
+    assert_eq!(failure.code(), "INVALID_INPUT");
+
+    let oversized_command =
+        "x".repeat(siralos_adapters::domain::MAX_EFFECT_COMMAND_BYTES + 1);
+    let failure = host
+        .request_effect(EffectRequest::ProcessExec(oversized_command))
+        .expect_err(
+            "oversized process command is rejected before WIT conversion",
+        );
+    assert_eq!(failure.code(), "INVALID_INPUT");
+
+    // The rejected request must not consume the active session or alter
+    // the normal mediated-effect path.
+    match host.request_effect(EffectRequest::ProcessExec("x".to_owned())) {
+        Ok(MediatedAnswer::Denied(_)) => {}
+        other => panic!("unexpected answer after input rejection: {other:?}"),
+    }
+}
+
+#[test]
+fn workspace_read_request_is_capped_at_the_host_bound() {
+    let root = temp_dir("effect-read-bound");
+    fs::write(root.join("notes.txt"), "12345").expect("fixture write");
+    let mut bounds = default_bounds();
+    bounds.effects.max_workspace_read_bytes = 5;
+    let mut host = make_host(
+        &fixtures().join("conformance-domain.component.wasm"),
+        &root,
+        bounds,
+    );
+    activate_fixture(&mut host, CONFORMANCE_DIGEST).expect("activation");
+    match host.request_effect(EffectRequest::WorkspaceRead((
+        "notes.txt".to_owned(),
+        u32::MAX,
+    ))) {
+        Ok(MediatedAnswer::Ok(content)) => assert_eq!(content, "12345"),
         other => panic!("unexpected answer: {other:?}"),
     }
 }

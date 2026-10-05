@@ -9,7 +9,8 @@
 
 use crate::workspace::fs::{
     DEFAULT_EXCLUDED_DIRECTORIES, MUTATION_TEMP_PREFIX, fold_path_component,
-    is_case_insensitive_platform,
+    is_case_insensitive_platform, is_link_or_reparse,
+    is_model_protected_workspace_path,
 };
 use crate::workspace::resolve::resolve_workspace_path;
 
@@ -80,25 +81,32 @@ pub fn list_directory(
             return ListOutcome::Denied { message: rejection.to_string() };
         }
     };
-    if let Some(component) = excluded_component(
+    if excluded_component(
         &resolved.workspace_relative_path,
         &DEFAULT_EXCLUDED_DIRECTORIES,
-    ) {
+    )
+    .is_some()
+    {
         return ListOutcome::Denied {
-            message: format!(
-                "Path is inside the excluded directory {component}."
-            ),
+            message: "Path is inside the excluded directory.".to_owned(),
         };
     }
-    let metadata = match std::fs::metadata(&resolved.absolute_path) {
+    if is_model_protected_workspace_path(&resolved.workspace_relative_path) {
+        return ListOutcome::Denied {
+            message:
+                "Path is protected from model-facing workspace inspection."
+                    .to_owned(),
+        };
+    }
+    let metadata = match std::fs::symlink_metadata(&resolved.absolute_path) {
         Ok(metadata) => metadata,
-        Err(error) => {
+        Err(_error) => {
             return ListOutcome::Failed {
-                message: format!("Cannot inspect directory: {error}"),
+                message: "Cannot inspect directory.".to_owned(),
             };
         }
     };
-    if !metadata.is_dir() {
+    if is_link_or_reparse(&metadata) || !metadata.is_dir() {
         return ListOutcome::Failed {
             message: "Target is not a directory.".to_owned(),
         };
@@ -107,22 +115,30 @@ pub fn list_directory(
     let mut names: Vec<String> = Vec::new();
     let mut truncated = match enumerate_bounded(
         &resolved.absolute_path,
-        limits.max_directory_entries + 1,
+        limits.max_directory_entries.saturating_add(1),
         &mut |name| {
             let folded = fold_path_component(&name, fold);
             let excluded =
                 DEFAULT_EXCLUDED_DIRECTORIES.iter().any(|candidate| {
                     fold_path_component(candidate, fold) == folded
                 });
-            if !excluded && !name.starts_with(MUTATION_TEMP_PREFIX) {
+            let relative = if resolved.workspace_relative_path == "." {
+                name.clone()
+            } else {
+                format!("{}/{}", resolved.workspace_relative_path, name)
+            };
+            if !excluded
+                && !name.starts_with(MUTATION_TEMP_PREFIX)
+                && !is_model_protected_workspace_path(&relative)
+            {
                 names.push(name);
             }
         },
     ) {
         Ok(capped) => capped,
-        Err(error) => {
+        Err(_error) => {
             return ListOutcome::Failed {
-                message: format!("Cannot list directory: {error}"),
+                message: "Cannot list directory.".to_owned(),
             };
         }
     };
@@ -140,8 +156,7 @@ pub fn list_directory(
             resolved.absolute_path.join(&name),
         ) {
             Ok(metadata) => {
-                let file_type = metadata.file_type();
-                if file_type.is_symlink() {
+                if is_link_or_reparse(&metadata) {
                     EntryKind::Symlink
                 } else if metadata.is_dir() {
                     EntryKind::Directory
@@ -151,9 +166,9 @@ pub fn list_directory(
                     EntryKind::Other
                 }
             }
-            Err(error) => {
+            Err(_error) => {
                 return ListOutcome::Failed {
-                    message: format!("Cannot inspect entry: {error}"),
+                    message: "Cannot inspect entry.".to_owned(),
                 };
             }
         };
@@ -210,7 +225,9 @@ fn enumerate_bounded(
         let Some(entry) = handle.next().transpose()? else {
             return Ok(false);
         };
-        on_entry(entry.file_name().to_string_lossy().into_owned());
+        if let Some(name) = entry.file_name().to_str() {
+            on_entry(name.to_owned());
+        }
         index += 1;
     }
 }
@@ -264,6 +281,38 @@ mod tests {
         assert!(matches!(
             list_directory(&base, "../x", &WORKSPACE_LIMITS),
             ListOutcome::Denied { .. },
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn hides_model_protected_entries() {
+        let base = std::env::temp_dir().join(format!(
+            "siralos-list-protected-{}-{}",
+            std::process::id(),
+            unique()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join(".siralos")).unwrap();
+        std::fs::write(base.join("siralos.toml"), b"key:secret").unwrap();
+        std::fs::write(base.join(".env"), b"SECRET=value").unwrap();
+        std::fs::write(base.join("visible.txt"), b"ok").unwrap();
+
+        let ListOutcome::Success { entries, .. } =
+            list_directory(&base, ".", &WORKSPACE_LIMITS)
+        else {
+            panic!("listing failed");
+        };
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["visible.txt"]
+        );
+        assert!(matches!(
+            list_directory(&base, "siralos.toml", &WORKSPACE_LIMITS),
+            ListOutcome::Denied { .. }
         ));
         let _ = std::fs::remove_dir_all(&base);
     }

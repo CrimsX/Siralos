@@ -24,6 +24,110 @@ pub const DEFAULT_EXCLUDED_DIRECTORIES: [&str; 4] =
 /// Prefix of mutation staging entries excluded from listings.
 pub const MUTATION_TEMP_PREFIX: &str = ".siralos-mutation-";
 
+/// Return whether a directory entry is a link-like path that must not be
+/// followed by authority-bearing workspace traversal. Windows junction and
+/// mount-point entries are reparse points even when `is_symlink()` is false.
+pub(crate) fn is_link_or_reparse(metadata: &std::fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// Return whether a workspace-relative path is protected from the
+/// model-facing workspace inspection surfaces.
+///
+/// This is intentionally an adapter policy rather than a path-resolution
+/// rule: Host-owned code may still inspect explicitly approved state
+/// paths, but list/read/search/context must never enumerate or return
+/// these entries to a model. Matching follows the platform's
+/// case-folding policy and uses `/` as the canonical separator.
+pub fn is_model_protected_workspace_path(
+    workspace_relative_path: &str,
+) -> bool {
+    let fold = is_case_insensitive_platform();
+    let normalized = workspace_relative_path.replace('\\', "/");
+    let mut last = None;
+    for component in normalized
+        .split('/')
+        .filter(|component| !component.is_empty() && *component != ".")
+    {
+        last = Some(component);
+    }
+    let Some(last) = last else {
+        return false;
+    };
+
+    let folded_last = fold_path_component(last, fold);
+    if is_protected_component(&folded_last)
+        || matches!(last, "AGENTS.md" | "siralos.toml" | "siralos.lock")
+    {
+        return true;
+    }
+
+    for component in normalized
+        .split('/')
+        .filter(|component| !component.is_empty() && *component != ".")
+    {
+        let folded = fold_path_component(component, fold);
+        if is_protected_component(&folded)
+            || matches!(
+                component,
+                "AGENTS.md" | "siralos.toml" | "siralos.lock"
+            )
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_protected_component(folded: &str) -> bool {
+    folded == "siralos.toml"
+        || folded == "siralos.lock"
+        || folded == "agents.md"
+        || folded.starts_with(".env")
+        || folded == ".npmrc"
+        || folded == ".pypirc"
+        || folded == ".netrc"
+        || folded == ".git-credentials"
+        || folded == "id_rsa"
+        || folded == "id_ed25519"
+        || folded == "id_ecdsa"
+        || folded == "id_dsa"
+        || folded == "credentials"
+        || folded == "credentials.json"
+        || folded == "secrets.json"
+        || folded == "secrets.yaml"
+        || folded == "secrets.yml"
+        || [
+            ".pem",
+            ".key",
+            ".p12",
+            ".pfx",
+            ".jks",
+            ".keystore",
+            ".crt",
+            ".cer",
+        ]
+        .iter()
+        .any(|extension| folded.ends_with(extension))
+        || folded == ".siralos"
+        || folded == ".git"
+        || folded == ".ssh"
+        || folded.starts_with(MUTATION_TEMP_PREFIX)
+        || folded.starts_with(".siralos-")
+}
+
 /// Case-folding policy: Windows and macOS fold (macOS volumes are
 /// treated conservatively as case-insensitive), matching the
 /// reference `foldPathComponent`.
@@ -137,16 +241,53 @@ pub fn read_complete_file_bounded(
         Ok(metadata) => metadata,
         Err(_) => return BoundedFileRead::NotReadable,
     };
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
+    if is_link_or_reparse(&metadata) || !metadata.is_file() {
         return BoundedFileRead::NotReadable;
     }
     if metadata.len() > max_bytes as u64 {
         return BoundedFileRead::TooLarge;
     }
-    let mut file = match std::fs::File::open(path) {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let mut file = match options.open(path) {
         Ok(file) => file,
         Err(error) => return BoundedFileRead::IoError(error),
     };
+    let opened_metadata = match file.metadata() {
+        Ok(metadata) => metadata,
+        Err(error) => return BoundedFileRead::IoError(error),
+    };
+    if is_link_or_reparse(&opened_metadata) || !opened_metadata.is_file() {
+        return BoundedFileRead::NotReadable;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if opened_metadata.dev() != metadata.dev()
+            || opened_metadata.ino() != metadata.ino()
+        {
+            return BoundedFileRead::NotReadable;
+        }
+    }
+    #[cfg(windows)]
+    {
+        if opened_metadata.len() != metadata.len()
+            || opened_metadata.modified().ok() != metadata.modified().ok()
+        {
+            return BoundedFileRead::NotReadable;
+        }
+    }
     match read_complete_bounded(&mut file, max_bytes) {
         Ok(BoundedReadOutcome::Complete(bytes)) => {
             BoundedFileRead::Complete(bytes)
@@ -431,6 +572,27 @@ mod tests {
         assert_eq!(decode_utf8(&[0xc3, 0x28]), None);
         assert_eq!(fold_path_component("Node_Modules", true), "node_modules");
         assert_eq!(fold_path_component("Node_Modules", false), "Node_Modules");
+    }
+
+    #[test]
+    fn protected_policy_covers_nested_secret_components() {
+        for path in [
+            ".env",
+            ".envrc",
+            "nested/.envrc/secret.txt",
+            "nested/keys/private.key",
+            ".ssh/config",
+            ".siralos-mutation-123/staged",
+        ] {
+            assert!(
+                super::is_model_protected_workspace_path(path),
+                "expected protected path: {path}"
+            );
+        }
+        if super::is_case_insensitive_platform() {
+            assert!(super::is_model_protected_workspace_path("SIRALOS.TOML"));
+        }
+        assert!(!super::is_model_protected_workspace_path("src/env.rs"));
     }
 
     #[test]

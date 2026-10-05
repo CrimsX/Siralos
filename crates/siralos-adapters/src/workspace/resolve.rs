@@ -20,13 +20,28 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 /// A successfully resolved workspace path.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ResolvedWorkspacePath {
     /// Canonical target path relative to the canonical root (`/`
     /// separators; `"."` for the root itself).
     pub workspace_relative_path: String,
     /// Canonical absolute target path.
+    ///
+    /// This is host-only: report-safe output, logs, and provider projections
+    /// must use [`Self::workspace_relative_path`] instead.
     pub absolute_path: PathBuf,
+}
+
+impl fmt::Debug for ResolvedWorkspacePath {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // An absolute workspace path must not reach any diagnostic surface, so
+        // `Debug` projects only the workspace-relative name.
+        formatter
+            .debug_struct("ResolvedWorkspacePath")
+            .field("workspace_relative_path", &self.workspace_relative_path)
+            .field("absolute_path", &"[ABSOLUTE]")
+            .finish()
+    }
 }
 
 /// Why a workspace path was rejected.
@@ -40,6 +55,8 @@ pub enum PathRejection {
     Absolute,
     /// The resolved path escapes the workspace.
     OutsideWorkspace,
+    /// A path component contains a reserved character.
+    InvalidCharacter,
     /// The path cannot be canonicalized.
     Unresolvable(String),
     /// The canonical target escapes the workspace (link escape).
@@ -56,11 +73,14 @@ impl fmt::Display for PathRejection {
             Self::Absolute => {
                 formatter.write_str("Path must be relative to the workspace.")
             }
+            Self::InvalidCharacter => {
+                formatter.write_str("Path contains an invalid character.")
+            }
             Self::OutsideWorkspace => {
                 formatter.write_str("Path is outside the Siralos workspace.")
             }
-            Self::Unresolvable(detail) => {
-                write!(formatter, "Path cannot be resolved: {detail}")
+            Self::Unresolvable(_) => {
+                formatter.write_str("Path cannot be resolved.")
             }
             Self::LinkEscape => {
                 formatter.write_str("Path is outside the Siralos workspace.")
@@ -86,17 +106,24 @@ pub fn resolve_workspace_path(
     if siralos_core::workspace::path::is_absolute_pattern(requested) {
         return Err(PathRejection::Absolute);
     }
-    let canonical_root = std::fs::canonicalize(root).map_err(|error| {
-        PathRejection::Unresolvable(format!(
-            "Workspace root is not accessible: {error}"
-        ))
+    if requested.split(['/', '\\']).any(|component| component.contains(':')) {
+        return Err(PathRejection::InvalidCharacter);
+    }
+    let canonical_root = std::fs::canonicalize(root).map_err(|_error| {
+        PathRejection::Unresolvable(
+            "workspace root is not accessible".to_owned(),
+        )
     })?;
     let resolved = normalize_join(&canonical_root, requested);
     if resolved != canonical_root && !resolved.starts_with(&canonical_root) {
         return Err(PathRejection::OutsideWorkspace);
     }
-    let canonical_target = std::fs::canonicalize(&resolved)
-        .map_err(|error| PathRejection::Unresolvable(error.to_string()))?;
+    let canonical_target =
+        std::fs::canonicalize(&resolved).map_err(|_error| {
+            PathRejection::Unresolvable(
+                "requested path is not accessible".to_owned(),
+            )
+        })?;
     if canonical_target != canonical_root
         && !canonical_target.starts_with(&canonical_root)
     {
@@ -189,6 +216,22 @@ mod tests {
         assert!(resolved.absolute_path.starts_with(&base));
         let _ = fs::remove_dir_all(&base);
         let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn resolved_path_debug_does_not_expose_an_absolute_path() {
+        let base = std::env::temp_dir().join("siralos-resolve-debug-test");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        fs::write(base.join("f.txt"), "x").unwrap();
+        let resolved = resolve_workspace_path(&base, "f.txt").unwrap();
+        let debug = format!("{resolved:?}");
+        assert!(debug.contains("f.txt"), "{debug}");
+        assert!(
+            !debug.contains(&base.to_string_lossy().to_string()),
+            "{debug}"
+        );
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]

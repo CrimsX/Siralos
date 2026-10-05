@@ -15,7 +15,9 @@ use crate::workspace::read::{
     ReadInputError, ReadOutcome, parse_read_input, read_file,
 };
 use crate::workspace::root::{WorkspaceRootError, resolve_workspace_root};
-use crate::workspace::search::{SearchOutcome, parse_search_input, search};
+use crate::workspace::search::{
+    SearchOutcome, parse_search_input, search_with_cancellation,
+};
 
 const WORKSPACE_READ_CAPABILITY: &str = "workspace.read";
 
@@ -364,11 +366,11 @@ impl Tool for WorkspaceSearchTool {
                 message: "Search was cancelled.".to_owned(),
             };
         }
-        match search(
+        match search_with_cancellation(
             &self.root,
             &parsed,
             &WORKSPACE_LIMITS,
-            cancellation.is_cancelled(),
+            cancellation,
         ) {
             SearchOutcome::InvalidInput { message } => {
                 ToolExecutionResult::InvalidInput { message }

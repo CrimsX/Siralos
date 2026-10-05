@@ -879,16 +879,14 @@ fn generic_replay_records_transport_failure_with_typed_availability() {
     let snapshot2 = recorder.records_snapshot();
     assert_eq!(snapshot2.len(), 2);
     assert_eq!(snapshot2[1].1, *digest);
-    // take_last_replay_availability returns Recorded then resets to Unavailable.
+    // Identity collection alone is not replay availability: no body was
+    // retained, so the evidence must say Unavailable rather than Recorded.
     let availability = provider.take_last_replay_availability();
     match availability {
-        siralos_core::determinism::ProviderReplayAvailability::Recorded {
-            digest: d,
-        } => {
-            assert_eq!(d.len(), 64);
-            assert_eq!(d, snapshot2[1].1);
-        }
-        other => panic!("expected Recorded, got {other:?}"),
+        siralos_core::determinism::ProviderReplayAvailability::Unavailable {
+            reason,
+        } => assert_eq!(reason, "replay body was not retained"),
+        other => panic!("expected truthful Unavailable, got {other:?}"),
     }
     let second = provider.take_last_replay_availability();
     match second {
@@ -897,6 +895,53 @@ fn generic_replay_records_transport_failure_with_typed_availability() {
         }
         other => panic!("expected Unavailable reset, got {other:?}"),
     }
+}
+
+#[test]
+fn terminal_evidence_survives_replay_saturation() {
+    use siralos_core::determinism::{
+        ProviderReplayAvailability, RetainingReplayRecorder,
+        provider_replay::MAX_RETAINED_REPLAY_RECORDINGS,
+    };
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let recorder = Rc::new(RetainingReplayRecorder::new());
+    let hooks = super::ReplayHooks {
+        clock: None,
+        recorder: Some(recorder.clone()),
+        request_sha256: RefCell::new(None),
+    };
+    let last_replay = RefCell::new(ProviderReplayAvailability::Unavailable {
+        reason: "not initialized".to_owned(),
+    });
+    let successful_body = r#"{"choices":[{"message":{"content":"ok"}}]}"#;
+    for _ in 0..MAX_RETAINED_REPLAY_RECORDINGS {
+        super::record_outcome(
+            &hooks,
+            &last_replay,
+            "provider",
+            "model",
+            Some(200),
+            successful_body,
+        );
+    }
+    let terminal_body = r#"{"error":"upstream unavailable"}"#;
+    super::record_outcome(
+        &hooks,
+        &last_replay,
+        "provider",
+        "model",
+        Some(503),
+        terminal_body,
+    );
+    let snapshot = recorder.records_snapshot();
+    assert_eq!(snapshot.len(), MAX_RETAINED_REPLAY_RECORDINGS + 1);
+    assert_eq!(snapshot.last().expect("evidence").body, terminal_body);
+    assert!(matches!(
+        &*last_replay.borrow(),
+        ProviderReplayAvailability::Unavailable { .. }
+    ));
 }
 
 #[test]
@@ -980,7 +1025,11 @@ fn replay_serves_recorded_body_as_events() {
         cached_tokens: None,
         observed_at_ms: Some(1),
     };
-    let recording = ReplayRecording { identity, body: body.to_owned() };
+    let recording = ReplayRecording {
+        identity,
+        body: body.to_owned(),
+        request_sha256: None,
+    };
     let provider = crate::provider::replay::RecordedReplayProvider::new(
         "my-provider".to_owned(),
         "my-model".to_owned(),
@@ -1020,7 +1069,11 @@ fn replay_exhausted_is_typed_failure() {
         cached_tokens: None,
         observed_at_ms: Some(1),
     };
-    let recording = ReplayRecording { identity, body: body.to_owned() };
+    let recording = ReplayRecording {
+        identity,
+        body: body.to_owned(),
+        request_sha256: None,
+    };
     let provider = crate::provider::replay::RecordedReplayProvider::new(
         "my-provider".to_owned(),
         "my-model".to_owned(),
@@ -1063,7 +1116,11 @@ fn replay_cancellation_before_start() {
         cached_tokens: None,
         observed_at_ms: Some(1),
     };
-    let recording = ReplayRecording { identity, body: body.to_owned() };
+    let recording = ReplayRecording {
+        identity,
+        body: body.to_owned(),
+        request_sha256: None,
+    };
     let provider = crate::provider::replay::RecordedReplayProvider::new(
         "my-provider".to_owned(),
         "my-model".to_owned(),
@@ -1103,7 +1160,8 @@ fn retaining_recorder_round_trip_through_generic() {
     assert_eq!(snapshot.len(), 1);
     assert_eq!(snapshot[0].body, "");
     assert_eq!(snapshot[0].identity.status, None);
-    // Feed into replay provider -> empty TextDelta fallback then Completed.
+    // Feed into replay provider -> an empty transport recording is not a
+    // fabricated successful completion; replay fails closed.
     let replay_provider = crate::provider::replay::RecordedReplayProvider::new(
         "my-provider".to_owned(),
         "my-model".to_owned(),
@@ -1112,12 +1170,8 @@ fn retaining_recorder_round_trip_through_generic() {
     let token2 = CancellationToken::new();
     let events: Vec<_> =
         replay_provider.stream(&request, token2.signal()).collect();
-    assert_eq!(events.len(), 2);
-    assert_eq!(
-        events[0],
-        ProviderEvent::Event(ModelEvent::TextDelta { text: String::new() })
-    );
-    assert_eq!(events[1], ProviderEvent::Event(ModelEvent::Completed));
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events[0], ProviderEvent::Failed(_)));
 }
 
 #[test]

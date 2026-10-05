@@ -9,12 +9,13 @@
 //! body text (only its `sha256`).
 
 use crate::provider::credential::HostCredential;
+use crate::provider::tool_names::ToolNames;
 use crate::provider::{
     ANTHROPIC_VERSION, CANCELLED_BEFORE_HTTP_CALL, CANCELLED_BEFORE_HTTP_SEND,
     CANCELLED_BEFORE_PROVIDER_START, NO_PROVIDER_RESPONSE_OBSERVED,
     ReplayHooks, record_outcome,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use siralos_core::determinism::{
     Clock, ProviderReplayAvailability, ReplayRecorder,
 };
@@ -31,7 +32,6 @@ use std::rc::Rc;
 /// replaces it in place, and the NEXT `stream()` clones the cell at call
 /// time, so the switched id flows into the request body without
 /// re-composing provider/endpoint/credential.
-#[derive(Debug)]
 pub struct AnthropicProvider {
     /// Redacted credential for anthropic.
     credential: HostCredential,
@@ -43,10 +43,30 @@ pub struct AnthropicProvider {
     last_replay: RefCell<ProviderReplayAvailability>,
 }
 
+impl std::fmt::Debug for AnthropicProvider {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        formatter
+            .debug_struct("AnthropicProvider")
+            .field("model", &"[CONFIGURED]")
+            .field("credential", &"[REDACTED]")
+            .field("hooks", &self.hooks)
+            .field("last_replay", &self.last_replay)
+            .finish()
+    }
+}
+
 impl AnthropicProvider {
     /// Create a new `AnthropicProvider` with a redacted `HostCredential` and a
     /// bounded `model` id.
     pub fn new(credential: HostCredential, model: String) -> Self {
+        let model = if siralos_core::composition::is_model_id(&model) {
+            model
+        } else {
+            "invalid-model".to_owned()
+        };
         Self {
             credential,
             model: Rc::new(RefCell::new(model)),
@@ -66,8 +86,11 @@ impl AnthropicProvider {
         clock: Rc<dyn Clock>,
         recorder: Rc<dyn ReplayRecorder>,
     ) -> Self {
-        self.hooks =
-            ReplayHooks { clock: Some(clock), recorder: Some(recorder) };
+        self.hooks = ReplayHooks {
+            clock: Some(clock),
+            recorder: Some(recorder),
+            request_sha256: core::cell::RefCell::new(None),
+        };
         self
     }
 
@@ -83,13 +106,37 @@ impl AnthropicProvider {
     /// cell, so a session `/model` switch takes effect without
     /// re-composing provider/endpoint/credential.
     pub fn set_model(&self, model: String) {
-        *self.model.borrow_mut() = model;
+        if siralos_core::composition::is_model_id(&model) {
+            *self.model.borrow_mut() = model;
+        }
     }
 
     /// The model id the NEXT `stream()` will send.
     #[must_use]
     pub fn live_model(&self) -> String {
         self.model.borrow().clone()
+    }
+
+    /// Fetch models from this provider's fixed Anthropic route using its
+    /// actual authentication scheme.
+    pub fn fetch_models(&self) -> Result<Vec<String>, String> {
+        crate::provider::generic::fetch_models_anthropic(
+            MESSAGES_BASE_URL,
+            Some(&self.credential),
+        )
+    }
+
+    /// Fetch models while allowing a caller-owned interrupt to release the
+    /// blocking probe.
+    pub fn fetch_models_cancellable(
+        &self,
+        cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<Vec<String>, String> {
+        crate::provider::generic::fetch_models_anthropic_cancellable(
+            MESSAGES_BASE_URL,
+            Some(&self.credential),
+            cancelled,
+        )
     }
 }
 
@@ -108,11 +155,22 @@ impl ModelProvider for AnthropicProvider {
         request: &'a ModelRequest,
         cancellation: CancellationSignal<'a>,
     ) -> Self::Stream<'a> {
+        *self.last_replay.borrow_mut() =
+            ProviderReplayAvailability::Unavailable {
+                reason: "stream has not completed".to_owned(),
+            };
         if cancellation.is_cancelled() {
             return Box::new(std::iter::once(ProviderEvent::Cancelled {
                 message: CANCELLED_BEFORE_PROVIDER_START.to_owned(),
             }));
         }
+        *self.hooks.request_sha256.borrow_mut() =
+            Some(crate::provider::request_sha256_for_route(
+                request,
+                "anthropic",
+                MESSAGES_BASE_URL,
+                "anthropic-messages",
+            ));
         let model = self.model.borrow().clone();
         let credential =
             String::from_utf8_lossy(self.credential.as_bytes()).to_string();
@@ -126,6 +184,13 @@ impl ModelProvider for AnthropicProvider {
             &self.hooks,
             &self.last_replay,
         );
+        if events.iter().any(|event| matches!(event, ProviderEvent::Failed(_)))
+        {
+            *self.last_replay.borrow_mut() =
+                ProviderReplayAvailability::Unavailable {
+                    reason: "response contained a terminal failure".to_owned(),
+                };
+        }
         Box::new(events.into_iter())
     }
 }
@@ -155,16 +220,25 @@ impl AnthropicProvider {
         last_replay: &RefCell<ProviderReplayAvailability>,
     ) -> Vec<ProviderEvent> {
         if cancellation.is_cancelled() {
+            *last_replay.borrow_mut() =
+                ProviderReplayAvailability::Unavailable {
+                    reason: "call cancelled before HTTP request".to_owned(),
+                };
             return vec![ProviderEvent::Cancelled {
                 message: CANCELLED_BEFORE_HTTP_CALL.to_owned(),
             }];
         }
+        let tool_names = ToolNames::new(
+            request.tools.iter().map(|tool| tool.name.as_str()),
+        );
         let client = match crate::provider::build_http_client() {
             Ok(client) => client,
-            Err(err) => {
-                let events = vec![ProviderEvent::Failed(format!(
-                    "anthropic client build failed: {err}"
-                ))];
+            Err(_err) => {
+                // Status-only: the transport's own error text is never
+                // reported (it can carry a proxy URL or environment detail).
+                let events = vec![ProviderEvent::Failed(
+                    "anthropic client build failed".to_owned(),
+                )];
                 record_outcome(
                     hooks,
                     last_replay,
@@ -180,19 +254,45 @@ impl AnthropicProvider {
         for item in &request.messages {
             match item {
                 siralos_core::provider::ConversationItem::UserMessage { content } => {
-                    messages.push(serde_json::json!({"role": "user", "content": content}));
+                    messages.push(serde_json::json!({
+                        "role": "user",
+                        "content": [{"type": "text", "text": content}],
+                    }));
                 }
                 siralos_core::provider::ConversationItem::AssistantMessage { content } => {
-                    messages.push(serde_json::json!({"role": "assistant", "content": content}));
+                    messages.push(serde_json::json!({
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": content}],
+                    }));
                 }
-                siralos_core::provider::ConversationItem::AssistantToolCall { .. } => {
-                    messages.push(serde_json::json!({"role": "assistant", "content": ""}));
+                siralos_core::provider::ConversationItem::AssistantToolCall {
+                    call_id,
+                    tool_name,
+                    input,
+                } => {
+                    messages.push(serde_json::json!({
+                        "role": "assistant",
+                        "content": [{
+                            "type": "tool_use",
+                            "id": call_id,
+                            "name": tool_names.alias(tool_name),
+                            "input": input
+                            .value()
+                            .filter(|value| value.is_object())
+                            .cloned()
+                            .unwrap_or_else(|| json!({})),
+                        }],
+                    }));
                 }
                 siralos_core::provider::ConversationItem::ToolResult {
                     call_id,
                     result,
                     ..
                 } => {
+                    let is_error = !matches!(
+                        result,
+                        siralos_core::provider::ToolExecutionResult::Success { .. }
+                    );
                     let content = match result {
                         siralos_core::provider::ToolExecutionResult::Success {
                             output,
@@ -200,14 +300,22 @@ impl AnthropicProvider {
                         } => output.to_string(),
                         other => other.message().to_owned(),
                     };
-                    messages.push(serde_json::json!({"role": "user", "content": format!("Tool result {call_id}: {content}")}));
+                    messages.push(serde_json::json!({
+                        "role": "user",
+                        "content": [{
+                            "type": "tool_result",
+                            "tool_use_id": call_id,
+                            "content": content,
+                            "is_error": is_error,
+                        }],
+                    }));
                 }
             }
         }
         let mut tools_json = Vec::new();
         for tool in &request.tools {
             tools_json.push(serde_json::json!({
-                "name": tool.name,
+                "name": tool_names.alias(&tool.name),
                 "description": tool.description,
                 "input_schema": tool.input_schema
             }));
@@ -224,6 +332,10 @@ impl AnthropicProvider {
             body["tools"] = Value::Array(tools_json);
         }
         if cancellation.is_cancelled() {
+            *last_replay.borrow_mut() =
+                ProviderReplayAvailability::Unavailable {
+                    reason: "call cancelled before HTTP send".to_owned(),
+                };
             return vec![ProviderEvent::Cancelled {
                 message: CANCELLED_BEFORE_HTTP_SEND.to_owned(),
             }];
@@ -231,12 +343,14 @@ impl AnthropicProvider {
         let pipeline = crate::provider::run_chat_pipeline(
             "anthropic",
             model,
+            &messages_url(base_url),
             client
                 .post(messages_url(base_url))
                 .header("x-api-key", credential)
                 .header("anthropic-version", ANTHROPIC_VERSION)
                 .header("Content-Type", "application/json")
                 .json(&body),
+            Some(credential),
             cancellation,
             hooks,
             last_replay,
@@ -251,54 +365,226 @@ impl AnthropicProvider {
                 value,
             } => (status, text, value),
         };
+        if value.get("error").is_some() {
+            crate::provider::record_evidence_outcome_with_secret(
+                hooks,
+                last_replay,
+                "anthropic",
+                model,
+                Some(status.as_u16()),
+                &text,
+                Some(credential),
+            );
+            return vec![ProviderEvent::Failed(
+                "anthropic response contains an explicit error".to_owned(),
+            )];
+        }
         let mut events = Vec::new();
-        if let Some(content_arr) =
-            value.get("content").and_then(|v| v.as_array())
+        let mut saw_usable_event = false;
+        let reject = |reason: &'static str| {
+            crate::provider::record_evidence_outcome_with_secret(
+                hooks,
+                last_replay,
+                "anthropic",
+                model,
+                Some(status.as_u16()),
+                &text,
+                Some(credential),
+            );
+            vec![ProviderEvent::Failed(reason.to_owned())]
+        };
+        let content_arr = match value.get("content").and_then(|v| v.as_array())
         {
-            for (index, block) in content_arr.iter().enumerate() {
-                if block.get("type").and_then(|v| v.as_str())
-                    == Some("tool_use")
-                {
-                    // A tool-use block never falls through to the text arm, so
-                    // its `text` field is dropped — except on the first block,
-                    // which the original walk read for `text` before it looked
-                    // at the type. That is why the delta is emitted first here
-                    // and never for a later block, and why the guard below
-                    // controls only the push: a block that fails it still takes
-                    // this branch and still suppresses its text.
-                    if index == 0 {
+            Some(content) if !content.is_empty() => content,
+            _ => {
+                crate::provider::record_evidence_outcome_with_secret(
+                    hooks,
+                    last_replay,
+                    "anthropic",
+                    model,
+                    Some(status.as_u16()),
+                    &text,
+                    Some(credential),
+                );
+                return vec![ProviderEvent::Failed(
+                    "anthropic response did not contain a usable completion"
+                        .to_owned(),
+                )];
+            }
+        };
+        for (block_index, block) in content_arr.iter().enumerate() {
+            let kind = block.get("type").and_then(Value::as_str);
+            match kind {
+                Some("text") => {
+                    if !block.get("text").is_some_and(Value::is_string) {
+                        return reject("anthropic text block is missing text");
+                    }
+                    if block
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .is_none_or(str::is_empty)
+                    {
+                        return reject("anthropic text block is empty");
+                    }
+                    if !text_field_is_valid(block) {
+                        return reject(
+                            "anthropic text block contains disallowed controls",
+                        );
+                    }
+                    if push_text_delta(block, &mut events) {
+                        saw_usable_event = true;
+                    }
+                }
+                Some("tool_use") => {
+                    // Preserve the historical first-block ordering: a text
+                    // field carried by the first tool_use block is emitted
+                    // before its call. Later tool_use text is not part of the
+                    // protocol and is ignored.
+                    if block_index == 0 {
+                        if !text_field_is_valid(block) {
+                            return reject(
+                                "anthropic text block contains disallowed controls",
+                            );
+                        }
                         push_text_delta(block, &mut events);
                     }
-                    if let Some(event) = tool_call_event(block) {
-                        events.push(ProviderEvent::Event(event));
+                    if !block.get("input").is_some()
+                        || !block.get("id").is_some_and(Value::is_string)
+                        || !block.get("name").is_some_and(Value::is_string)
+                    {
+                        return reject(
+                            "anthropic tool_use block is incomplete",
+                        );
                     }
-                } else {
-                    push_text_delta(block, &mut events);
+                    let Some(event) = tool_call_event(block) else {
+                        return reject("anthropic tool_use block is invalid");
+                    };
+                    events.push(ProviderEvent::Event(event));
+                    saw_usable_event = true;
+                }
+                Some("thinking") => {
+                    let Some(thinking) =
+                        block.get("thinking").and_then(Value::as_str)
+                    else {
+                        return reject(
+                            "anthropic thinking block is incomplete",
+                        );
+                    };
+                    if thinking.is_empty()
+                        || thinking.chars().any(|character| {
+                            character.is_control()
+                                && !matches!(character, '\n' | '\r' | '\t')
+                        })
+                    {
+                        return reject("anthropic thinking block is invalid");
+                    }
+                    events.push(ProviderEvent::Event(
+                        ModelEvent::ReasoningDelta {
+                            text: thinking.replace('\r', ""),
+                        },
+                    ));
+                    saw_usable_event = true;
+                }
+                Some("redacted_thinking") => {
+                    if !block.get("data").is_some_and(Value::is_string) {
+                        return reject(
+                            "anthropic redacted thinking block is incomplete",
+                        );
+                    }
+                    // The redacted payload is intentionally not replayed as
+                    // model text; a known text/tool block must still exist.
+                }
+                Some(_) => {
+                    // Preserve compatibility with provider server-tool blocks:
+                    // validate any textual payload, but do not expose it as
+                    // model text. They cannot make an otherwise empty turn
+                    // successful.
+                    if let Some(value) =
+                        block.get("text").and_then(Value::as_str)
+                    {
+                        if value.chars().any(|character| {
+                            character.is_control()
+                                && !matches!(character, '\n' | '\r' | '\t')
+                        }) {
+                            return reject(
+                                "anthropic content block contains disallowed controls",
+                            );
+                        }
+                    }
+                }
+                None => {
+                    return reject("anthropic content block needs a type");
                 }
             }
         }
+        if !saw_usable_event {
+            crate::provider::record_evidence_outcome_with_secret(
+                hooks,
+                last_replay,
+                "anthropic",
+                model,
+                Some(status.as_u16()),
+                &text,
+                Some(credential),
+            );
+            return vec![ProviderEvent::Failed(
+                "anthropic response did not contain a usable completion"
+                    .to_owned(),
+            )];
+        }
+        events = tool_names.restore_events(events);
+        let mut redactor =
+            crate::provider::StreamingSecretRedactor::new(Some(credential));
+        events = events
+            .into_iter()
+            .map(|event| redactor.redact_event(event))
+            .collect();
+        if let Some(tail) = redactor.finish() {
+            events.push(ProviderEvent::Event(ModelEvent::TextDelta {
+                text: tail,
+            }));
+        }
         events.push(ProviderEvent::Event(ModelEvent::Completed));
-        record_outcome(
+        crate::provider::record_outcome_with_secret(
             hooks,
             last_replay,
             "anthropic",
             model,
             Some(status.as_u16()),
             &text,
+            Some(credential),
         );
         events
     }
 }
 
+fn text_field_is_valid(block: &Value) -> bool {
+    block.get("text").is_none_or(|value| {
+        value.as_str().is_some_and(|text| {
+            text.chars().all(|character| {
+                !character.is_control()
+                    || matches!(character, '\n' | '\t' | '\r')
+            })
+        })
+    })
+}
+
 /// Push a block's non-empty `text` field as a delta, when it carries one.
-fn push_text_delta(block: &Value, events: &mut Vec<ProviderEvent>) {
+fn push_text_delta(block: &Value, events: &mut Vec<ProviderEvent>) -> bool {
     if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
-        if !text.is_empty() {
+        if !text.is_empty()
+            && text.chars().all(|character| {
+                !character.is_control()
+                    || matches!(character, '\n' | '\t' | '\r')
+            })
+        {
             events.push(ProviderEvent::Event(ModelEvent::TextDelta {
-                text: text.to_owned(),
+                text: text.replace('\r', ""),
             }));
+            return true;
         }
     }
+    false
 }
 
 /// The tool call a `tool_use` block describes, or `None` when it has no id or
@@ -312,10 +598,20 @@ fn tool_call_event(block: &Value) -> Option<ModelEvent> {
     let id = block.get("id").and_then(|v| v.as_str()).unwrap_or("").to_owned();
     let name =
         block.get("name").and_then(|v| v.as_str()).unwrap_or("").to_owned();
-    if id.is_empty() || name.is_empty() {
+    if id.is_empty()
+        || name.is_empty()
+        || id.len() > 256
+        || name.len()
+            > crate::provider::tool_names::MAX_PROVIDER_TOOL_NAME_BYTES
+        || id.chars().any(|character| character.is_control())
+        || name.chars().any(|character| character.is_control())
+    {
         return None;
     }
     let input_val = block.get("input").cloned().unwrap_or(Value::Null);
+    if !input_val.is_object() {
+        return None;
+    }
     Some(ModelEvent::ToolCall {
         call_id: id,
         tool_name: name,
@@ -336,7 +632,7 @@ mod tests {
     };
     use crate::provider::ReplayHooks;
     use crate::provider::probe::{
-        ERROR_STATUSES, Fixture, error_bodies, reason, retaining_hooks, serve,
+        ERROR_STATUSES, Fixture, error_bodies, retaining_hooks, serve,
         serve_truncated,
     };
     use siralos_core::determinism::ProviderReplayAvailability;
@@ -515,22 +811,31 @@ mod tests {
             let _ = server.recorded();
             events
         };
+        // The fixture text deliberately does not end in a prefix of the probe
+        // credential (`test-cred`): the terminal redactor masks any EOF suffix
+        // that could still grow into the credential, and this test is about
+        // block ordering, not about that redaction rule.
         let first = calls(
-            r#"{"content":[{"type":"tool_use","id":"t1","name":"n","input":{},"text":"first-block-text"}]}"#,
+            r#"{"content":[{"type":"tool_use","id":"t1","name":"n","input":{},"text":"first-block-answer"}]}"#,
         );
-        assert!(first.iter().any(|event| matches!(
-            event,
-            ProviderEvent::Event(ModelEvent::TextDelta { text })
-                if text == "first-block-text"
-        )));
+        let first_text: String = first
+            .iter()
+            .filter_map(|event| match event {
+                ProviderEvent::Event(ModelEvent::TextDelta { text }) => {
+                    Some(text.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(first_text, "first-block-answer");
 
         let later = calls(
-            r#"{"content":[{"type":"text","text":"leading"},{"type":"tool_use","id":"t1","name":"n","input":{},"text":"later-block-text"}]}"#,
+            r#"{"content":[{"type":"text","text":"leading"},{"type":"tool_use","id":"t1","name":"n","input":{},"text":"later-block-answer"}]}"#,
         );
         assert!(!later.iter().any(|event| matches!(
             event,
             ProviderEvent::Event(ModelEvent::TextDelta { text })
-                if text == "later-block-text"
+                if text == "later-block-answer"
         )));
 
         // Non-first blocks are otherwise fully collected: three text blocks all
@@ -552,37 +857,23 @@ mod tests {
         // Recorded baseline, not an approved-parity claim: these assertions
         // describe what this client does today at each (status, body) pair.
         for status in ERROR_STATUSES {
-            for (label, body) in error_bodies() {
+            for (_label, body) in error_bodies() {
                 let server = serve(Fixture { status, body: body.clone() });
                 let events =
                     drive(&server.base_url, CancellationToken::new().signal());
                 let _ = server.recorded();
                 let message = failed_message(&events);
-                // Recorded: the message embeds `reqwest`'s full status line
-                // (`400 Bad Request`), not the bare numeric code, which is what
-                // the generic path prints.
                 assert!(
-                    message.starts_with(&format!("anthropic error {status} ")),
+                    message.starts_with(&format!("anthropic error {status}")),
                     "{message}"
                 );
+                assert!(!message.contains("<html>"), "{message}");
+                assert!(!message.contains("rate limiting"), "{message}");
                 assert!(
-                    message.contains(&format!("{status} {}", reason(status))),
-                    "{message}"
-                );
-                assert!(
-                    message.len() <= 512 + 64,
+                    message.len() <= 128,
                     "status {status}: {} bytes",
                     message.len()
                 );
-                if label.contains("html") {
-                    // Recorded: this client keeps the raw HTML snippet, however
-                    // large the body is — the 512-character cut lands after the
-                    // markup in both HTML fixtures.
-                    assert!(message.contains("<html>"), "{message}");
-                }
-                // Recorded: this client appends no rate-limit hint, unlike the
-                // generic path's `http_error_message`.
-                assert!(!message.contains("rate limiting"), "{message}");
             }
         }
     }
@@ -667,7 +958,7 @@ mod tests {
         let _ = server.recorded();
         let message = failed_message(&events);
         assert!(
-            message.starts_with("anthropic response JSON parse failed: "),
+            message.starts_with("anthropic response JSON parse failed"),
             "{message}"
         );
         assert!(
@@ -690,7 +981,7 @@ mod tests {
         let _ = server.recorded();
         let message = failed_message(&events);
         assert!(
-            message.starts_with("anthropic response read failed: "),
+            message.starts_with("anthropic response read failed"),
             "{message}"
         );
     }
@@ -751,11 +1042,8 @@ mod tests {
             r#"{"content":[{"type":"tool_use","id":"t1","name":"","input":{}}]}"#,
         ] {
             let events = events_for_body(body);
-            assert_eq!(events.len(), 1, "only Completed: {events:?}");
-            assert!(matches!(
-                events[0],
-                ProviderEvent::Event(ModelEvent::Completed)
-            ));
+            assert_eq!(events.len(), 1, "only a typed failure: {events:?}");
+            assert!(matches!(events[0], ProviderEvent::Failed(_)));
         }
 
         // The trap: the same guard LATER in the array, on a block carrying a
@@ -775,46 +1063,24 @@ mod tests {
             "a later failing-guard tool_use block suppresses its text: {events:?}"
         );
         assert_eq!(tool_call_count(&events), 0, "{events:?}");
-        assert_eq!(events.len(), 2, "leading text then Completed: {events:?}");
-        assert!(matches!(
-            events[0],
-            ProviderEvent::Event(ModelEvent::TextDelta { .. })
-        ));
-        assert!(matches!(
-            events[1],
-            ProviderEvent::Event(ModelEvent::Completed)
-        ));
+        assert_eq!(
+            events.len(),
+            1,
+            "malformed tool_use fails the turn: {events:?}"
+        );
+        assert!(matches!(events.last(), Some(ProviderEvent::Failed(_))));
     }
 
     #[test]
-    fn probe_records_a_tool_call_with_no_input_key() {
-        // Recorded baseline, not an approved-parity claim: a missing `input`
-        // becomes `Value::Null`, and the call is still emitted.
+    fn probe_rejects_a_tool_call_with_no_input_key() {
+        // A tool_use block without its required input object is malformed
+        // provider data, not a successful call with an implicit null input.
         let events = events_for_body(
             r#"{"content":[{"type":"tool_use","id":"t1","name":"n"}]}"#,
         );
-        let call = events
-            .iter()
-            .find_map(|event| match event {
-                ProviderEvent::Event(ModelEvent::ToolCall {
-                    call_id,
-                    tool_name,
-                    input,
-                }) => {
-                    Some((call_id.clone(), tool_name.clone(), input.clone()))
-                }
-                _ => None,
-            })
-            .expect("the call is emitted");
-        assert_eq!(call.0, "t1");
-        assert_eq!(call.1, "n");
-        assert_eq!(
-            call.2,
-            siralos_core::provider::ToolCallInput::from_value(
-                serde_json::Value::Null
-            ),
-            "the absent key becomes Null"
-        );
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert!(matches!(events[0], ProviderEvent::Failed(_)));
+        assert_eq!(tool_call_count(&events), 0);
     }
 
     #[test]
