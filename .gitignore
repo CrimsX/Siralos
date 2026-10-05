@@ -28,9 +28,16 @@ Thumbs.db
 /fuzz/corpus/
 /experiments/**/target/
 /experiments/**/guest.component.wasm
+# Ad-hoc build directories created during verification runs.
+/target-local/
+/target-profile-aba*/
+/target-snapshot-agent/
+*.rmeta
 
-# User-local Siralos session data (provider config, recordings store, resolved lock)
-/siralos.toml
+# User-local Siralos session data (provider config, recordings store, resolved lock).
+# Nested matches cover workspaces rooted inside this repository; a separate
+# workspace repository must apply its own ignore rule.
+**/siralos.toml
 /siralos.lock
 /.siralos/
 
