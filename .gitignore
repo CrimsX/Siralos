@@ -34,12 +34,13 @@ Thumbs.db
 /target-snapshot-agent/
 *.rmeta
 
-# User-local Siralos session data (provider config, recordings store, resolved lock).
-# Nested matches cover workspaces rooted inside this repository; a separate
-# workspace repository must apply its own ignore rule.
+# User-local Siralos session data (provider config, and the `.siralos/` runtime
+# state: recorded responses and workspace skills). Nested matches cover
+# workspaces rooted inside this repository; a separate workspace repository
+# must apply its own ignore rule. `siralos.lock` is deliberately NOT ignored:
+# ADR 0036 section 11 defines it as a shared identity lock, not session data.
 **/siralos.toml
-/siralos.lock
-/.siralos/
+**/.siralos/
 
 # Planning scaffolding for the 1.0 work (deleted at handoff).
 /.plan/
