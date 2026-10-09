@@ -1241,6 +1241,10 @@ fn a_changed_dangerous_profile_requires_fresh_trusted_approval() {
     write(root.join("siralos.toml"), profile("model-b")).expect("edit");
     let refused = session.reload().expect("stale approval is a typed refusal");
     assert!(refused.contains("requires explicit approval"), "{refused}");
+    assert!(
+        refused.contains(".siralos/config.json"),
+        "the refusal must say where the approval goes, got: {refused}"
+    );
     assert_eq!(session.live_provider.live_model().as_deref(), Some("model-a"));
 
     // The refusal revokes the composed authority; a later prompt must not

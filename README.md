@@ -214,6 +214,24 @@ re-reads that trusted file before it accepts a changed dangerous profile. This
 approval binds authority to exact bytes; it does not convert a plaintext literal
 credential into a secret store.
 
+Approving one takes two steps. Compute the digest of the profile's exact bytes,
+then put it in your own trusted configuration at `~/.siralos/config.json`, which
+lives outside every workspace so no repository can write it:
+
+```powershell
+(Get-FileHash -Algorithm SHA256 .\siralos.toml).Hash.ToLower()
+```
+
+```json
+{ "profileApproval": "<the 64 hex characters the command printed>" }
+```
+
+The approval binds to those exact bytes, so any edit to the profile, even
+whitespace, needs a fresh digest. The startup message prints the first 16
+characters of the digest it wanted; compare those against the value you computed
+instead of copying what is on screen. `/reload` re-reads the trusted file, so a
+config change does not need a restart.
+
 ## Run it
 
 | Command                                                  | What it does                           |

@@ -1434,7 +1434,10 @@ fn approve_workspace_profile(
     }
     WorkspaceProfileLoad::Invalid {
         diagnostic: format!(
-            "workspace profile requires explicit approval for digest {}",
+            "workspace profile requires explicit approval for digest {}: \
+             compute the SHA-256 of siralos.toml yourself and put it in \
+             ~/.siralos/config.json as profileApproval (the prefix is for \
+             comparison, not for copying)",
             &snapshot.raw_sha256()[..16]
         ),
     }
