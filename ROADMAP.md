@@ -485,8 +485,9 @@ smoke test it runs before publishing anything, the
 
 The differential reference set is a frozen oracle of 239 records plus 118
 candidate-authored expectation records for scenarios introduced after the freeze,
-plus any record retired through the reviewed supersession list (none today; the
-mechanism exists for the version identity when it moves).
+plus any record retired through the reviewed supersession list (one today,
+`user-config-matrix`; the mechanism also exists for the version identity when
+it moves).
 
 ## 10. The 1.0 alignment work — state, blockers, and what remains
 
@@ -914,7 +915,8 @@ deliberately, and the evidence records say so rather than hiding it:
   working set is one node smaller than the frozen record).
 
 The in-flight alignment work is still not complete: the repair design
-(untracked working-tree scaffolding, not committed evidence) remains in
+(`docs/superpowers/specs/2026-09-23-security-and-lifecycle-repair-design.md`,
+committed with the security and lifecycle repair) remains in
 progress, and no owner-visible release or external run exists.
 
 Local results are evidence for the machine and exact working tree that ran
