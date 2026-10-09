@@ -3157,6 +3157,84 @@ fn provider_add_form_keeps_endpoint_for_a_generic_provider() {
     );
 }
 
+// Endpoint input: the live field shows what is typed, and real provider URLs
+// (long paths, query strings) are accepted.
+
+fn form_at_url(url: &str) -> ProviderAddForm {
+    ProviderAddForm {
+        endpoint: None,
+        credential_env: None,
+        provider: Some("gateway".to_owned()),
+        protocol: None,
+        model: None,
+        model_display_name: None,
+        field: ProviderAddField::Url,
+        input: url.to_owned(),
+        error: None,
+        completed: None,
+        fetching_models: false,
+        model_picker: None,
+        fetch_note: None,
+        protocol_picker: None,
+    }
+}
+
+fn render_form_lines(form: &ProviderAddForm) -> String {
+    provider_add_form_lines(form)
+        .iter()
+        .map(|line| {
+            line.iter()
+                .map(|span| span.content.to_string())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn provider_add_form_shows_the_path_while_the_url_is_typed() {
+    let url = "https://gateway.example.com/openai/deployments/gpt-4o/chat/completions";
+    let joined = render_form_lines(&form_at_url(url));
+    assert!(
+        joined.contains("/openai/deployments/gpt-4o/chat/completions"),
+        "the live url field must show the path being typed, got: {joined}"
+    );
+}
+
+#[test]
+fn provider_add_form_accepts_an_endpoint_with_a_query() {
+    let url = "https://gateway.example.com/v1/chat/completions?api-version=2024-02-15-preview";
+    let mut state = TuiState::new();
+    state.provider_add_form = Some(form_at_url(url));
+    handle_key(&mut state, t108_key(crossterm::event::KeyCode::Enter), 10);
+    let form = state.provider_add_form.as_ref().expect("form");
+    assert_eq!(form.error, None);
+    assert_eq!(form.endpoint.as_deref(), Some(url));
+}
+
+#[test]
+fn provider_add_form_accepts_an_endpoint_longer_than_the_old_bound() {
+    let url = format!("https://gateway.example.com/{}", "segment/".repeat(90));
+    assert!(url.len() > 512, "the repro must exceed the former bound");
+    let mut state = TuiState::new();
+    state.provider_add_form = Some(form_at_url(&url));
+    handle_key(&mut state, t108_key(crossterm::event::KeyCode::Enter), 10);
+    let form = state.provider_add_form.as_ref().expect("form");
+    assert_eq!(form.error, None);
+    assert_eq!(form.endpoint.as_deref(), Some(url.as_str()));
+}
+
+#[test]
+fn provider_add_form_masks_userinfo_while_the_url_is_typed() {
+    let joined =
+        render_form_lines(&form_at_url("https://user:secret@example.com/v1"));
+    assert!(
+        !joined.contains("secret"),
+        "userinfo must not be echoed: {joined}"
+    );
+    assert!(joined.contains("[REDACTED]@example.com"), "got: {joined}");
+}
+
 // URL-first reorder tests (decisions 129-130)
 
 #[test]

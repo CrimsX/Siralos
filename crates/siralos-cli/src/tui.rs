@@ -722,7 +722,8 @@ pub fn host_from_endpoint(endpoint: &str) -> String {
     }
     let without_scheme =
         endpoint.split_once("://").map(|(_, rest)| rest).unwrap_or(endpoint);
-    let host = without_scheme.split('/').next().unwrap_or(without_scheme);
+    let host =
+        without_scheme.split(['/', '?']).next().unwrap_or(without_scheme);
     if host.is_empty() {
         "—".to_owned()
     } else {
@@ -932,7 +933,7 @@ pub struct ProviderAddData {
     /// `None` means a public endpoint — no credential is written and the
     /// model fetch sends no Authorization header.
     pub credential_env: Option<String>,
-    /// Optional endpoint validated `https://` or `http://`, no NUL/space, up to 512.
+    /// Optional endpoint validated `https://` or `http://`, no NUL/space, up to 4096.
     pub endpoint: Option<String>,
     /// Protocol — closed set, default openai-completions (S3).
     pub protocol: String,
@@ -972,6 +973,39 @@ pub struct ProviderAddForm {
     pub fetch_note: Option<String>,
     /// Protocol picker state — Some when ApiProtocol field picker is open.
     pub protocol_picker: Option<ProtocolPicker>,
+}
+
+/// Live edit display for the endpoint field. The stored-value projection
+/// ([`safe_form_endpoint_for_credential`]) discards the path and query, which
+/// would hide the very text being typed, so the edit buffer is shown as
+/// typed: control characters sanitized, userinfo masked, bounded to the
+/// field's own limit.
+fn safe_form_endpoint_edit(value: &str, credential: Option<&str>) -> String {
+    if credential.is_some() {
+        return "[credential-bearing endpoint]".to_owned();
+    }
+    let sanitized = crate::sanitize::sanitize_for_display(value);
+    let shown = siralos_core::language::truncate_utf8_bytes(
+        &sanitized,
+        siralos_core::composition::MAX_PROFILE_ENDPOINT_BYTES,
+    );
+    mask_userinfo(&shown)
+}
+
+/// Replace any `user:pass@` userinfo in the authority with `[REDACTED]@`, so
+/// a pasted secret is never echoed to the terminal while it is being typed.
+fn mask_userinfo(value: &str) -> String {
+    let Some((scheme, rest)) = value.split_once("://") else {
+        return value.to_owned();
+    };
+    let (authority, tail) = match rest.find(['/', '?']) {
+        Some(index) => (&rest[..index], &rest[index..]),
+        None => (rest, ""),
+    };
+    match authority.rsplit_once('@') {
+        Some((_, host)) => format!("{scheme}://[REDACTED]@{host}{tail}"),
+        None => value.to_owned(),
+    }
 }
 
 fn safe_form_endpoint_for_credential(
@@ -2740,7 +2774,7 @@ fn provider_add_form_lines(form: &ProviderAddForm) -> Vec<Line<'static>> {
                 format!(
                     "> {}: {}█",
                     label,
-                    safe_form_endpoint_for_credential(
+                    safe_form_endpoint_edit(
                         &form.input,
                         form.credential_env.as_deref(),
                     )
@@ -3771,7 +3805,7 @@ fn validate_model_name(value: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Validate endpoint field: https:// or http://, no NUL, no space, 1..512.
+/// Validate endpoint field: https:// or http://, no NUL, no space, 1..4096.
 /// Human-readable error (D2) — validation rule unchanged.
 fn validate_endpoint_value(value: &str) -> Result<(), String> {
     if value.is_empty()
@@ -3802,7 +3836,7 @@ fn validate_endpoint_value(value: &str) -> Result<(), String> {
     }
     if !siralos_core::composition::is_valid_http_endpoint(value) {
         return Err(
-            "Endpoint must have a valid HTTP(S) authority without userinfo, query, fragment, or controls."
+            "Endpoint must have a valid HTTP(S) authority without userinfo, fragment, or controls."
                 .to_owned(),
         );
     }

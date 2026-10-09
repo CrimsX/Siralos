@@ -305,11 +305,29 @@ pub fn chat_url(endpoint: &str, protocol: Protocol) -> String {
         Protocol::OpenAiResponses => "/responses",
         Protocol::AnthropicMessages => "/messages",
     };
-    let trimmed = endpoint.trim_end_matches('/');
-    if trimmed.ends_with(segment) {
+    // A query string rides along untouched: the segment is inserted into the
+    // path, never appended after the query.
+    let (base, query) = split_endpoint_query(endpoint);
+    let trimmed = base.trim_end_matches('/');
+    let with_segment = if trimmed.ends_with(segment) {
         trimmed.to_owned()
     } else {
         format!("{trimmed}{segment}")
+    };
+    match query {
+        Some(rest) => format!("{with_segment}?{rest}"),
+        None => with_segment,
+    }
+}
+
+/// Split an endpoint into its pre-query base and the query text after the
+/// first `?` (the delimiter is not included). A fragment is refused by
+/// [`siralos_core::composition::is_valid_http_endpoint`], so the query is
+/// the only suffix a valid endpoint can carry.
+fn split_endpoint_query(endpoint: &str) -> (&str, Option<&str>) {
+    match endpoint.split_once('?') {
+        Some((base, query)) => (base, Some(query)),
+        None => (endpoint, None),
     }
 }
 
@@ -324,12 +342,17 @@ pub fn models_url(endpoint: &str) -> String {
     {
         return format!("{GENERIC_PLACEHOLDER_ENDPOINT}/models");
     }
-    let trimmed = endpoint.trim_end_matches('/');
+    let (path, query) = split_endpoint_query(endpoint);
+    let trimmed = path.trim_end_matches('/');
     let base = ["/chat/completions", "/responses", "/messages"]
         .iter()
         .find_map(|suffix| trimmed.strip_suffix(suffix))
         .unwrap_or(trimmed);
-    format!("{base}/models")
+    let url = format!("{base}/models");
+    match query {
+        Some(rest) => format!("{url}?{rest}"),
+        None => url,
+    }
 }
 
 impl ModelProvider for GenericProvider {
@@ -2408,6 +2431,49 @@ mod tests {
         ];
         for (endpoint, protocol, expected) in cases {
             assert_eq!(super::chat_url(endpoint, protocol), expected);
+        }
+    }
+
+    #[test]
+    fn chat_url_places_the_segment_before_the_query() {
+        // Azure-style endpoints carry `?api-version=`; the segment belongs in
+        // the path, never after the query.
+        let cases = [
+            (
+                "https://gateway.example.com/v1?api-version=2024-02-15-preview",
+                siralos_core::composition::Protocol::OpenAiCompletions,
+                "https://gateway.example.com/v1/chat/completions?api-version=2024-02-15-preview",
+            ),
+            (
+                "https://gateway.example.com/v1/chat/completions?api-version=1",
+                siralos_core::composition::Protocol::OpenAiCompletions,
+                "https://gateway.example.com/v1/chat/completions?api-version=1",
+            ),
+            (
+                "https://gateway.example.com?x=1",
+                siralos_core::composition::Protocol::AnthropicMessages,
+                "https://gateway.example.com/messages?x=1",
+            ),
+        ];
+        for (endpoint, protocol, expected) in cases {
+            assert_eq!(super::chat_url(endpoint, protocol), expected);
+        }
+    }
+
+    #[test]
+    fn models_url_places_models_before_the_query() {
+        let cases = [
+            (
+                "https://gateway.example.com/v1/chat/completions?api-version=1",
+                "https://gateway.example.com/v1/models?api-version=1",
+            ),
+            (
+                "https://gateway.example.com/v1?api-version=1",
+                "https://gateway.example.com/v1/models?api-version=1",
+            ),
+        ];
+        for (endpoint, expected) in cases {
+            assert_eq!(super::models_url(endpoint), expected);
         }
     }
 

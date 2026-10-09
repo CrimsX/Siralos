@@ -59,7 +59,7 @@ pub const MAX_PROFILE_CREDENTIAL_BYTES: usize = 70;
 /// after the "key:" prefix, which holds the literal pasted key).
 pub const MAX_PROFILE_CREDENTIAL_KEY_BYTES: usize = 4096;
 /// Maximum endpoint URL length in UTF-8 bytes.
-pub const MAX_PROFILE_ENDPOINT_BYTES: usize = 512;
+pub const MAX_PROFILE_ENDPOINT_BYTES: usize = 4096;
 /// Maximum model display name length in UTF-8 bytes.
 pub const MAX_PROFILE_MODEL_DISPLAY_NAME_BYTES: usize = 256;
 
@@ -144,20 +144,21 @@ pub fn has_http_scheme(value: &str) -> bool {
 }
 
 /// Validate the bounded HTTP(S) endpoint shape without normalizing or
-/// resolving it. Endpoints may contain a path, but not userinfo, query,
-/// fragment, control characters, or an empty/malformed authority.
+/// resolving it. Endpoints may contain a path and a query string, but not
+/// userinfo, a fragment, control characters, or an empty/malformed
+/// authority.
 #[must_use]
 pub fn is_valid_http_endpoint(value: &str) -> bool {
     if !has_http_scheme(value)
         || value.chars().any(char::is_control)
         || value.chars().any(char::is_whitespace)
-        || value.contains(['?', '#'])
+        || value.contains('#')
     {
         return false;
     }
     let authority = value
         .split_once("://")
-        .map(|(_, rest)| rest.split('/').next().unwrap_or_default())
+        .map(|(_, rest)| rest.split(['/', '?']).next().unwrap_or_default())
         .unwrap_or_default();
     if authority.is_empty()
         || authority.contains('@')
@@ -459,7 +460,7 @@ fn validate_endpoint_field(
     }
     if !is_valid_http_endpoint(value) {
         return Err(ProfileValidationError {
-            message: "An endpoint must be a valid HTTP(S) URL with an authority and no userinfo, query, fragment, or controls.".to_owned(),
+            message: "An endpoint must be a valid HTTP(S) URL with an authority and no userinfo, fragment, or controls.".to_owned(),
         });
     }
     Ok(())
@@ -1770,6 +1771,19 @@ mod tests {
             capability: CapabilityId::parse(cap).expect("valid capability"),
             requested: rule,
         }
+    }
+
+    #[test]
+    fn endpoint_shape_accepts_query_and_refuses_userinfo_and_fragment() {
+        use super::is_valid_http_endpoint;
+        assert!(is_valid_http_endpoint("https://api.example.com/v1"));
+        assert!(is_valid_http_endpoint(
+            "https://gateway.example.com/v1/chat/completions?api-version=2024-02-15-preview"
+        ));
+        assert!(is_valid_http_endpoint("https://host.example?x=1"));
+        assert!(!is_valid_http_endpoint("https://user:pass@example.com/v1"));
+        assert!(!is_valid_http_endpoint("https://example.com/v1#frag"));
+        assert!(!is_valid_http_endpoint("https://example.com/v1?a=1#frag"));
     }
 
     fn host_policy() -> PermissionPolicy {

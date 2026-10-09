@@ -1441,15 +1441,16 @@ fn write_profile_config_endpoint_messages_are_pinned() {
         )
         .expect_err("the endpoint guard refuses")
     };
-    assert_eq!(
-        refused(""),
-        "The endpoint exceeds the 512-byte bound or is empty."
+    let over_bound = format!(
+        "The endpoint exceeds the {}-byte bound or is empty.",
+        siralos_core::composition::MAX_PROFILE_ENDPOINT_BYTES
     );
+    assert_eq!(refused(""), over_bound);
     assert_eq!(
         refused(&"h".repeat(
             siralos_core::composition::MAX_PROFILE_ENDPOINT_BYTES + 1
         )),
-        "The endpoint exceeds the 512-byte bound or is empty."
+        over_bound
     );
     assert_eq!(
         refused("https://api.example.com/a\0b"),

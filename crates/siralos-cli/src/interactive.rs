@@ -4714,7 +4714,7 @@ fn write_profile_config_at_after_consumption(
         }
         if !siralos_core::composition::is_valid_http_endpoint(ep) {
             return Err(
-                "An endpoint must have a valid HTTP(S) authority without userinfo, query, fragment, or controls."
+                "An endpoint must have a valid HTTP(S) authority without userinfo, fragment, or controls."
                     .to_owned(),
             );
         }
