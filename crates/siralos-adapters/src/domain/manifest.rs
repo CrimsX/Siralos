@@ -13,7 +13,7 @@
 //! Decision 114 Q4 — approved atomic-writer surfaces (documented):
 //! the five approved temp+verify+rename writers are `siralos.lock`
 //! (`crates/siralos-adapters/src/lockfile.rs` `write_workspace_lock`),
-//! checkpoint storage (`crates/siralos-adapters/src/checkpoint.rs`),
+//! checkpoint storage (`crates/siralos-adapters/src/workspace/checkpoint.rs`),
 //! replay store (`crates/siralos-adapters/src/replay_store.rs`
 //! `write_replay_store`), domain manifest records
 //! (`crates/siralos-adapters/src/domain/manifest.rs`

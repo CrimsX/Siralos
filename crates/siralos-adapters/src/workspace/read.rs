@@ -13,8 +13,8 @@
 //! the typed unsupported disposition. The generic structural
 //! representation and advisory summary formatter are verified in R5
 //! (siralos-core::language); the GDScript scanner itself is Godot-domain
-//! language intelligence (R8/R9) and remains the TypeScript
-//! reference's surface.
+//! language intelligence (R8/R9) and lives in the external
+//! `siralos-godot` repository, so this adapter stays typed-unsupported.
 
 use crate::workspace::fs::{
     BoundedFileRead, DEFAULT_EXCLUDED_DIRECTORIES, decode_utf8,

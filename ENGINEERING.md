@@ -29,7 +29,7 @@ At this stage the read-only workspace tools are available; Git inspection is una
 
 The terminal interface is an adapter. It parses input, renders output, and composes dependencies. It must not own conversation policy, provider behaviour, application state transitions, persistence, or future Godot behaviour.
 
-The application layer is usable without the terminal UI: `createSiralosApplication({ provider })` runs headlessly and is exercised directly by tests.
+The application layer is usable without the terminal UI: `SiralosApplication::new` (`crates/siralos-core/src/tool/session.rs`) runs headlessly (the `siralos --print` path drains one turn with no interactive frontend) and is exercised directly by tests.
 
 ```text
 Terminal input
@@ -173,17 +173,25 @@ is ever launched.
 
 ## Explicit dependency composition
 
-Concrete dependencies are created in exactly one composition root (`apps/cli/src/bootstrap/create-application.ts`) by direct manual composition:
+Concrete dependencies are created in exactly one composition root (`compose_session`, the single definition the stdio, TUI, and headless `--print` paths all call, re-exported from `crates/siralos-cli/src/interactive.rs`) by direct manual composition:
 
-```ts
-const application = createSiralosApplication({ provider });
+```rust
+// inside compose_session()
+let application = SiralosApplication::new(
+    session_provider,
+    registry_static,
+    policy.clone(),
+    None,
+    Some(f64::from(siralos_core::tool::budget::MAX_TOOL_ROUNDS)),
+)
+.with_projection(ProjectionService::new(), projection_config);
 ```
 
 No dependency-injection container, decorator injection, service locator, runtime reflection, or abstract factory.
 
 ## Small cohesive modules
 
-One concrete responsibility per module. Names state the responsibility (`parse-input`, `interactive-session`, `deterministic-fake-provider`). Avoid vague names such as `Manager`, `Helper`, `Utils`, or `Common`.
+One concrete responsibility per module. Names state the responsibility (`parse_slash_command`, `session_worker`, `deterministic_fake`). Avoid vague names such as `Manager`, `Helper`, `Utils`, or `Common`.
 
 ## No circular dependencies
 
