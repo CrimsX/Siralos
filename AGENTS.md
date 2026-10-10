@@ -15,7 +15,7 @@
    tree it carries the same ledger in more detail; that directory is gitignored
    scaffolding deleted at handoff, so no durable claim may live only there.
 
-**Standing rule: self-loop on every prompt** — every prompt (human or follow-up, Wayfinder or direct implementation) must invoke the `self-loop` skill and follow its `references/verification-protocol.md` ledger (criterion → evidence → pass/fail/unknown → challenge lenses → repair), even when another skill says one ticket per session. Skill load is per-prompt; loop budget is one coherent pass + up to two repairs unless the prompt explicitly changes budget. Also see `docs/wayfinder/siralos-roadmap.md:Notes` for the Wayfinder-persistent form of this rule.
+**Standing rule: truth-loop on every prompt** — every prompt (human or follow-up, Wayfinder or direct implementation) must invoke the `truth-loop` skill and follow its `references/verification-protocol.md` ledger (criterion → evidence → pass/fail/unknown → challenge lenses → repair), even when another skill says one ticket per session. Skill load is per-prompt; loop budget is one coherent pass + up to two repairs unless the prompt explicitly changes budget. Also see `docs/wayfinder/siralos-roadmap.md:Notes` for the Wayfinder-persistent form of this rule.
 
 5. If `docs/wayfinder/siralos-roadmap.md` exists on the filesystem, also read its **Destination** and **Notes** (the Wayfinder map). It names the decision-ready route R7.5 → R12 → Stage 4 and the current frontier; Decisions so far are the index of closed tickets (refer by name, never bare id). The map is local-markdown fallback (label `wayfinder:map` on a hosted tracker) — read the file directly, not the `docs/wayfinder/tickets/` children, unless a ticket is claimed.
 
