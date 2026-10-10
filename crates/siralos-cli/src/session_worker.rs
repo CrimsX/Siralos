@@ -2605,7 +2605,10 @@ mod loop_tests {
         // its callback latency is bounded by the event interval, not by the
         // turn. This deliberately does not claim that an already-blocked
         // provider transport is interrupted; that boundary is outside this
-        // module. The numbers are printed because the point is the measurement.
+        // module. The numbers are printed because the point is the
+        // measurement; the ASSERTIONS are event-count- and ordering-based,
+        // because a wall-clock bound on a 20 ms interval is scheduling noise
+        // under load — the claim is about intervals, not milliseconds.
         let delay = std::time::Duration::from_millis(20);
         let cancels = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let mut session = StallingSession {
@@ -2642,27 +2645,52 @@ mod loop_tests {
             }
         }
 
+        // Drain anything already queued so the count below covers only the
+        // events produced after the request.
+        while event_rx.try_recv().is_ok() {}
+
         let requested = std::time::Instant::now();
         cancel.request();
         let mut landed = None;
+        let mut events_after_request = 0usize;
+        let mut turn_finished_first = false;
         while requested.elapsed() < std::time::Duration::from_secs(5) {
             if let Some(at) = cancels.lock().expect("cancel log").first() {
                 landed = Some(*at);
                 break;
             }
+            match event_rx.try_recv() {
+                Ok(WorkerEvent::TurnFinished) => {
+                    turn_finished_first = true;
+                    break;
+                }
+                Ok(_) => events_after_request += 1,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+            }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
+        assert!(
+            !turn_finished_first,
+            "the cancel must reach the stalled turn before the turn ends"
+        );
         let latency = landed
             .expect("the flag reaches the stalled turn's poll seam")
             .duration_since(requested);
         println!(
-            "cancel latency after a {delay:?} event interval: {latency:?} ({} events, {latency_events:.1} intervals)",
-            drained,
+            "cancel latency after a {delay:?} interval: {latency:?} \
+             ({drained} pre-request events, {events_after_request} after, \
+             {latency_events:.1} intervals)",
             latency_events = latency.as_secs_f64() / delay.as_secs_f64(),
         );
+        // The claim is about EVENT intervals, not wall-clock milliseconds:
+        // under load a 20 ms interval stretches, but the number of events
+        // between the request and the poll seam does not. Assert that count;
+        // the ms figure stays a printed measurement.
         assert!(
-            latency <= delay * 3,
-            "the cancel must land within a few event intervals, took {latency:?}"
+            events_after_request <= 3,
+            "the cancel must be observed within a few event intervals of the \
+             request (saw {events_after_request} events, {latency:?})"
         );
 
         command_tx.send(WorkerCommand::Shutdown).expect("shutdown");
