@@ -3,8 +3,12 @@
 //!
 //! Architecture/navigation metadata only — never a service registry,
 //! never capability. Before an executor creates an overlapping
-//! abstraction, context identifies the existing owner. Mirrors
-//! `packages/core/src/determinism/discovery.ts` ownership section.
+//! abstraction, context identifies the existing owner. `path` names the
+//! CURRENT Rust home of each responsibility; Godot-domain
+//! responsibilities live in the external `siralos-godot` repository.
+//! The TypeScript-era homes this index was first ported from are
+//! archived at `5da5cde` (decision 40) and are deliberately not cited
+//! here: Rust is the sole source of truth.
 
 use super::ports::stable_sort_by_key;
 
@@ -26,109 +30,109 @@ pub const OWNERSHIP_INDEX: &[OwnershipEntry] = &[
     OwnershipEntry {
         responsibility: "tool projection",
         owner: "ToolProjector",
-        path: "packages/core/src/projection/tool-projector.ts",
+        path: "crates/siralos-core/src/tool/",
         overlaps_with: &["provider tool schema"],
     },
     OwnershipEntry {
         responsibility: "context projection",
         owner: "ContextProjector",
-        path: "packages/core/src/projection/context-projector.ts",
+        path: "crates/siralos-core/src/projection/",
         overlaps_with: &["provider context assembly"],
     },
     OwnershipEntry {
         responsibility: "planning depth",
         owner: "PlanningPolicy",
-        path: "packages/core/src/planning/planning-policy.ts",
+        path: "crates/siralos-core/src/planning/policy.rs",
         overlaps_with: &["plan routing"],
     },
     OwnershipEntry {
         responsibility: "task state",
         owner: "TaskRuntime",
-        path: "packages/core/src/tasks/task-runtime.ts",
+        path: "crates/siralos-core/src/task/runtime.rs",
         overlaps_with: &["workflow state"],
     },
     OwnershipEntry {
         responsibility: "acceptance evaluation",
         owner: "AcceptanceEvaluator",
-        path: "packages/core/src/executor/",
+        path: "crates/siralos-core/src/executor/acceptance.rs",
         overlaps_with: &["completion gate"],
     },
     OwnershipEntry {
         responsibility: "evidence",
         owner: "EvidenceStore",
-        path: "packages/core/src/tasks/task-runtime-evidence.ts",
+        path: "crates/siralos-core/src/task/evidence.rs",
         overlaps_with: &["evidence records"],
     },
     OwnershipEntry {
         responsibility: "approval",
         owner: "ApprovalSystem",
-        path: "packages/core/src/security/approval.ts",
+        path: "crates/siralos-core/src/security.rs",
         overlaps_with: &["mutation authorization"],
     },
     OwnershipEntry {
         responsibility: "checkpoints",
         owner: "CheckpointStore",
-        path: "packages/adapters/src/checkpoints/",
+        path: "crates/siralos-adapters/src/workspace/checkpoint.rs",
         overlaps_with: &["undo", "recovery"],
     },
     OwnershipEntry {
         responsibility: "workspace revisions",
         owner: "WorkspaceRevisionRegistry",
-        path: "packages/core/src/workspace/workspace-revision.ts",
+        path: "crates/siralos-core/src/workspace/revision.rs",
         overlaps_with: &["source identity"],
     },
     OwnershipEntry {
         responsibility: "canonical digests",
         owner: "ArtifactDigest",
-        path: "packages/core/src/identity/artifact-digest.ts",
+        path: "crates/siralos-core/src/identity/artifact.rs",
         overlaps_with: &["hashing"],
     },
     OwnershipEntry {
         responsibility: "documentation selection",
         owner: "DocumentationSelection",
-        path: "packages/core/src/executor/documentation-context.ts",
+        path: "crates/siralos-core/src/executor/context.rs",
         overlaps_with: &["guidance selection"],
     },
     OwnershipEntry {
         responsibility: "executor briefing",
         owner: "ExecutorBriefCompiler",
-        path: "packages/core/src/executor/brief-compiler.ts",
+        path: "crates/siralos-core/src/executor/brief.rs",
         overlaps_with: &["task briefing"],
     },
     OwnershipEntry {
         responsibility: "validation plan",
         owner: "ValidationPlan",
-        path: "packages/core/src/determinism/decisions.ts",
+        path: "crates/siralos-core/src/determinism/decisions.rs",
         overlaps_with: &["validation selection"],
     },
     OwnershipEntry {
         responsibility: "retry policy",
         owner: "RetryPolicy",
-        path: "packages/core/src/determinism/decisions.ts",
+        path: "crates/siralos-core/src/determinism/decisions.rs",
         overlaps_with: &["repair loop"],
     },
     OwnershipEntry {
         responsibility: "impact analysis",
         owner: "ImpactAnalyzer",
-        path: "packages/core/src/godot/impact/impact-analyzer.ts",
+        path: "siralos-godot/src/godot/impact/analyzer.rs",
         overlaps_with: &["review context"],
     },
     OwnershipEntry {
         responsibility: "independent review",
         owner: "ChangeReviewer",
-        path: "packages/core/src/godot/quality/quality-review.ts",
+        path: "siralos-godot/src/godot/impact/",
         overlaps_with: &["quality gate"],
     },
     OwnershipEntry {
         responsibility: "surface routing",
         owner: "DevelopmentSurfaceClassifier",
-        path: "packages/core/src/godot/development/development-surface.ts",
+        path: "siralos-godot/src/godot/development/surface.rs",
         overlaps_with: &["workflow routing"],
     },
     OwnershipEntry {
         responsibility: "nondeterminism audit",
         owner: "NondeterminismAudit",
-        path: "scripts/check-nondeterminism.mjs",
+        path: "tests/differential/run-differential.mjs",
         overlaps_with: &["architecture checks"],
     },
 ];
