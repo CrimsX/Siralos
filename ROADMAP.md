@@ -847,7 +847,7 @@ with setx YOUR_API_KEY_NAME "the-key" and enter YOUR_API_KEY_NAME here`. It coul
   reusing the Rust gate's pin, and `fuzz/Cargo.lock` was refreshed in the
   same change. The strictness under test is unchanged: unknown fields,
   unknown subjects, and bad parity classifications stay typed rejections,
-  covered in-repo by the harness's adversarial tests plus two pinned
+  covered in-repo by the harness's adversarial tests plus two
   entry-point tests.
 - **The duplicated freeze record — RESOLVED (owner-directed 2026-10-10).** The tracked
   freeze-evidence `candidate.json` was

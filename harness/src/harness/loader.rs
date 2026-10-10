@@ -711,6 +711,10 @@ pub fn fuzz_scenario_bytes(data: &[u8]) -> Result<(), HarnessError> {
     let scenario: Scenario = serde_json::from_str(text).map_err(|error| {
         HarnessError::corpus(format!("malformed scenario: {error}"))
     })?;
+    // The file name is derived from the decoded id, so the
+    // id<->file clause of `validate_scenario` is exercised here only
+    // in its identifier half; the mismatch arm is covered by the
+    // directory loader, which pairs manifest names against payloads.
     let file = format!("{}.json", scenario.id);
     validate_scenario(&scenario, &file)?;
     canonical_scenario_digest(&scenario)?;

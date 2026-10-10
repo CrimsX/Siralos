@@ -25,7 +25,8 @@ and priorities).
     become valid scenarios. Running it needs the sibling plugin checkout
     beside the repository (the pin the Rust gate uses) and a nightly
     toolchain; the scheduled assurance workflow provisions both and runs
-    the bounded smoke.
+    the bounded smoke
+    (`cargo fuzz run corpus_scenario -- -runs=10000 -max_total_time=60`).
 - Local fuzzing is unavailable from this repository's pin, and the reason
   previously recorded here was not evidence this repository holds: it
   quoted a rustc diagnostic from a target this pin does not build. What is
