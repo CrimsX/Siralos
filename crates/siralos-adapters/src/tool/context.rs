@@ -1802,29 +1802,7 @@ mod tests {
                 other => panic!("unexpected {other:?}"),
             };
         assert_eq!(hits_a, hits_b);
-        // Also verify benchmark flow is key-blind: changing answer_key doesn't change paged tokens
-        use crate::tool::context_benchmark::{
-            PagingStrategy, gold_set_v3, run_strategy,
-        };
-        let scenarios = gold_set_v3().expect("gold");
-        let sc = scenarios
-            .iter()
-            .find(|s| s.name == "narrow-alpha")
-            .expect("na")
-            .clone();
-        let report_a = run_strategy(
-            std::slice::from_ref(&sc),
-            PagingStrategy::ProgressiveV2,
-        )
-        .expect("run a");
-        let tokens_a = report_a.scenarios[0].tokens_paged;
-        let mut sc2 = sc.clone();
-        sc2.answer_key = vec!["na-03".to_owned()];
-        let report_b = run_strategy(
-            std::slice::from_ref(&sc2),
-            PagingStrategy::ProgressiveV2,
-        )
-        .expect("run b");
-        assert_eq!(tokens_a, report_b.scenarios[0].tokens_paged);
+        // The benchmark-flow half of this key-blindness check moved with
+        // `context_benchmark` to the harness crate (`key_blindness_benchmark_flow_does_not_depend_on_answer_key`).
     }
 }
