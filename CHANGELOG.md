@@ -32,6 +32,11 @@ and the number does not change any of it.
 
 ### Changed
 
+- **The `corpus_scenario` fuzz target is rewired to the extracted harness**
+  (owner-directed, 2026-10-10). It now fuzzes the harness's own strict
+  scenario gate through a minimal public entry point, and the scheduled
+  assurance job provisions the pinned plugin checkout the harness build
+  needs.
 - **The duplicated freeze candidate record is gone** (owner-approved pinned-record
   amendment, 2026-10-10). The freeze evidence's `candidate.json` was
   byte-identical to its sibling `oracle.json`; the evidence loader now confirms

@@ -837,16 +837,18 @@ with setx YOUR_API_KEY_NAME "the-key" and enter YOUR_API_KEY_NAME here`. It coul
   `A credential env name must match [A-Z0-9_]{1,64} after "env:".`. Promoting that
   teaching branch into the provider-add path — and validating the field at all — is
   a user-visible product change the owner has not made.
-- **The `corpus_scenario` fuzz target.** Its subject is `siralos_harness::harness::Scenario`,
-  so the fuzz crate can only reach it by depending on the harness — which the workspace
-  excludes and which depends on the out-of-repo plugin by path, so the assurance job would
-  also have to clone the plugin. The alternatives are to wire both, or to delete the target
-  with its manifest entry and the `cargo fuzz run corpus_scenario` step in
-  `assurance.yml`. Leaving it as it is is the one option that is not honest: it has not
-  compiled since the harness left the CLI, so `cargo fuzz build` fails on its first run,
-  and the invariants it states are currently covered by the harness's own adversarial tests
-  instead. The duplicated freeze record below was the same shape of question and is
-  now resolved by owner decision (2026-10-10); this target remains open.
+- **The `corpus_scenario` fuzz target — RESOLVED (owner-directed rewire,
+  2026-10-10).** The fuzz crate depends on the harness workspace
+  (`fuzz/Cargo.toml`), and the target calls the harness's own strict
+  scenario gate — typed JSON parse, strict shape validation, canonical
+  digest, with no filesystem and no process — instead of importing a
+  module the CLI no longer owns. The assurance job checks out the pinned
+  plugin revision beside the repository before building the fuzz targets,
+  reusing the Rust gate's pin, and `fuzz/Cargo.lock` was refreshed in the
+  same change. The strictness under test is unchanged: unknown fields,
+  unknown subjects, and bad parity classifications stay typed rejections,
+  covered in-repo by the harness's adversarial tests plus two pinned
+  entry-point tests.
 - **The duplicated freeze record — RESOLVED (owner-directed 2026-10-10).** The tracked
   freeze-evidence `candidate.json` was
   byte-identical to its sibling `oracle.json` (both `sha256 9f5f786…`) and is now

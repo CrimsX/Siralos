@@ -15,9 +15,17 @@ and priorities).
     decode preserves the version; component bounds hold.
   - `cli_args` — argument parsing never panics; non-UTF-8 rejection is
     exercised per platform.
-  - `corpus_scenario` — arbitrary JSON never panics the differential
-    corpus decoder; invalid parity/unknown subjects never silently
-    become valid scenarios.
+  - `corpus_scenario` — arbitrary bytes never panic, hang, or
+    over-allocate the differential corpus decoder: the target in
+    `fuzz/fuzz_targets/corpus_scenario.rs` feeds them to the harness's
+    own strict scenario gate in `harness/src/harness/loader.rs` (typed
+    JSON parse, strict shape validation, canonical digest; no
+    filesystem, no process), so malformed documents, invalid parity,
+    and unknown subjects are typed rejections that never silently
+    become valid scenarios. Running it needs the sibling plugin checkout
+    beside the repository (the pin the Rust gate uses) and a nightly
+    toolchain; the scheduled assurance workflow provisions both and runs
+    the bounded smoke.
 - Local fuzzing is unavailable from this repository's pin, and the reason
   previously recorded here was not evidence this repository holds: it
   quoted a rustc diagnostic from a target this pin does not build. What is
