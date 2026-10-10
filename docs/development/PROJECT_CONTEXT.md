@@ -76,7 +76,7 @@ Central invariant:
 
 ### TypeScript historical oracle (archived)
 
-The TypeScript historical oracle is **archived** at `5da5cde` (freeze v32, 234/234, `corpusSha256 c8b70a95`, `candidateRecordsSha256 9f5f786…`) and retained as digest-bound evidence under `tests/differential/evidence/typescript-freeze-v32/` (`oracle.json`, `candidate.json`, `audit.json`, `manifest.json`, `FREEZE.json`). The live npm workspace under `apps/` + `packages/` has been **removed** (decision 40, C4); the live repository is Rust-only. Differential harness runs in **pinned mode** against the frozen oracle (decision 40, C2); historical replay requires an explicit worktree at the freeze SHA and is never part of `npm run check`. The honest trade-off (C7) is that live drift-detection is replaced by pinned records.
+The TypeScript historical oracle is **archived** at `5da5cde` (freeze v32, 234/234, `corpusSha256 c8b70a95`, `candidateRecordsSha256 9f5f786…`) and retained as digest-bound evidence under `tests/differential/evidence/typescript-freeze-v32/` (`oracle.json`, `audit.json`, `manifest.json`, `FREEZE.json`). The fifth artifact, `candidate.json`, was byte-identical to `oracle.json` and was deleted by owner-approved pinned-record amendment on 2026-10-10; both recorded digests remain bound to the retained copy. The live npm workspace under `apps/` + `packages/` has been **removed** (decision 40, C4); the live repository is Rust-only. Differential harness runs in **pinned mode** against the frozen oracle (decision 40, C2); historical replay requires an explicit worktree at the freeze SHA and is never part of `npm run check`. The honest trade-off (C7) is that live drift-detection is replaced by pinned records.
 
 ### Current Rust candidate (sole source of truth)
 

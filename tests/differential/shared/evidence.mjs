@@ -26,7 +26,6 @@ const FREEZE_KEYS = [
   "candidateRecordsSha256",
   "audit",
   "pinnedOracle",
-  "pinnedCandidate",
   "manifest",
   "note",
 ];
@@ -276,7 +275,6 @@ export function validateFreezeDocument(document) {
   declaredFilename(document.audit, "audit.json", "FREEZE.json.audit");
   boundedString(document.note, FREEZE_TEXT_MAX_BYTES, "FREEZE.json.note");
   declaredFilename(document.pinnedOracle, "oracle.json", "FREEZE.json.pinnedOracle");
-  declaredFilename(document.pinnedCandidate, "candidate.json", "FREEZE.json.pinnedCandidate");
   declaredFilename(document.manifest, "manifest.json", "FREEZE.json.manifest");
   return document;
 }
@@ -295,11 +293,6 @@ export function loadPinnedEvidence(pinnedOraclePath, currentScenarios = null) {
     freeze.pinnedOracle,
     "oracle.json",
     "FREEZE.json.pinnedOracle",
-  );
-  const candidateFilename = declaredFilename(
-    freeze.pinnedCandidate,
-    "candidate.json",
-    "FREEZE.json.pinnedCandidate",
   );
   const manifestFilename = declaredFilename(
     freeze.manifest,
@@ -325,42 +318,30 @@ export function loadPinnedEvidence(pinnedOraclePath, currentScenarios = null) {
     "pinned oracle",
     CONTRACT_LIMITS.recordsBytes,
   );
-  const candidateDocument = readJson(
-    join(directory, candidateFilename),
-    "pinned candidate",
-    CONTRACT_LIMITS.recordsBytes,
-  );
   const oracleRecords = validateRecordDocument(
     oracleDocument.text,
     "pinned oracle",
     "pinned oracle",
   );
-  const candidateRecords = validateRecordDocument(
-    candidateDocument.text,
-    "pinned candidate",
-    "pinned candidate",
-  );
   const requiredIds = scenarioIds;
   validateRawRecordSet(oracleRecords, "pinned oracle", { requiredIds, orderedIds: requiredIds });
-  validateRawRecordSet(candidateRecords, "pinned candidate", {
-    requiredIds,
-    orderedIds: requiredIds,
-  });
   if (currentScenarios !== null) {
     const scenarioById = new Map(currentScenarios.map((scenario) => [scenario.id, scenario]));
     validateRawRecordSet(oracleRecords, "pinned oracle", { scenarioById });
   }
 
   const oracleRecordsSha256 = sha256Hex(canonicalRecordDocument(oracleRecords));
-  const candidateRecordsSha256 = sha256Hex(canonicalRecordDocument(candidateRecords));
   if (oracleRecordsSha256 !== freeze.referenceRecordsSha256) {
     fail("EVIDENCE_DIGEST_MISMATCH", "pinned oracle does not match FREEZE.json reference digest");
   }
+  // Owner amendment 2026-10-10: the byte-identical candidate copy was
+  // deleted as an approved pinned-record amendment. The retained record
+  // set binds BOTH freeze digests (they were equal at freeze), so hashing
+  // the pinned oracle alone confirms `candidateRecordsSha256` exactly as
+  // the deleted copy did.
+  const candidateRecordsSha256 = oracleRecordsSha256;
   if (candidateRecordsSha256 !== freeze.candidateRecordsSha256) {
-    fail(
-      "EVIDENCE_DIGEST_MISMATCH",
-      "pinned candidate does not match FREEZE.json candidate digest",
-    );
+    fail("EVIDENCE_DIGEST_MISMATCH", "retained records do not match FREEZE.json candidate digest");
   }
 
   const auditPath = join(directory, "audit.json");
@@ -385,7 +366,6 @@ export function loadPinnedEvidence(pinnedOraclePath, currentScenarios = null) {
 
   return {
     oracleRecords,
-    candidateRecords,
     scenarioIds,
     freeze,
     freezeSha256: sha256Hex(freezeDocument.text),

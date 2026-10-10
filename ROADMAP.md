@@ -845,24 +845,20 @@ with setx YOUR_API_KEY_NAME "the-key" and enter YOUR_API_KEY_NAME here`. It coul
   `assurance.yml`. Leaving it as it is is the one option that is not honest: it has not
   compiled since the harness left the CLI, so `cargo fuzz build` fails on its first run,
   and the invariants it states are currently covered by the harness's own adversarial tests
-  instead. The duplicated freeze record below is the same shape of question.
-- **The duplicated freeze record.** The tracked
-  `tests/differential/evidence/typescript-freeze-v32/candidate.json` is
-  byte-identical to its sibling `oracle.json` (both `sha256 9f5f786…`);
-  `FREEZE.json:8` and `FREEZE.json:9` name the two roles, and `FREEZE.json:5-6`
-  records `referenceRecordsSha256` and `candidateRecordsSha256` as that same
-  digest. Nothing reads it: no script, workflow, `package.json` entry or test
-  names the evidence-directory copy; the harness writes its own outputs to the
-  gitignored `tests/differential/out/` (`.gitignore:22`) and reads only the
-  pinned oracle (`tests/differential/run-differential.mjs:630`). Because the two
-  recorded digests are equal, hashing `oracle.json` alone already confirms both
-  fields, so the duplicate adds no verification the directory does not already
-  carry. Against that, the two files are provenance-distinct artifacts — the
-  reference's and the candidate's — so their byte-identity is the parity claim
-  itself, and after deletion it survives only as a recorded digest.
-  `PROJECT_CONTEXT.md:79` names the file among the five retained, so removing
-  its 1.2 MB is an amendment to a pinned record: the owner's decision, not the
-  agent's.
+  instead. The duplicated freeze record below was the same shape of question and is
+  now resolved by owner decision (2026-10-10); this target remains open.
+- **The duplicated freeze record — RESOLVED (owner-directed 2026-10-10).** The tracked
+  `tests/differential/evidence/typescript-freeze-v32/candidate.json` was
+  byte-identical to its sibling `oracle.json` (both `sha256 9f5f786…`) and is now
+  DELETED as an approved pinned-record amendment. The two provenance roles survive
+  as the recorded digests: `FREEZE.json:5-6` still records
+  `referenceRecordsSha256` and `candidateRecordsSha256` as that same
+  digest, and the evidence loader (`tests/differential/shared/evidence.mjs`)
+  now confirms BOTH fields by hashing the retained `oracle.json`
+  alone — exactly the verification the duplicate used to
+  provide. `PROJECT_CONTEXT.md:79` lists the four retained artifacts and
+  `CHANGELOG.md` records the amendment; the parity claim itself is unchanged and
+  lives in the digests plus the frozen `audit.json`.
 
 ### Deliberately not in 1.0
 
