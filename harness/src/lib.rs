@@ -6,6 +6,7 @@
 //!
 //! This crate is excluded from the root workspace (see `Cargo.toml`).
 
+pub mod context_benchmark;
 pub mod harness;
 pub mod harness_cli_session;
 pub mod harness_r134;
