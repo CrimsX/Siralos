@@ -1292,9 +1292,9 @@ fn the_idle_poll_keeps_the_character_cadence_while_text_is_owed() {
     // compose_session_before_guard_no_terminal_needed uses.
     let src = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("src/interactive.rs"),
+            .join("src/interactive/tui_loop.rs"),
     )
-    .expect("read interactive.rs");
+    .expect("read the TUI loop source");
     let poll = src
         .find("let idle_poll = crate::tui::paint_interval(")
         .expect("the idle poll consults the reveal");
@@ -1317,11 +1317,29 @@ fn the_demand_loop_runs_where_the_history_lives() {
     // must NOT drive it any more, because it holds no history to read.
     // The property is "this call is here, and not there", which is what a
     // source check can settle.
-    let src = std::fs::read_to_string(
+    // The frontend split across `interactive.rs` + `interactive/` keeps the
+    // same owners; scan the whole module tree, tests excluded.
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/interactive");
+    let mut src = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("src/interactive.rs"),
     )
     .expect("read interactive.rs");
+    let mut modules: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+        .expect("read interactive/")
+        .map(|entry| entry.expect("dir entry").path())
+        .filter(|path| {
+            path.extension().and_then(|ext| ext.to_str()) == Some("rs")
+        })
+        .filter(|path| {
+            path.file_name().and_then(|name| name.to_str()) != Some("tests.rs")
+        })
+        .collect();
+    modules.sort();
+    for path in modules {
+        src.push_str(&std::fs::read_to_string(&path).expect("read module"));
+    }
     // Count call SITES, not the test's own source text: the assertion
     // strings below contain the needle too.
     let calls = src
@@ -3584,9 +3602,9 @@ fn compose_session_before_guard_no_terminal_needed() {
     // composition failure still land on the normal screen.
     let src = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("src/interactive.rs"),
+            .join("src/interactive/tui_loop.rs"),
     )
-    .expect("read interactive.rs");
+    .expect("read the TUI loop source");
     let entry = src
         .find("pub fn run_interactive_tui_with_options")
         .expect("the TUI entry");
