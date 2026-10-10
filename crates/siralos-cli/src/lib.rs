@@ -281,19 +281,15 @@ mod tests {
     fn removed_tui_flag_is_rejected_without_echoing_argv() {
         // Decision 105 A2: the one-commit `--tui` flag is removed. The refusal
         // names the accepted vocabulary instead of echoing the offending argv,
-        // which could carry a secret in a mistyped flag.
-        let error = parse_args(args(&["--tui"])).expect_err("must fail");
-        assert_eq!(error.detail(), "unknown argument");
-        assert!(!error.detail().contains("--tui"));
-        assert_eq!(error.to_string(), error.detail());
-    }
-
-    #[test]
-    fn unknown_arguments_are_rejected() {
-        let error = parse_args(args(&["--unknown"])).expect_err("must fail");
-        assert_eq!(error.detail(), "unknown argument");
-        assert!(!error.detail().contains("--unknown"));
-        assert_eq!(error.to_string(), error.detail());
+        // which could carry a secret in a mistyped flag. Unknown flags in
+        // general share the same refusal (merged from
+        // `unknown_arguments_are_rejected`).
+        for bad in ["--tui", "--unknown"] {
+            let error = parse_args(args(&[bad])).expect_err("must fail");
+            assert_eq!(error.detail(), "unknown argument");
+            assert!(!error.detail().contains(bad));
+            assert_eq!(error.to_string(), error.detail());
+        }
     }
 
     #[test]

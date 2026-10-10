@@ -790,7 +790,7 @@ fn provider_signal_exposes_no_mutation_operation() {
     // cancellation through 'ProviderEvent::Cancelled'.
     let token = CancellationToken::new();
     let signal = token.signal();
-    let _ = signal.is_cancelled();
+    assert!(!signal.is_cancelled());
 }
 
 #[test]

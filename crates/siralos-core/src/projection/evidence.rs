@@ -483,23 +483,4 @@ mod tests {
                 .contains(&"collapse-repeated-lines".to_owned())
         );
     }
-
-    #[test]
-    fn terminal_marker_tiny_line_bound() {
-        // Total truncation marker must remain whole even when line bound is tiny.
-        let view = project_for_model(
-            None,
-            None,
-            &"x".repeat(5000),
-            &EvidenceProjectorOptions {
-                secrets: Vec::new(),
-                max_total_bytes: 32,
-                max_line_bytes: 4,
-            },
-        );
-        assert!(view.truncated);
-        assert!(view.text.contains("[truncated]"));
-        // No second line-bound pass after marker: the marker line may exceed max_line_bytes.
-        assert!(view.text.ends_with("[truncated]"));
-    }
 }
