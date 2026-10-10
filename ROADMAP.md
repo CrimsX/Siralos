@@ -848,7 +848,7 @@ with setx YOUR_API_KEY_NAME "the-key" and enter YOUR_API_KEY_NAME here`. It coul
   instead. The duplicated freeze record below was the same shape of question and is
   now resolved by owner decision (2026-10-10); this target remains open.
 - **The duplicated freeze record — RESOLVED (owner-directed 2026-10-10).** The tracked
-  `tests/differential/evidence/typescript-freeze-v32/candidate.json` was
+  freeze-evidence `candidate.json` was
   byte-identical to its sibling `oracle.json` (both `sha256 9f5f786…`) and is now
   DELETED as an approved pinned-record amendment. The two provenance roles survive
   as the recorded digests: `FREEZE.json:5-6` still records

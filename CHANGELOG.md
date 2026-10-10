@@ -33,8 +33,8 @@ and the number does not change any of it.
 ### Changed
 
 - **The duplicated freeze candidate record is gone** (owner-approved pinned-record
-  amendment, 2026-10-10). `tests/differential/evidence/typescript-freeze-v32/candidate.json`
-  was byte-identical to its sibling `oracle.json`; the evidence loader now confirms
+  amendment, 2026-10-10). The freeze evidence's `candidate.json` was
+  byte-identical to its sibling `oracle.json`; the evidence loader now confirms
   both recorded digests from the retained copy alone, so the parity claim survives
   as the digests and the frozen audit.
 - **The live repository is Rust-only.** The TypeScript implementation is archived
