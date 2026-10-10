@@ -16,7 +16,15 @@ description = "Differential behavioral harness for Siralos (ADR 0033) — dev-on
 # product `Cargo.lock` whenever a shared dependency changes — CI enforces
 # it mechanically, because every harness cargo invocation runs with
 # `--locked`, so a stale lock fails the gate rather than drifting quietly.
+# Excluded from the product workspace (see above). `resolver = "3"` is
+# load-bearing even though this is a virtual workspace: the implicit
+# virtual-workspace default is resolver "1", whose broader feature
+# unification made the shared dependency tree (wasmtime/cranelift)
+# resolve different feature sets than the root workspace, so every gate
+# run compiled them twice. With both workspaces on "3" the harness build
+# reuses the product workspace's dependency artifacts.
 [workspace]
+resolver = "3"
 
 # Workspace lint inheritance cannot cross workspaces, so the product's
 # lint policy is restated here rather than dropped.
