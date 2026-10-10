@@ -412,6 +412,7 @@ pub(in crate::harness) use self::dispatch::{
     state_dir_record,
 };
 pub use self::dispatch::{probe_state_dir_bytes, run_corpus};
+pub use self::loader::fuzz_scenario_bytes;
 pub(in crate::harness) use self::loader::*;
 pub(in crate::harness) use self::subjects::composition::*;
 pub(in crate::harness) use self::subjects::context_session::*;

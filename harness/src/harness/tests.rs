@@ -1,8 +1,8 @@
 use super::{
     HarnessErrorKind, PLATFORM_POSIX, PLATFORM_WINDOWS,
     canonical_records_text, canonical_scenario_digest,
-    cargo_workspace_version, execute_bounded_child, load_corpus,
-    platform_name, probe_state_dir_bytes, provider_turn_record,
+    cargo_workspace_version, execute_bounded_child, fuzz_scenario_bytes,
+    load_corpus, platform_name, probe_state_dir_bytes, provider_turn_record,
     state_dir_record, validate_provider_turn_input, validate_scenario,
 };
 use serde_json::json;
@@ -127,6 +127,29 @@ fn strict_loader_accepts_the_checked_in_digest_bound_corpus() {
         load_corpus(&root.join("tests/differential/corpus"), platform_name())
             .expect("checked-in corpus");
     assert_eq!(loaded.len(), 357);
+}
+
+#[test]
+fn fuzz_entry_accepts_a_valid_scenario_shape() {
+    let bytes = serde_json::to_vec(&scenario()).expect("bytes");
+    assert!(fuzz_scenario_bytes(&bytes).is_ok());
+}
+
+#[test]
+fn fuzz_entry_rejects_arbitrary_bytes_with_typed_errors() {
+    let oversized = vec![b'x'; 17 * 1024];
+    for input in [
+        b"".as_slice(),
+        b"{",
+        b"[]",
+        b"null",
+        b"\xff\xfe",
+        oversized.as_slice(),
+    ] {
+        let error =
+            fuzz_scenario_bytes(input).expect_err("malformed rejected");
+        assert_eq!(error.kind(), HarnessErrorKind::Corpus);
+    }
 }
 
 #[test]

@@ -17,6 +17,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 siralos-core = { path = "../crates/siralos-core" }
 siralos-cli = { path = "../crates/siralos-cli" }
+siralos-harness = { path = "../harness" }
 serde_json = "1"
 
 [[bin]]

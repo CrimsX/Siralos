@@ -685,6 +685,38 @@ pub(in crate::harness) fn validate_scenario(
     Ok(())
 }
 
+/// Strict scenario-shape check for the nightly fuzz target.
+///
+/// Feeds arbitrary bytes through the exact per-scenario gate the
+/// corpus loader enforces — typed JSON parse of [`Scenario`], strict
+/// shape validation, and the canonical scenario digest — without
+/// touching the filesystem or spawning a process. Arbitrary input
+/// can only yield `Err`, never a panic, a hang, or an over-allocation
+/// beyond the 16 KiB scenario bound this function shares with the
+/// corpus loader.
+///
+/// The manifest file name the loader would check against is derived
+/// from the decoded id (`{id}.json`), mirroring the loader's
+/// per-entry check. This function never loosens that gate: unknown
+/// fields, unknown subjects, and bad parity classifications are all
+/// typed corpus rejections.
+pub fn fuzz_scenario_bytes(data: &[u8]) -> Result<(), HarnessError> {
+    if data.len() > MAX_SCENARIO_BYTES {
+        return Err(HarnessError::corpus(format!(
+            "scenario exceeds {MAX_SCENARIO_BYTES} bytes"
+        )));
+    }
+    let text = std::str::from_utf8(data)
+        .map_err(|_| HarnessError::corpus("scenario is not valid UTF-8"))?;
+    let scenario: Scenario = serde_json::from_str(text).map_err(|error| {
+        HarnessError::corpus(format!("malformed scenario: {error}"))
+    })?;
+    let file = format!("{}.json", scenario.id);
+    validate_scenario(&scenario, &file)?;
+    canonical_scenario_digest(&scenario)?;
+    Ok(())
+}
+
 pub(in crate::harness) fn canonical_scenario_digest(
     scenario: &Scenario,
 ) -> Result<String, HarnessError> {
