@@ -137,18 +137,18 @@ executed, and no release has been published.
   `language-definition` subjects (corpus version 9, 63 scenario files);
   all required applicable scenarios match. R5 ports no GDScript/Godot
   parsing, no LSP transport, no process execution, no provider tools,
-  and no Domain architecture. R6 (Minimal Domain Capability Architecture
-  and Synthetic Conformance Domain) is complete: `siralos-core::domain`
+  and no Module architecture. R6 (Minimal Module Capability Architecture
+  and Synthetic Conformance Module) is complete: `siralos-core::module`
   owns the domain-neutral lifecycle/capability semantics (validated
   package identity with exact digest and versioned ABI, the explicit
   absent/installed/enabled/active state machine, Host-authoritative
   capability grants, exact activation binding, typed recovery-ready
-  failures, and no implicit acquisition), `siralos-adapters::domain`
+  failures, and no implicit acquisition), `siralos-adapters::module`
   owns the production Component Model / WIT boundary (versioned
   `siralos:domain-abi@1.0.0` world, exact-byte digest verification,
   fail-closed ABI identity, resource bounds, trap containment, and
   host-mediated effects), and the deterministic product-neutral
-  synthetic conformance Domain proves the boundary on the checked-in
+  synthetic conformance module proves the boundary on the checked-in
   component bytes. The differential corpus gained 23 scenarios across
   the `domain-lifecycle` and `domain-capability` subjects (corpus
   version 11, 86 scenario files); all required applicable scenarios
@@ -785,7 +785,7 @@ later session needs must appear here or in a commit.
    verbatim, and the terminal sanitizer wrapping it
    (`crates/siralos-cli/src/interactive.rs:1118`) keeps `\n` and `\t` by design
    (`crates/siralos-cli/src/sanitize.rs:67`), so a path with a newline in it forges
-   extra lines inside the `/domains` view. What is _not_ reachable: ESC is swallowed
+   extra lines inside the `/modules` view. What is _not_ reachable: ESC is swallowed
    and `\r` is caret-escaped, the path is never resolved against the filesystem — it
    is hashed into the lock as a string
    (`crates/siralos-core/src/composition/lock.rs:131`) — and `siralos.toml` is
@@ -849,6 +849,18 @@ with setx YOUR_API_KEY_NAME "the-key" and enter YOUR_API_KEY_NAME here`. It coul
   unknown subjects, and bad parity classifications stay typed rejections,
   covered in-repo by the harness's adversarial tests plus two
   entry-point tests.
+- **The modules reconsolidation — RESOLVED (owner-directed, 2026-10-10,
+  [ADR 0037](docs/adr/0037-module-composition-and-godot-decoupling.md)).**
+  The domain/plugin vocabulary is one noun (Module) across code, CLI
+  (`/modules-*`), manifests (`[modules.<id>]`, `module-manifest.toml`),
+  and docs; wire identifiers (`siralos:domain-abi@1.0.0`), differential
+  subject names, and the `godot-*` execution surface stay frozen by the
+  pinned oracle. This also closes W1.6b (the Plugin/Domain terminology
+  rename). Corpus v83 carries the amendment: two supersessions (the CLI
+  vocabulary records) plus re-pinned expectations, with the audit
+  printing all three superseded records. The `siralos-godot` removal the
+  directive asked for is recorded in the ADR as blocked by the
+  pinned-evidence binding, with owner options — not implemented.
 - **The duplicated freeze record — RESOLVED (owner-directed 2026-10-10).** The tracked
   freeze-evidence `candidate.json` was
   byte-identical to its sibling `oracle.json` (both `sha256 9f5f786…`) and is now
@@ -867,8 +879,6 @@ with setx YOUR_API_KEY_NAME "the-key" and enter YOUR_API_KEY_NAME here`. It coul
 - **W4.2 option C** — deleting the 51-entry core command table and re-recording
   `cli-session-set` against the real CLI vocabulary. It is a corpus amendment with
   its own gate; the coverage guard added in C1 now makes it safe to attempt.
-- **W1.6b, the Plugin/Domain terminology rename** — listed in the plan, never
-  scheduled by an owner-approved step.
 - Windows junction and case-variant tests for `atomic.rs`; the differential runner
   swallowing its build stderr.
 
@@ -887,8 +897,8 @@ update. `npm run check` passes end to end in this working tree: format, lint,
 documentation links, documentation truth, project context, identity,
 public hygiene, secret hygiene, the Rust architecture check, the reachability
 ratchet, the Rust format/clippy/test gates (siralos-core 650 library tests,
-siralos-adapters 475 library tests plus 28 domain-conformance tests,
-siralos-cli 355 library tests, differential harness 34), and
+siralos-adapters 428 library tests plus 28 domain-conformance tests,
+siralos-cli 358 library tests, differential harness 87), and
 `npm run check:differential` with **parity held on 352/352 applicable required
 scenarios** (4 explicit platform skips, 0 accepted informational deviations).
 
@@ -911,6 +921,19 @@ deliberately, and the evidence records say so rather than hiding it:
   field name), and the three `context-session` scenarios (the workspace profile
   `siralos.toml` is protected from the model-visible context graph, so the
   working set is one node smaller than the frozen record).
+
+Seventeen expectation records and two reference records changed vocabulary
+during the modules reconsolidation ([ADR 0037](docs/adr/0037-module-composition-and-godot-decoupling.md)),
+each deliberately, with the evidence saying so: sixteen `composition-lock`,
+`composition-plugin-selection`, and `composition-plugin-activation` records
+plus one `evolve-proposal` record re-pinned in place (render strings and
+digest domains now speak modules), and two supersessions retiring the frozen
+`command-catalog-snapshot` and `cli-session-set` records (the `/domains-*`
+vocabulary is now `/modules-*`). The pre-existing `user-config-matrix`
+supersession was re-stamped for the v83 bump with its replacement record
+byte-identical. No subject retired, none renamed, and no `godot-*` record
+touched: the pinned oracle freezes those, and the ADR records why removal
+is blocked.
 
 The in-flight alignment work is still not complete: the repair design
 (`docs/superpowers/specs/2026-09-23-security-and-lifecycle-repair-design.md`,

@@ -459,7 +459,7 @@ document. Its foundation additionally enforces, mechanically:
 - **Debug output does not leak secrets.** `Debug` implementations never
   expose credentials or full sensitive workspace contents.
 - **No Godot in core.** `siralos-core` is domain-neutral; the Godot
-  domain is an explicitly installed optional package that is not
+  module is an explicitly installed optional package that is not
   installed, enabled, auto-detected, auto-recommended, or
   auto-downloaded by default.
 

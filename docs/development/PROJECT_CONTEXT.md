@@ -111,7 +111,7 @@ short read is never treated as EOF, a partial prefix can never become
 authoritative source identity, file-size boundaries are explicit, and
 checkpoint source-path inspection fails closed on any escape. Structural/summary
 read modes remain explicit typed unsupported dispositions at R4
-(GDScript structure extraction is Godot-domain language intelligence,
+(GDScript structure extraction is Godot-module language intelligence,
 R8/R9). R5 added the generic language-intelligence foundation to
 `siralos-core` (`siralos-core::language`): one-based source
 positions/ranges with typed validation, the bounded sanitized diagnostic
@@ -138,16 +138,16 @@ scenarios across the `language-diagnostics`, `language-structure`, and
 scenarios match on both implementations. R5 ports no Godot/GDScript
 parsing (the GDScript scanner remains the TypeScript reference for
 R8/R9), no LSP transport, no process execution, no provider tool
-surface, and no Domain architecture.
-R6 added the minimal Domain capability architecture and synthetic
-conformance Domain: `siralos-core::domain` owns the domain-neutral
+surface, and no Module architecture.
+R6 added the minimal Module capability architecture and synthetic
+conformance module: `siralos-core::module` owns the domain-neutral
 lifecycle/capability semantics (validated package identity: stable id,
 exact SHA-256 package digest, versioned ABI; the explicit state machine
 absent/installed/enabled/active with typed transitions; declared
 capability requests with the Host-authoritative grant decision; exact
 activation binding; typed recovery-ready failure outcomes; and the
 explicit absence of implicit acquisition — workspace contents are
-opaque to the lifecycle). `siralos-adapters::domain` owns the production
+opaque to the lifecycle). `siralos-adapters::module` owns the production
 Component Model / WIT boundary (ADR 0034): the versioned
 `siralos:domain-abi@1.0.0` world
 (`crates/siralos-adapters/wit/module-abi.wit`), component
@@ -157,7 +157,7 @@ verification at install and activation (stale/wrong bytes rejected
 before any semantic work), fuel/memory/input/output/host-call bounds,
 trap containment with typed fault outcomes and session stop, and the
 host-mediated effect boundary (grant-checked bounded workspace reads;
-process execution denied). The synthetic conformance Domain
+process execution denied). The synthetic conformance module
 (`tests/domain-conformance/`) is a deterministic, product-neutral
 component fixture proving the production boundary, including
 pathological behaviors (trap, unbounded loop) for containment and
@@ -182,9 +182,9 @@ contexts: the final capability grant is recomputed at commit from the
 commit-time Host authority, so a narrower final authority fails typed
 with zero mutation and zero session consumption, and a wider final
 authority can never widen the activation request. R6
-implements no Plugin
+implements no Module
 system, no marketplace, no provider/tool integration, and no Godot
-Domain.
+Module.
 R7.1 added the provider contract and the bounded single model turn to
 the Rust candidate: `siralos-core::provider` owns the provider-neutral
 request/event/conversation/result types, the external event trust
@@ -234,9 +234,9 @@ Rust is the successor implementation and the **sole source of truth** (decision 
 
 Useful language:
 
-- **Optional Domain**: explicitly installed specialization that contributes
+- **Optional Module**: explicitly installed specialization that contributes
   intelligence without acquiring host authority. Godot is the first and only
-  current Optional Domain.
+  current Optional Module.
 - **Behavioral Reference**: historical implementation whose observable behavior constrained migration parity. TypeScript owned this role until R12 retirement (archived at freeze v32); Rust is now the sole source of truth.
 - **Rust Successor**: candidate implementation promoted only through migration
   gates; it is not a mechanical rewrite.
@@ -258,7 +258,7 @@ direction subject to evidence, not guaranteed commitments:
 3. Godot-Native Development MVP - broad TypeScript reference established.
 4. Controlled Execution (Runtime and Visual QA) - complete.
 5. Composition (Profiles, Context controls, Skills, Plugins, Tools, Views,
-   optional Domains) - complete.
+   optional Modules) - complete.
 6. Evolution & Stabilization (/evolve, evaluation, packaging, release) -
    complete.
 
@@ -293,7 +293,7 @@ Status changes require executable evidence and an update to
 | R3        | Domain-Neutral Core                                                     | Verified |
 | R4        | Generic Workspace / Project Foundation                                  | Verified |
 | R5        | Generic Language Intelligence                                           | Verified |
-| R6        | Minimal Domain Capability Architecture and Synthetic Conformance Domain | Verified |
+| R6        | Minimal Module Capability Architecture and Synthetic Conformance Module | Verified |
 | R7        | Providers / Tools / Projection / CLI                                    | Verified |
 | R8        | Godot Stage-2 parity                                                    | Verified |
 | R9        | Godot Stage-3 parity                                                    | Verified |
@@ -336,11 +336,11 @@ Tools · Effects · Evidence
             |
             v
 OPTIONAL PLUGINS
-Tools · Views · Domains
+Tools · Views · Specialized intelligence
 ```
 
 Siralos is a small privileged Host: authoritative state, revision/staleness
-semantics, capability enforcement, effect execution, plugin containment,
+semantics, capability enforcement, effect execution, module containment,
 evidence/run identity, profile resolution invariants, and context
 provenance/integrity rules are non-replaceable Host responsibilities.
 Orchestration is not a foundational ownership layer; higher-level schedulers
@@ -360,24 +360,24 @@ core thesis). Canonical product primitives:
   controllable (Live / Pinned / Frozen).
 - **Skill** — reusable declarative guidance for model reasoning; it has no
   authority (Skill != Capability).
-- **Plugin** — the only optional executable extension package; explicitly
+- **Module** — the only optional executable extension package; explicitly
   installed, versioned, digestable, capability-scoped, and contained by the
-  Host boundary; core works with zero Plugins.
+  Host boundary; core works with zero Modules. A module may contribute
+  Tools, Views, and specialized development intelligence (Godot is the
+  first and currently only planned Module).
 - **Tool** — the one callable typed operation abstraction (stable identity,
   typed input/output, side-effect classification, capability requirements).
-- **View** — a Plugin-contributed presentation surface; it renders public
+- **View** — a Module-contributed presentation surface; it renders public
   state and requests typed Tools through the Host and has no direct
   authority.
-- **Domain** — specialized development intelligence contributed by a Plugin
-  (Godot is the first and currently only planned Domain).
 - **Run** — one bounded Siralos execution under an explicit Effective Profile
   and Host authority state; one Run uses one stable Profile identity.
 - **Evolve** — a bounded evaluation workflow that proposes measured
-  improvements, escalating Profile -> Context -> Skill -> Plugin -> Host.
+  improvements, escalating Profile -> Context -> Skill -> Module -> Host.
 - **Permission vs Capability** — Permission is the user-facing authorization
   terminology; Capability (CapabilityRequest/CapabilityGrant) is the
   host-enforced internal security terminology. Installing or selecting a
-  Plugin never implies authority.
+  Module never implies authority.
 
 Dependencies point toward lower-level ownership. The current Rust bias is a
 modular monolith:
@@ -386,7 +386,7 @@ modular monolith:
 siralos-cli -> siralos-adapters -> siralos-core
 ```
 
-Core never depends on infrastructure or a domain. Additional crates require a
+Core never depends on infrastructure or a module. Additional crates require a
 real dependency, distribution, security, or ABI reason. Current TypeScript
 dependency direction is `apps/cli -> packages/adapters -> packages/core`; the
 TypeScript core still carries historical Godot contracts because it is the
@@ -412,7 +412,7 @@ Lower layers may narrow authority; they may never broaden it.
 instructions != security
 knowledge != security
 skills != capability
-domain installation != authority
+module installation != authority
 hash != trust
 approval != general capability
 model completion != host acceptance
@@ -525,7 +525,7 @@ input identity changed
 ```
 
 Conceptually: a Skill change may change affected Profile/Context identity; a
-Plugin change may change the ToolSurface; a Context policy change invalidates
+Module change may change the ToolSurface; a Context policy change invalidates
 compiled Context; one changed source file invalidates only dependent derived
 Context/index artifacts where known. Do not build a universal dependency graph
 or generic reactive engine before evidence requires one.
@@ -572,22 +572,22 @@ stability, and Tool-surface stability.
 
 ### Tool-surface identity
 
-If a future Plugin update changes tool presence, tool schema, side-effect
+If a future Module update changes tool presence, tool schema, side-effect
 classification, or capability requirements, the model-visible ToolSurface
-identity must be able to change explicitly. Plugin updates must never silently
+identity must be able to change explicitly. Module updates must never silently
 mutate the model-visible callable environment inside an existing Run.
 
 ### External nondeterminism
 
 External nondeterministic observations — LLM responses, network responses,
-process/compiler output, future Plugin service responses — are recorded or
+process/compiler output, future Module service responses — are recorded or
 explicitly classified when strict replay requires them. Strict replay consumes
 recorded observations rather than silently calling live external systems
 again (H2).
 
-## 11. Godot domain policy
+## 11. Godot module policy
 
-Godot is currently the only Optional Domain.
+Godot is currently the only Optional Module.
 
 ```text
 NOT INSTALLED by default
@@ -599,31 +599,31 @@ NO workspace-driven acquisition
 ```
 
 A `project.godot` file never triggers package state transitions. The Godot
-Domain package and Godot Engine installation are separate. Core must work with
-the package absent. A disabled Godot domain contributes no tools, project-domain
+Module package and Godot Engine installation are separate. Core must work with
+the package absent. A disabled Godot module contributes no tools, project-module
 discovery, Godot context, Godot validation, or Godot runtime. The TypeScript
 reference's static Godot surfaces do not imply that the future Rust package is
 installed or enabled.
 
-## 12. Domain host boundary
+## 12. Module host boundary
 
 [ADR 0034](../adr/0034-godot-domain-host-boundary.md) accepts the WebAssembly
-Component Model with versioned WIT as the primary host/domain boundary. A
+Component Model with versioned WIT as the primary host/module boundary. A
 versioned out-of-process IPC boundary is retained as fallback/reference
 evidence. R6 promotes the experiment to the minimum production boundary:
 the versioned world `siralos:domain-abi@1.0.0` lives in
 `crates/siralos-adapters/wit/module-abi.wit` and is implemented by
-`siralos-adapters::domain` on top of the domain-neutral lifecycle in
-`siralos-core::domain`; the deterministic synthetic conformance Domain
+`siralos-adapters::module` on top of the domain-neutral lifecycle in
+`siralos-core::module`; the deterministic synthetic conformance module
 (`tests/domain-conformance/`) proves the boundary on the real component
-bytes. Domain code receives only structurally granted imports (the world's
+bytes. Module code receives only structurally granted imports (the world's
 `host-effects` interface plus the minimal wasm32-wasip2 std plumbing; no
 filesystem, network, process, or ambient WASI surface); package identity
 (computed from the exact accepted component bytes) and capability requests
 remain host-controlled. Reopening the decision requires new evidence and a
 superseding ADR. ADR 0036 records the long-term unification target — the
-same capability-scoped Plugin mechanism preferred for ordinary executable
-Plugins and Domain-contributing Plugins if practical — without changing
+same capability-scoped Module mechanism preferred for ordinary executable
+Modules and intelligence-contributing Modules if practical — without changing
 ADR 0034's measured decision.
 
 ## 13. R2 differential contract
@@ -696,16 +696,16 @@ Stage 4, Stage 5 and Stage 6 are realized in full. Their per-slice verification 
 Stage 5 (Composition) may later own Profiles, portable locking
 (`siralos.toml` / `siralos.lock` semantics), Context controls (Live /
 Pinned / Frozen, explain/diff), Skills and the Skill Creator, capability-scoped
-Plugins, Tools, Views where justified, and optional Domains. Stage 6
+Modules, Tools, Views where justified, and optional Modules. Stage 6
 (Evolution & Stabilization) may later own `/evolve` with measured evaluation,
 evaluation corpora/baselines, Profile/Context optimization, Skill
-creation/refinement, Plugin/Host improvement proposals, compatibility,
+creation/refinement, Module/Host improvement proposals, compatibility,
 performance, packaging, and release stabilization.
 
 Deliberately removed from committed core architecture by ADR 0036: general
 Hooks, built-in optional agents/subagents, TaskGraph, generic workflow
-engines, Agent Teams, Fleet, distributed/remote workers, plugin marketplaces,
-plugin dependency graphs, automatic Skill/Plugin acquisition, model-router
+engines, Agent Teams, Fleet, distributed/remote workers, module marketplaces,
+module dependency graphs, automatic Skill/Module acquisition, model-router
 architecture, a generic Memory subsystem, and GUI/TUI runtime ownership.
 These are speculative/future-only and may be reconsidered only from concrete
 demand/evidence. None of the above is due and none may be pulled into R3.
@@ -734,7 +734,7 @@ The permanent `AP-001` through `AP-016` register lives in the
 [normative requirements document](../requirements/REQUIREMENTS.md). Important
 themes are: the model never owns authoritative state; chat is not state;
 unrestricted shell is not the authority primitive; permissions are not inferred
-from prose; domains do not auto-activate; Git is not rollback authority; retries
+from prose; modules do not auto-activate; Git is not rollback authority; retries
 are bounded; caches remain derived; and Rust is not a mechanical copy of the
 TypeScript structure.
 
@@ -742,7 +742,7 @@ TypeScript structure.
 
 Verification grows with the owning milestone and includes unit, schema,
 invariant, differential, effect, security, property, fuzz, transaction,
-crash/recovery, determinism, replay, domain conformance, cross-platform,
+crash/recovery, determinism, replay, module conformance, cross-platform,
 adversarial, evaluation, and performance suites. The current authoritative
 local gate is `npm run check`; R2 parity alone is `npm run
 check:differential`. Live sandbox/Godot probes are opt-in and a skip is never a
@@ -753,18 +753,18 @@ pass. See [GOLDEN_TRACES.md](GOLDEN_TRACES.md) for scenario status.
 Keep distinct:
 
 - **Deterministic/countable budgets** — context tokens, tool calls, retry
-  count, output bytes, artifact count, and future Plugin work/fuel where
+  count, output bytes, artifact count, and future Module work/fuel where
   supported.
 - **Operational budgets** — wall-clock timeout, deadline, memory ceiling,
   process lifetime.
 
 Wall-clock timing itself is not a deterministic computation boundary.
 
-### Future Plugin resource bounds
+### Future Module resource bounds
 
 Plugins must never implicitly receive unbounded resources. The eventual
-Plugin Host should be able to bound memory, execution/work, host-call count,
-output size, open resources, and wall-clock lifetime. No Plugin runtime is
+Module Host should be able to bound memory, execution/work, host-call count,
+output size, open resources, and wall-clock lifetime. No Module runtime is
 designed or implemented in this goal.
 
 ### Observability source of truth
@@ -780,7 +780,7 @@ Keep separate: product version, schema version, and protocol/ABI version.
 Unknown durable schema or ABI versions must fail explicitly; do not guess
 future versions. Compatibility discipline applies to durable/external
 boundaries — future `siralos.toml`, `siralos.lock`, Run artifacts,
-ContextSnapshot, Skill/Plugin manifests, WIT interfaces, and machine-readable
+ContextSnapshot, Skill/Module manifests, WIT interfaces, and machine-readable
 external protocols. Internal Rust module names, structs, functions, and
 traits are not stable public contracts merely because they exist during R3;
 internal Rust APIs remain free to evolve until a real external consumer

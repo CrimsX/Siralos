@@ -22,7 +22,7 @@ and priorities).
     JSON parse, strict shape validation, canonical digest; no
     filesystem, no process), so malformed documents, invalid parity,
     and unknown subjects are typed rejections that never silently
-    become valid scenarios. Running it needs the sibling plugin checkout
+    become valid scenarios. Running it needs the sibling module checkout
     beside the repository (the pin the Rust gate uses) and a nightly
     toolchain; the scheduled assurance workflow provisions both and runs
     the bounded smoke

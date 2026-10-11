@@ -83,7 +83,7 @@ component = "<single relative file name>" # optional
 Rationale for keeping the keys: they are generic capability-package
 descriptors, covered by unit tests, with no corpus coverage to
 migrate; renaming them would churn user files for no semantic gain.
-The error type `PluginFailure` becomes `ModuleFailure` with identical
+The error type `PluginFailure` becomes `ModuleManifestFailure` with identical
 codes; the install-record type `PluginRecord` becomes `ModuleRecord`
 with identical `{id, path, digest}` fields.
 
@@ -219,7 +219,9 @@ before any gate logic is touched):
 
 No subject retires and no subject renames: differential subject names
 are historical identifiers frozen by the pinned oracle, not product
-vocabulary. The amendment is two supersessions plus a version stamp:
+vocabulary. The amendment is two new supersessions plus a version stamp
+(a third printed supersession, `user-config-matrix`, predates this change
+and is only re-stamped for the bump):
 
 | Scenario                                                              | Change                                                                                               | Mechanism                                                                                          |
 | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
@@ -257,7 +259,7 @@ renegotiated.
 - Code, CLI, and user-facing docs speak modules; protocol
   identifiers, differential subject names, and the godot execution
   surface stay exactly as the evidence binds them.
-- The next reviewer verifies: two supersessions printed in the
-  audit, v83 manifest digests, 357-count assert with its version,
+- The next reviewer verifies: three supersessions printed in the
+  audit (one pre-existing plus two new), v83 manifest digests, 357-count assert with its version,
   `check:supersessions` green, full gate exit 0 — and no godot
   removal claimed anywhere.

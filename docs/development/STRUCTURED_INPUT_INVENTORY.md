@@ -21,7 +21,7 @@ describes still exists, but it now lives in `crates/siralos-core`,
 - `provider/model-controlled` — output of an external model/provider;
   always untrusted.
 - `network-controlled` — fetched from the network; always untrusted.
-- `domain-controlled` — content from an installed optional domain
+- `module-controlled` — content from an installed optional module
   package; untrusted until package identity is verified.
 - `user-controlled` — interactive or CLI input; untrusted.
 
@@ -45,10 +45,10 @@ transitions, artifact identity, capability projection, or mutation;
 | Research artifacts                       | `packages/adapters/src/research/*`                                          | network-controlled        | HIGH     | TS-era archived; Rust bounded normalization, denied by default: `crates/siralos-core/src/research.rs`, `crates/siralos-adapters/src/research.rs`                             |
 | Reference materialization                | `packages/adapters/src/reference/reference-materializer.ts`                 | workspace-controlled      | MEDIUM   | unavailable (fail-closed); `crates/siralos-adapters/src/reference.rs`                                                                                                        |
 | Scene/resource parsing                   | `packages/adapters/src/godot/intelligence/*`                                | workspace-controlled      | HIGH     | TS-era archived; no Rust parser (scene/GDScript intelligence is external `siralos-godot`; reads report typed unsupported in `crates/siralos-adapters/src/workspace/read.rs`) |
-| `project.godot` profiling                | `packages/adapters/src/godot/project/*`                                     | workspace-controlled      | HIGH     | TS-era archived; no Rust parser (project profiling is external `siralos-godot` domain)                                                                                       |
+| `project.godot` profiling                | `packages/adapters/src/godot/project/*`                                     | workspace-controlled      | HIGH     | TS-era archived; no Rust parser (project profiling is external `siralos-godot` module)                                                                                       |
 | Provider/tool messages                   | `packages/adapters/src/providers/*`                                         | provider/model-controlled | HIGH     | TS-era archived; Rust bounded protocol checks: `crates/siralos-adapters/src/provider/**`                                                                                     |
 | Model responses                          | `packages/core/src/application/*`                                           | provider/model-controlled | HIGH     | TS-era archived; Rust terminal sanitizer: `crates/siralos-cli/src/sanitize.rs`                                                                                               |
-| GDScript diagnostics output              | `packages/adapters/src/godot/diagnostics/*`                                 | provider/model-controlled | MEDIUM   | unavailable (fail-closed); GDScript check-only diagnostics never run (scanner is external `siralos-godot` domain)                                                            |
+| GDScript diagnostics output              | `packages/adapters/src/godot/diagnostics/*`                                 | provider/model-controlled | MEDIUM   | unavailable (fail-closed); GDScript check-only diagnostics never run (scanner is external `siralos-godot` module)                                                            |
 | Git status/diff output                   | `packages/adapters/src/git/cli/*`                                           | workspace-controlled      | MEDIUM   | unavailable (fail-closed); `crates/siralos-adapters/src/workspace/git.rs`                                                                                                    |
 | CLI structured inputs                    | `apps/cli/src/input/*`                                                      | user-controlled           | MEDIUM   | TS-era archived; Rust parse: `crates/siralos-cli/src/lib.rs` (`parse_args`)                                                                                                  |
 
@@ -65,9 +65,12 @@ transitions, artifact identity, capability projection, or mutation;
 ## Fuzz/property priority
 
 Fuzz targets exist for: version parsing, CLI arguments, and differential
-corpus decoding (see `fuzz/`, nightly toolchain); the corpus target is
-stale against the extracted harness and is the open owner decision
-recorded in ROADMAP.md. Property tests exist for version
+corpus decoding (see `fuzz/`, nightly toolchain); the corpus target feeds
+arbitrary bytes to the harness's own strict scenario gate
+(`harness/src/harness/loader.rs`), and the scheduled assurance workflow
+runs the bounded smoke
+(`cargo fuzz run corpus_scenario -- -runs=10000 -max_total_time=60`).
+Property tests exist for version
 round-trip/ordering (proptest) and canonical JSON idempotence
 (deterministic generator). The remaining HIGH-priority boundaries
 (provider messages, model responses, scene/resource parsing) are

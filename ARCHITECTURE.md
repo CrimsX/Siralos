@@ -29,10 +29,10 @@ exclude = ["fuzz", "harness"]
 - `fuzz/` is nightly-only and must never enter the stable quality gate.
 - `harness/` is the differential harness ([ADR 0033](docs/adr/0033-differential-behavioral-harness.md)).
   It is a **separate workspace** with its own `Cargo.lock`, excluded so the
-  product workspace carries no external domain dependency and builds from a
+  product workspace carries no external module dependency and builds from a
   bare `git clone`.
 
-The Godot domain lives outside this repository, in the standalone plugin
+The Godot module lives outside this repository, in the standalone module
 repository, and is reached here through the path dependency
 `siralos-godot = { path = "../siralos-godot" }`. That dependency belongs to
 the **excluded harness workspace only** — no product member may carry it.
@@ -44,7 +44,7 @@ One normative rule, enforced mechanically by
 build on any violation:
 
 > `siralos-core` depends on no workspace crate and on no infrastructure or
-> domain. `siralos-adapters` may depend only on `siralos-core`.
+> module. `siralos-adapters` may depend only on `siralos-core`.
 > `siralos-cli` may depend only on `siralos-core` and `siralos-adapters`.
 
 | Crate                      | May depend on                                                      | Authority it holds                                                                          |
@@ -53,14 +53,14 @@ build on any violation:
 | `siralos-adapters`         | `siralos-core`                                                     | infrastructure: filesystem, config, provider transport, process, the sandbox boundary       |
 | `siralos-cli`              | `siralos-core`, `siralos-adapters`                                 | frontends and presentation only (TUI, stdio, headless)                                      |
 | `harness/` (excluded)      | `siralos-core`, `siralos-adapters`, `siralos-cli`, `siralos-godot` | dev-only verification tooling; never shipped                                                |
-| `siralos-godot` (external) | `siralos-core`                                                     | the optional Godot domain                                                                   |
+| `siralos-godot` (external) | `siralos-core`                                                     | the optional Godot module                                                                   |
 
 The one non-obvious edge: `godot → core` crosses a repository boundary as an
 external path dependency, and `harness → godot` is what pulls it into a build.
 Nothing in the product does.
 
 A second invariant follows: **`siralos-core` contains no Godot or other
-domain-specific symbol.** Domain intelligence arrives from outside the core,
+module-specific symbol.** Module intelligence arrives from outside the core,
 through the host boundary
 ([ADR 0034](docs/adr/0034-godot-domain-host-boundary.md),
 [ADR 0035](docs/adr/0035-domain-neutral-controlled-runtime-boundary.md)).
@@ -70,7 +70,7 @@ through the host boundary
 **`siralos-core`** — domain-neutral host semantics, with no I/O. Its modules
 are the host's own vocabulary: `composition` (profiles, lock, skills, context
 controls), `context` (the interpretable context architecture), `determinism`
-(the explicit clock, random and ordering ports), `domain` (the host boundary
+(the explicit clock, random and ordering ports), `module` (the host boundary
 and its capability vocabulary), `identity` (canonical artifact digests),
 `language` (language-neutral structural documents and diagnostics),
 `projection`, `provider` (provider-neutral request and event types),
@@ -107,10 +107,11 @@ declarative, versioned, and **narrowing-only** — a profile may restrict what t
 Host permits, never widen it. `siralos.lock` resolves the portable identities
 it declares.
 
-A **Plugin** is the only optional executable extension package type. A Domain is
-a semantic specialization a Plugin contributes, not a separate package
-ecosystem. Skills are declarative, digest-bound model guidance holding **no
-authority**.
+A **Module** is the only optional executable extension package type
+([ADR 0037](docs/adr/0037-module-composition-and-godot-decoupling.md)). A
+module may contribute Tools, Views, and specialized development
+intelligence — never a separate package ecosystem. Skills are declarative,
+digest-bound model guidance holding **no authority**.
 
 ## Sandbox enforcement
 
@@ -159,4 +160,4 @@ Persistence, multi-agent machinery, general Hooks, TaskGraph, workflow engines,
 marketplaces, and automatic acquisition are **not committed**
 ([ADR 0036](docs/adr/0036-lean-product-composition-and-extension-model.md)).
 The lean model is deliberate: sophistication belongs in declarative
-configuration, Skills, and explicitly installed Plugins.
+configuration, Skills, and explicitly installed Modules.

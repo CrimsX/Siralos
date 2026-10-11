@@ -32,6 +32,16 @@ and the number does not change any of it.
 
 ### Changed
 
+- **The domain/plugin vocabulary is one noun: module** (owner-directed,
+  2026-10-10, recorded in [ADR 0037](docs/adr/0037-module-composition-and-godot-decoupling.md)).
+  The CLI speaks `/modules`, `/modules-add`, `/modules-enable`, and
+  `/modules-activate`; install records live under `[modules.<id>]` with a
+  folder-root `module-manifest.toml`. Workspace `siralos.toml` files still
+  declaring `[plugins.<id>]` tables or a `[profile] plugins` selection must
+  rename those keys — the old keys are refused as unknown fields.
+  Versioned protocol identifiers, differential subject names, and the
+  `godot-*` execution surface are unchanged; the corpus moved to v83 with
+  two superseded CLI-vocabulary records, printed in the audit.
 - **The `corpus_scenario` fuzz target is rewired to the extracted harness**
   (owner-directed, 2026-10-10). It now fuzzes the harness's own strict
   scenario gate through a minimal public entry point, and the scheduled

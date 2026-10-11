@@ -9,7 +9,7 @@ Host controls what it can do.
 _Probabilistic reasoning. Deterministic execution._ The host places host-owned
 validation, policy, evidence, and controlled effects around probabilistic model
 reasoning, and stays small by moving sophistication into declarative
-configuration, Skills, and explicitly installed Plugins
+configuration, Skills, and explicitly installed Modules
 ([ADR 0036](docs/adr/0036-lean-product-composition-and-extension-model.md)).
 
 [![Rust CI](https://github.com/CrimsX/Siralos/actions/workflows/rust.yml/badge.svg)](https://github.com/CrimsX/Siralos/actions/workflows/rust.yml)
@@ -53,9 +53,9 @@ controlled effect
 verification and evidence
 ```
 
-The core is provider-neutral and domain-neutral, and optional domains add
+The core is provider-neutral and domain-neutral, and optional modules add
 specialized intelligence without gaining host capabilities. Godot Engine is the
-first and currently only optional domain.
+first and currently only optional module.
 
 What that buys you:
 
@@ -69,7 +69,7 @@ What that buys you:
 ## What Siralos is not
 
 - **Not an agent framework.** No multi-agent machinery, no TaskGraph, no generic
-  workflow engine, no plugin marketplace, no automatic acquisition, and no
+  workflow engine, no module marketplace, no automatic acquisition, and no
   general Hooks. These are deliberately not committed, and may be reconsidered
   only from concrete demand and evidence
   ([ADR 0036](docs/adr/0036-lean-product-composition-and-extension-model.md)).
@@ -82,7 +82,7 @@ What that buys you:
   [SECURITY.md](SECURITY.md) records the current and future boundaries.
 - **Not a desktop application.** The current pre-1.0 product and planned 1.x
   line are terminal and headless only; no desktop UI is promised.
-- **Not a Godot tool.** Godot is one optional domain, installed explicitly.
+- **Not a Godot tool.** Godot is one optional module, installed explicitly.
   Nothing is enabled merely because `project.godot` exists.
 - **Not a credential store.** `env:NAME` credentials are resolved from the
   environment and copied into a redacted, non-serializable credential retained
@@ -96,7 +96,7 @@ What that buys you:
 
 - **CURRENT** — implemented and verified in the repository today.
 - **TARGET** — committed product direction for a future stage (Views where
-  justified, additional Domains). A target item is described as direction, never
+  justified, additional Modules). A target item is described as direction, never
   as shipped.
 - **FUTURE / NOT DUE** — deliberately not committed, and reconsidered only from
   concrete demand and evidence.
@@ -186,7 +186,7 @@ endpoint = "https://openrouter.ai/api/v1"
 credential = "env:OPENROUTER_API_KEY"    # resolved from the environment at use time
 context = "live"                         # live | pinned | frozen
 skills = []                              # declarative guidance by name, e.g. ["my-skill"]
-plugins = []                             # installed plugin ids to activate
+modules = []                             # installed module ids to activate
 model_display_name = "OpenRouter"
 
 [profile.permissions]
@@ -250,15 +250,15 @@ surfaces are listed in [ARCHITECTURE.md](ARCHITECTURE.md) and
 
 ## Optional Godot support
 
-Godot Engine is Siralos's first optional specialization. The domain package lives
-in the standalone plugin repository
+Godot Engine is Siralos's first optional specialization. The module package lives
+in the standalone module repository
 [github.com/CrimsX/siralos-godot](https://github.com/CrimsX/siralos-godot) and
 depends on the core only. It can statically inspect Godot projects, scenes, and
 resources without executing project code. Dynamic engine probes and project
 execution stay fail-closed: they report `unavailable` and launch nothing.
 
-Siralos does not install Godot, silently enable a domain, or acquire a domain
-merely because `project.godot` exists. The domain package and the Godot Engine
+Siralos does not install Godot, silently enable a module, or acquire a module
+merely because `project.godot` exists. The module package and the Godot Engine
 installation are separate, explicit concerns.
 
 ## Architecture
@@ -273,20 +273,20 @@ User Configuration
 Siralos Host
         |
         v
-Optional Plugins
+Optional Modules
 ```
 
 - **User Configuration** — Profile, Context, Skills
 - **Siralos Host** — State, Revision, Capability, Tools, Effects, Evidence; the
   small privileged, non-replaceable kernel
-- **Optional Plugins** — Tools, future Views, optional Domains
+- **Optional Modules** — Tools, future Views, specialized intelligence
 
 The implementation is a three-crate Rust workspace with one direction of
 dependency:
 
 ```text
 siralos-cli → siralos-adapters → siralos-core
-siralos-godot → siralos-core            (standalone plugin repository)
+siralos-godot → siralos-core            (standalone module repository)
 ```
 
 `siralos-core` is domain-neutral and depends on no workspace crate.
