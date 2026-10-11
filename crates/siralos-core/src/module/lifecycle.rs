@@ -1,4 +1,4 @@
-//! Domain lifecycle state machine (Stage 3R R6).
+//! Module lifecycle state machine (Stage 3R R6).
 //!
 //! Availability, installation, enablement, and activation are
 //! mechanically distinct and never conflated:
@@ -15,18 +15,18 @@
 //! exact package identity, a compatible protocol, the declared
 //! capability requests, the Host policy decision, and the required
 //! resource/runtime checks. Workspace contents never install, enable,
-//! or activate a domain: R6 has no file heuristic (workspace contents
+//! or activate a module: R6 has no file heuristic (workspace contents
 //! are opaque to the lifecycle).
 
-use crate::domain::capability::{
+use crate::module::capability::{
     CapabilityGrant, CapabilityRequest, HostAuthority, decide_grant,
 };
-use crate::domain::failure::{DomainFailure, ResourceExceededKind};
-use crate::domain::package::{
-    DomainAbi, DomainPackage, DomainPackageId, PackageDigest,
+use crate::module::failure::{ModuleFailure, ResourceExceededKind};
+use crate::module::package::{
+    ModuleAbi, ModulePackage, ModulePackageId, PackageDigest,
 };
 
-/// The lifecycle state of one domain slot.
+/// The lifecycle state of one module slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LifecycleState {
     /// No package is installed.
@@ -64,14 +64,14 @@ pub enum RuntimeCheckResult {
 
 impl RuntimeCheckResult {
     /// Parse a canonical protocol value.
-    pub fn parse(value: &str) -> Result<Self, DomainFailure> {
+    pub fn parse(value: &str) -> Result<Self, ModuleFailure> {
         match value {
             "ready" => Ok(Self::Ready),
             "resource-exceeded" => {
                 Ok(Self::ResourceExceeded(ResourceExceededKind::Fuel))
             }
             "unavailable" => Ok(Self::Unavailable),
-            _ => Err(DomainFailure::InvalidInput {
+            _ => Err(ModuleFailure::InvalidInput {
                 reason: "invalid runtime check result".to_owned(),
             }),
         }
@@ -82,9 +82,9 @@ impl RuntimeCheckResult {
 /// the exact digest, the ABI, and the requested capabilities.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActivationRequest {
-    package_id: DomainPackageId,
+    package_id: ModulePackageId,
     digest: PackageDigest,
-    abi: DomainAbi,
+    abi: ModuleAbi,
     capabilities: CapabilityRequest,
 }
 
@@ -95,17 +95,17 @@ impl ActivationRequest {
         digest: &str,
         abi: &str,
         capabilities: &[String],
-    ) -> Result<Self, DomainFailure> {
+    ) -> Result<Self, ModuleFailure> {
         Ok(Self {
-            package_id: DomainPackageId::parse(package_id)?,
+            package_id: ModulePackageId::parse(package_id)?,
             digest: PackageDigest::parse(digest)?,
-            abi: DomainAbi::parse(abi)?,
+            abi: ModuleAbi::parse(abi)?,
             capabilities: CapabilityRequest::parse(capabilities)?,
         })
     }
 
     /// The requested package id.
-    pub fn package_id(&self) -> &DomainPackageId {
+    pub fn package_id(&self) -> &ModulePackageId {
         &self.package_id
     }
 
@@ -115,7 +115,7 @@ impl ActivationRequest {
     }
 
     /// The requested ABI.
-    pub fn abi(&self) -> &DomainAbi {
+    pub fn abi(&self) -> &ModuleAbi {
         &self.abi
     }
 
@@ -128,9 +128,9 @@ impl ActivationRequest {
 /// The exact package identity bound by one successful activation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActivationBinding {
-    package_id: DomainPackageId,
+    package_id: ModulePackageId,
     digest: PackageDigest,
-    abi: DomainAbi,
+    abi: ModuleAbi,
 }
 
 impl ActivationBinding {
@@ -144,7 +144,7 @@ impl ActivationBinding {
     }
 
     /// The bound package id.
-    pub fn package_id(&self) -> &DomainPackageId {
+    pub fn package_id(&self) -> &ModulePackageId {
         &self.package_id
     }
 
@@ -154,27 +154,27 @@ impl ActivationBinding {
     }
 
     /// The bound ABI.
-    pub fn abi(&self) -> &DomainAbi {
+    pub fn abi(&self) -> &ModuleAbi {
         &self.abi
     }
 
     /// Whether this binding matches the installed package exactly.
-    pub fn matches(&self, package: &DomainPackage) -> bool {
+    pub fn matches(&self, package: &ModulePackage) -> bool {
         self.package_id == *package.id()
             && self.digest == *package.digest()
             && self.abi == *package.abi()
     }
 }
 
-/// One run/session-scoped active domain.
+/// One run/session-scoped active module.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ActiveDomain {
+pub struct ActiveModule {
     session_id: u64,
     binding: ActivationBinding,
     grant: CapabilityGrant,
 }
 
-impl ActiveDomain {
+impl ActiveModule {
     /// The monotonic session id of this activation.
     pub fn session_id(&self) -> u64 {
         self.session_id
@@ -227,7 +227,7 @@ impl PreparedActivation {
     /// The provisional grant computed from the PREPARATION-TIME Host
     /// authority. Non-authoritative: it is offered only for
     /// provisional runtime setup and is never used for the
-    /// authoritative ActiveDomain grant, which commit recomputes from
+    /// authoritative ActiveModule grant, which commit recomputes from
     /// the commit-time Host authority.
     pub fn provisional_grant(&self) -> &CapabilityGrant {
         &self.provisional_grant
@@ -245,7 +245,7 @@ pub enum EligibilityReason {
     IdentityMismatch,
     /// The request ABI is not the supported ABI.
     UnsupportedAbi,
-    /// The domain is already active in a session.
+    /// The module is already active in a session.
     Active,
     /// The requested capabilities are outside Host authority.
     CapabilityDenied,
@@ -299,8 +299,8 @@ impl Eligibility {
 /// requests: a request may only narrow it, never broaden it.
 fn undeclared_capabilities(
     request: &CapabilityRequest,
-    package: &DomainPackage,
-) -> Vec<crate::domain::capability::CapabilityId> {
+    package: &ModulePackage,
+) -> Vec<crate::module::capability::CapabilityId> {
     request
         .iter()
         .filter(|capability| {
@@ -313,14 +313,14 @@ fn undeclared_capabilities(
 /// The internal authoritative state: one explicit enum, so impossible
 /// boolean combinations cannot be constructed.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum DomainState {
+enum ModuleState {
     Absent,
-    Installed(DomainPackage),
-    Enabled(DomainPackage),
-    Active { package: DomainPackage, active: ActiveDomain },
+    Installed(ModulePackage),
+    Enabled(ModulePackage),
+    Active { package: ModulePackage, active: ActiveModule },
 }
 
-/// Host-owned domain lifecycle state (installation/enablement records
+/// Host-owned module lifecycle state (installation/enablement records
 /// plus the current run/session-scoped activation).
 ///
 /// `generation` is the lifecycle identity of the current episode: it
@@ -330,62 +330,62 @@ enum DomainState {
 /// was validated against and any intervening transition makes it
 /// stale. Failed operations never advance it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DomainLifecycle {
-    state: DomainState,
+pub struct ModuleLifecycle {
+    state: ModuleState,
     next_session: u64,
     generation: u64,
 }
 
-impl Default for DomainLifecycle {
+impl Default for ModuleLifecycle {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl DomainLifecycle {
+impl ModuleLifecycle {
     /// A fresh lifecycle with no package installed.
     pub fn new() -> Self {
-        Self { state: DomainState::Absent, next_session: 1, generation: 0 }
+        Self { state: ModuleState::Absent, next_session: 1, generation: 0 }
     }
 
     /// The current lifecycle state.
     pub fn state(&self) -> LifecycleState {
         match &self.state {
-            DomainState::Absent => LifecycleState::Absent,
-            DomainState::Installed(_) => LifecycleState::Installed,
-            DomainState::Enabled(_) => LifecycleState::Enabled,
-            DomainState::Active { .. } => LifecycleState::Active,
+            ModuleState::Absent => LifecycleState::Absent,
+            ModuleState::Installed(_) => LifecycleState::Installed,
+            ModuleState::Enabled(_) => LifecycleState::Enabled,
+            ModuleState::Active { .. } => LifecycleState::Active,
         }
     }
 
     /// Whether a package is installed (regardless of enablement).
     pub fn available(&self) -> bool {
-        !matches!(self.state, DomainState::Absent)
+        !matches!(self.state, ModuleState::Absent)
     }
 
     /// Whether the installed package is enabled.
     pub fn enabled(&self) -> bool {
         matches!(
             self.state,
-            DomainState::Enabled(_) | DomainState::Active { .. }
+            ModuleState::Enabled(_) | ModuleState::Active { .. }
         )
     }
 
-    /// The active domain session, if any.
-    pub fn active(&self) -> Option<&ActiveDomain> {
+    /// The active module session, if any.
+    pub fn active(&self) -> Option<&ActiveModule> {
         match &self.state {
-            DomainState::Active { active, .. } => Some(active),
+            ModuleState::Active { active, .. } => Some(active),
             _ => None,
         }
     }
 
     /// The installed package, if any.
-    pub fn installed_package(&self) -> Option<&DomainPackage> {
+    pub fn installed_package(&self) -> Option<&ModulePackage> {
         match &self.state {
-            DomainState::Absent => None,
-            DomainState::Installed(package) => Some(package),
-            DomainState::Enabled(package) => Some(package),
-            DomainState::Active { package, .. } => Some(package),
+            ModuleState::Absent => None,
+            ModuleState::Installed(package) => Some(package),
+            ModuleState::Enabled(package) => Some(package),
+            ModuleState::Active { package, .. } => Some(package),
         }
     }
 
@@ -395,21 +395,21 @@ impl DomainLifecycle {
     /// transition.
     pub fn install(
         &mut self,
-        package: DomainPackage,
-    ) -> Result<(), DomainFailure> {
+        package: ModulePackage,
+    ) -> Result<(), ModuleFailure> {
         match &self.state {
-            DomainState::Absent => {
-                self.state = DomainState::Installed(package);
+            ModuleState::Absent => {
+                self.state = ModuleState::Installed(package);
                 self.generation += 1;
                 Ok(())
             }
-            DomainState::Installed(existing)
-            | DomainState::Enabled(existing)
-            | DomainState::Active { package: existing, .. } => {
+            ModuleState::Installed(existing)
+            | ModuleState::Enabled(existing)
+            | ModuleState::Active { package: existing, .. } => {
                 if existing == &package {
-                    Err(DomainFailure::AlreadyInstalled)
+                    Err(ModuleFailure::AlreadyInstalled)
                 } else {
-                    Err(DomainFailure::IdentityMismatch {
+                    Err(ModuleFailure::IdentityMismatch {
                         detail:
                             "a different package is installed; uninstall first"
                                 .to_owned(),
@@ -420,52 +420,52 @@ impl DomainLifecycle {
     }
 
     /// Explicitly remove the installed package. Refused while active.
-    pub fn uninstall(&mut self) -> Result<(), DomainFailure> {
-        match std::mem::replace(&mut self.state, DomainState::Absent) {
-            DomainState::Absent => Err(DomainFailure::NotInstalled),
-            DomainState::Installed(_) | DomainState::Enabled(_) => {
+    pub fn uninstall(&mut self) -> Result<(), ModuleFailure> {
+        match std::mem::replace(&mut self.state, ModuleState::Absent) {
+            ModuleState::Absent => Err(ModuleFailure::NotInstalled),
+            ModuleState::Installed(_) | ModuleState::Enabled(_) => {
                 self.generation += 1;
                 Ok(())
             }
             other => {
                 self.state = other;
-                Err(DomainFailure::Active)
+                Err(ModuleFailure::Active)
             }
         }
     }
 
     /// Explicitly enable the installed package. Enablement grants no
     /// capability: authority remains separate Host state.
-    pub fn enable(&mut self) -> Result<(), DomainFailure> {
-        match std::mem::replace(&mut self.state, DomainState::Absent) {
-            DomainState::Absent => Err(DomainFailure::NotInstalled),
-            DomainState::Installed(package) => {
-                self.state = DomainState::Enabled(package);
+    pub fn enable(&mut self) -> Result<(), ModuleFailure> {
+        match std::mem::replace(&mut self.state, ModuleState::Absent) {
+            ModuleState::Absent => Err(ModuleFailure::NotInstalled),
+            ModuleState::Installed(package) => {
+                self.state = ModuleState::Enabled(package);
                 self.generation += 1;
                 Ok(())
             }
             other => {
                 self.state = other;
-                Err(DomainFailure::AlreadyEnabled)
+                Err(ModuleFailure::AlreadyEnabled)
             }
         }
     }
 
     /// Explicitly disable the installed package. Refused while active.
-    pub fn disable(&mut self) -> Result<(), DomainFailure> {
-        match std::mem::replace(&mut self.state, DomainState::Absent) {
-            DomainState::Absent => Err(DomainFailure::NotInstalled),
-            DomainState::Enabled(package) => {
-                self.state = DomainState::Installed(package);
+    pub fn disable(&mut self) -> Result<(), ModuleFailure> {
+        match std::mem::replace(&mut self.state, ModuleState::Absent) {
+            ModuleState::Absent => Err(ModuleFailure::NotInstalled),
+            ModuleState::Enabled(package) => {
+                self.state = ModuleState::Installed(package);
                 self.generation += 1;
                 Ok(())
             }
             other => {
                 let failure = match &other {
-                    DomainState::Installed(_) => {
-                        DomainFailure::AlreadyDisabled
+                    ModuleState::Installed(_) => {
+                        ModuleFailure::AlreadyDisabled
                     }
-                    _ => DomainFailure::Active,
+                    _ => ModuleFailure::Active,
                 };
                 self.state = other;
                 Err(failure)
@@ -475,9 +475,9 @@ impl DomainLifecycle {
 
     fn deep_reasons(
         &self,
-        package: &DomainPackage,
+        package: &ModulePackage,
         request: &ActivationRequest,
-        supported_abi: &DomainAbi,
+        supported_abi: &ModuleAbi,
         authority: &HostAuthority,
         runtime: &RuntimeCheckResult,
     ) -> Vec<EligibilityReason> {
@@ -499,7 +499,7 @@ impl DomainLifecycle {
         }
         if matches!(
             decide_grant(request.capabilities(), authority),
-            crate::domain::capability::GrantDecision::Denied { .. }
+            crate::module::capability::GrantDecision::Denied { .. }
         ) {
             reasons.push(EligibilityReason::CapabilityDenied);
         }
@@ -522,15 +522,15 @@ impl DomainLifecycle {
     pub fn eligibility(
         &self,
         request: &ActivationRequest,
-        supported_abi: &DomainAbi,
+        supported_abi: &ModuleAbi,
         authority: &HostAuthority,
         runtime: &RuntimeCheckResult,
     ) -> Eligibility {
         let reasons = match &self.state {
-            DomainState::Absent => vec![EligibilityReason::NotInstalled],
-            DomainState::Installed(_) => vec![EligibilityReason::Disabled],
-            DomainState::Active { .. } => vec![EligibilityReason::Active],
-            DomainState::Enabled(package) => self.deep_reasons(
+            ModuleState::Absent => vec![EligibilityReason::NotInstalled],
+            ModuleState::Installed(_) => vec![EligibilityReason::Disabled],
+            ModuleState::Active { .. } => vec![EligibilityReason::Active],
+            ModuleState::Enabled(package) => self.deep_reasons(
                 package,
                 request,
                 supported_abi,
@@ -549,43 +549,43 @@ impl DomainLifecycle {
     /// check all run here, so every fallible preparation happens
     /// before the
     /// authoritative Active transition. The result must be committed
-    /// with [`DomainLifecycle::commit_activation`].
+    /// with [`ModuleLifecycle::commit_activation`].
     pub fn prepare_activation(
         &self,
         request: &ActivationRequest,
-        supported_abi: &DomainAbi,
+        supported_abi: &ModuleAbi,
         authority: &HostAuthority,
         runtime: &RuntimeCheckResult,
-    ) -> Result<PreparedActivation, DomainFailure> {
+    ) -> Result<PreparedActivation, ModuleFailure> {
         let package = match &self.state {
-            DomainState::Absent => return Err(DomainFailure::NotInstalled),
-            DomainState::Installed(_) => return Err(DomainFailure::Disabled),
-            DomainState::Enabled(package) => package,
-            DomainState::Active { .. } => return Err(DomainFailure::Active),
+            ModuleState::Absent => return Err(ModuleFailure::NotInstalled),
+            ModuleState::Installed(_) => return Err(ModuleFailure::Disabled),
+            ModuleState::Enabled(package) => package,
+            ModuleState::Active { .. } => return Err(ModuleFailure::Active),
         };
         if request.package_id != *package.id() {
-            return Err(DomainFailure::IdentityMismatch {
+            return Err(ModuleFailure::IdentityMismatch {
                 detail:
                     "requested package id does not match the installed package"
                         .to_owned(),
             });
         }
         if request.digest != *package.digest() {
-            return Err(DomainFailure::IdentityMismatch {
+            return Err(ModuleFailure::IdentityMismatch {
                 detail:
                     "requested digest does not match the installed package"
                         .to_owned(),
             });
         }
         if !request.abi.is_compatible_with(package.abi()) {
-            return Err(DomainFailure::IdentityMismatch {
+            return Err(ModuleFailure::IdentityMismatch {
                 detail:
                     "requested ABI does not match the installed package ABI"
                         .to_owned(),
             });
         }
         if !request.abi.is_compatible_with(supported_abi) {
-            return Err(DomainFailure::UnsupportedAbi {
+            return Err(ModuleFailure::UnsupportedAbi {
                 expected: supported_abi.as_str().to_owned(),
                 found: request.abi.as_str().to_owned(),
             });
@@ -595,23 +595,23 @@ impl DomainLifecycle {
         let undeclared =
             undeclared_capabilities(request.capabilities(), package);
         if !undeclared.is_empty() {
-            return Err(DomainFailure::UndeclaredCapability {
+            return Err(ModuleFailure::UndeclaredCapability {
                 missing: undeclared,
             });
         }
         let grant = match decide_grant(request.capabilities(), authority) {
-            crate::domain::capability::GrantDecision::Granted(grant) => grant,
-            crate::domain::capability::GrantDecision::Denied { missing } => {
-                return Err(DomainFailure::CapabilityDenied { missing });
+            crate::module::capability::GrantDecision::Granted(grant) => grant,
+            crate::module::capability::GrantDecision::Denied { missing } => {
+                return Err(ModuleFailure::CapabilityDenied { missing });
             }
         };
         match runtime {
             RuntimeCheckResult::Ready => {}
             RuntimeCheckResult::ResourceExceeded(kind) => {
-                return Err(DomainFailure::ResourceExceeded { kind: *kind });
+                return Err(ModuleFailure::ResourceExceeded { kind: *kind });
             }
             RuntimeCheckResult::Unavailable => {
-                return Err(DomainFailure::Unavailable {
+                return Err(ModuleFailure::Unavailable {
                     reason: "domain runtime is unavailable".to_owned(),
                 });
             }
@@ -637,9 +637,9 @@ impl DomainLifecycle {
     /// commit-time Host authority over the validated request
     /// capabilities. Any mismatch is a typed failure without changing
     /// state, allocating a session id, or advancing the generation:
-    /// [`DomainFailure::StaleActivation`] for lifecycle staleness,
-    /// [`DomainFailure::UnsupportedAbi`] for a Host-incompatible
-    /// bound ABI, [`DomainFailure::CapabilityDenied`] for a narrower
+    /// [`ModuleFailure::StaleActivation`] for lifecycle staleness,
+    /// [`ModuleFailure::UnsupportedAbi`] for a Host-incompatible
+    /// bound ABI, [`ModuleFailure::CapabilityDenied`] for a narrower
     /// commit-time authority, and the typed resource failures for a
     /// runtime that is no longer ready.
     ///
@@ -650,27 +650,27 @@ impl DomainLifecycle {
     ///
     /// On success the session id is allocated exactly once, the
     /// lifecycle advances to Active, and the generation advances, so
-    /// the published [`ActiveDomain`] always carries an exact package
+    /// the published [`ActiveModule`] always carries an exact package
     /// binding for the enabled package, a grant authorized by the
     /// commit-time Host authority, and a session id from a committed
     /// activation.
     pub fn commit_activation(
         &mut self,
         prepared: PreparedActivation,
-        supported_abi: &DomainAbi,
+        supported_abi: &ModuleAbi,
         authority: &HostAuthority,
         runtime: RuntimeCheckResult,
-    ) -> Result<ActiveDomain, DomainFailure> {
+    ) -> Result<ActiveModule, ModuleFailure> {
         // 1. The prepared activation must still belong to this
         //    lifecycle episode. Every successful material transition
         //    advanced the generation, so any such transition since
         //    preparation is detected here.
         if prepared.generation != self.generation {
-            return Err(DomainFailure::StaleActivation);
+            return Err(ModuleFailure::StaleActivation);
         }
         // 2. The current state must still be Enabled.
-        let DomainState::Enabled(package) = &self.state else {
-            return Err(DomainFailure::StaleActivation);
+        let ModuleState::Enabled(package) = &self.state else {
+            return Err(ModuleFailure::StaleActivation);
         };
         // 3. The prepared binding must still exactly match the
         //    currently enabled package (stable id, exact digest, and
@@ -678,12 +678,12 @@ impl DomainLifecycle {
         //    invariant. Generation fencing never replaces this
         //    package identity check.
         if !prepared.binding.matches(package) {
-            return Err(DomainFailure::StaleActivation);
+            return Err(ModuleFailure::StaleActivation);
         }
         // 4. The bound ABI must still be supported by the Host that
         //    authorizes this commit.
         if !prepared.binding.abi().is_compatible_with(supported_abi) {
-            return Err(DomainFailure::UnsupportedAbi {
+            return Err(ModuleFailure::UnsupportedAbi {
                 expected: supported_abi.as_str().to_owned(),
                 found: prepared.binding.abi().as_str().to_owned(),
             });
@@ -696,9 +696,9 @@ impl DomainLifecycle {
         //    narrower commit authority fails closed with the typed
         //    denial; a wider one can never widen the request.
         let grant = match decide_grant(&prepared.requested, authority) {
-            crate::domain::capability::GrantDecision::Granted(grant) => grant,
-            crate::domain::capability::GrantDecision::Denied { missing } => {
-                return Err(DomainFailure::CapabilityDenied { missing });
+            crate::module::capability::GrantDecision::Granted(grant) => grant,
+            crate::module::capability::GrantDecision::Denied { missing } => {
+                return Err(ModuleFailure::CapabilityDenied { missing });
             }
         };
         // 6. The runtime/resource policy of the authorizing Host must
@@ -706,30 +706,30 @@ impl DomainLifecycle {
         match runtime {
             RuntimeCheckResult::Ready => {}
             RuntimeCheckResult::ResourceExceeded(kind) => {
-                return Err(DomainFailure::ResourceExceeded { kind });
+                return Err(ModuleFailure::ResourceExceeded { kind });
             }
             RuntimeCheckResult::Unavailable => {
-                return Err(DomainFailure::Unavailable {
+                return Err(ModuleFailure::Unavailable {
                     reason: "domain runtime is unavailable".to_owned(),
                 });
             }
         }
         let package =
-            match std::mem::replace(&mut self.state, DomainState::Absent) {
-                DomainState::Enabled(package) => package,
+            match std::mem::replace(&mut self.state, ModuleState::Absent) {
+                ModuleState::Enabled(package) => package,
                 other => {
                     self.state = other;
-                    return Err(DomainFailure::StaleActivation);
+                    return Err(ModuleFailure::StaleActivation);
                 }
             };
-        let active = ActiveDomain {
+        let active = ActiveModule {
             session_id: self.next_session,
             binding: prepared.binding,
             grant,
         };
         self.next_session += 1;
         self.generation += 1;
-        self.state = DomainState::Active { package, active: active.clone() };
+        self.state = ModuleState::Active { package, active: active.clone() };
         Ok(active)
     }
 
@@ -742,10 +742,10 @@ impl DomainLifecycle {
     pub fn activate(
         &mut self,
         request: ActivationRequest,
-        supported_abi: &DomainAbi,
+        supported_abi: &ModuleAbi,
         authority: &HostAuthority,
         runtime: RuntimeCheckResult,
-    ) -> Result<ActiveDomain, DomainFailure> {
+    ) -> Result<ActiveModule, ModuleFailure> {
         let prepared = self.prepare_activation(
             &request,
             supported_abi,
@@ -756,43 +756,43 @@ impl DomainLifecycle {
     }
     /// End the current run/session-scoped activation. The package
     /// stays installed and enabled.
-    pub fn deactivate(&mut self) -> Result<(), DomainFailure> {
-        match std::mem::replace(&mut self.state, DomainState::Absent) {
-            DomainState::Active { package, .. } => {
-                self.state = DomainState::Enabled(package);
+    pub fn deactivate(&mut self) -> Result<(), ModuleFailure> {
+        match std::mem::replace(&mut self.state, ModuleState::Absent) {
+            ModuleState::Active { package, .. } => {
+                self.state = ModuleState::Enabled(package);
                 self.generation += 1;
                 Ok(())
             }
             other => {
                 self.state = other;
-                Err(DomainFailure::NotActive)
+                Err(ModuleFailure::NotActive)
             }
         }
     }
 }
 
-/// The classification kind of a workspace file with respect to domain
+/// The classification kind of a workspace file with respect to module
 /// acquisition. R6 has exactly one kind: workspace files are opaque.
 pub const WORKSPACE_FILE_OPAQUE: &str = "opaque";
 
 /// Classify one workspace file name. R6 deliberately defines no
-/// domain heuristic: every workspace file is opaque, so workspace
+/// module heuristic: every workspace file is opaque, so workspace
 /// contents can never install, enable, activate, download, or
-/// recommend a domain. This is the explicit absence of a heuristic,
+/// recommend a module. This is the explicit absence of a heuristic,
 /// not a magic detection rule.
 pub fn classify_workspace_file(_name: &str) -> &'static str {
     WORKSPACE_FILE_OPAQUE
 }
 
-/// The deterministic workspace domain scan report. All side-effect
+/// The deterministic workspace module scan report. All side-effect
 /// counters are zero by construction: the scan is a pure function over
 /// file names and has no access to any installation or activation
 /// machinery.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkspaceDomainScan {
+pub struct WorkspaceModuleScan {
     /// The number of classified file names.
     pub classified: u64,
-    /// Domain candidates found (always zero).
+    /// Module candidates found (always zero).
     pub candidates: u64,
     /// Implicit installations (always zero).
     pub installs: u64,
@@ -806,11 +806,11 @@ pub struct WorkspaceDomainScan {
     pub recommendations: u64,
 }
 
-/// Scan workspace file names for implicit domain acquisition. The
-/// report proves that no filesystem heuristic grants Domain
+/// Scan workspace file names for implicit module acquisition. The
+/// report proves that no filesystem heuristic grants Module
 /// authority.
-pub fn workspace_domain_scan(files: &[String]) -> WorkspaceDomainScan {
-    WorkspaceDomainScan {
+pub fn workspace_module_scan(files: &[String]) -> WorkspaceModuleScan {
+    WorkspaceModuleScan {
         classified: files.len() as u64,
         candidates: 0,
         installs: 0,
@@ -824,12 +824,12 @@ pub fn workspace_domain_scan(files: &[String]) -> WorkspaceDomainScan {
 #[cfg(test)]
 mod tests {
     use super::{
-        ActivationRequest, DomainLifecycle, EligibilityReason, LifecycleState,
-        RuntimeCheckResult, classify_workspace_file, workspace_domain_scan,
+        ActivationRequest, EligibilityReason, LifecycleState, ModuleLifecycle,
+        RuntimeCheckResult, classify_workspace_file, workspace_module_scan,
     };
-    use crate::domain::capability::HostAuthority;
-    use crate::domain::failure::{DomainFailure, ResourceExceededKind};
-    use crate::domain::package::{DomainAbi, DomainPackage};
+    use crate::module::capability::HostAuthority;
+    use crate::module::failure::{ModuleFailure, ResourceExceededKind};
+    use crate::module::package::{ModuleAbi, ModulePackage};
 
     const ABI: &str = "siralos:domain-abi@1.0.0";
 
@@ -837,8 +837,8 @@ mod tests {
         values.iter().map(|value| (*value).to_owned()).collect()
     }
 
-    fn package(id: &str, digest: &str) -> DomainPackage {
-        DomainPackage::parse(id, digest, ABI, &ids(&["workspace-read"]))
+    fn package(id: &str, digest: &str) -> ModulePackage {
+        ModulePackage::parse(id, digest, ABI, &ids(&["workspace-read"]))
             .unwrap()
     }
 
@@ -857,33 +857,33 @@ mod tests {
 
     #[test]
     fn absent_cannot_enable_or_activate() {
-        let mut lifecycle = DomainLifecycle::new();
+        let mut lifecycle = ModuleLifecycle::new();
         assert_eq!(lifecycle.state(), LifecycleState::Absent);
         assert!(!lifecycle.available());
         assert!(matches!(
             lifecycle.enable(),
-            Err(DomainFailure::NotInstalled)
+            Err(ModuleFailure::NotInstalled)
         ));
         assert!(matches!(
             lifecycle.activate(
                 request("conformance-domain", &digest(1)),
-                &DomainAbi::parse(ABI).unwrap(),
+                &ModuleAbi::parse(ABI).unwrap(),
                 &authority(),
                 RuntimeCheckResult::Ready,
             ),
-            Err(DomainFailure::NotInstalled)
+            Err(ModuleFailure::NotInstalled)
         ));
         assert!(matches!(
             lifecycle.uninstall(),
-            Err(DomainFailure::NotInstalled)
+            Err(ModuleFailure::NotInstalled)
         ));
         assert!(matches!(
             lifecycle.deactivate(),
-            Err(DomainFailure::NotActive)
+            Err(ModuleFailure::NotActive)
         ));
         let eligibility = lifecycle.eligibility(
             &request("conformance-domain", &digest(1)),
-            &DomainAbi::parse(ABI).unwrap(),
+            &ModuleAbi::parse(ABI).unwrap(),
             &authority(),
             &RuntimeCheckResult::Ready,
         );
@@ -893,7 +893,7 @@ mod tests {
 
     #[test]
     fn install_is_explicit_and_distinct_from_enable() {
-        let mut lifecycle = DomainLifecycle::new();
+        let mut lifecycle = ModuleLifecycle::new();
         let first = package("conformance-domain", &digest(1));
         lifecycle.install(first).unwrap();
         assert_eq!(lifecycle.state(), LifecycleState::Installed);
@@ -903,50 +903,50 @@ mod tests {
         // The identical package cannot be installed twice.
         assert!(matches!(
             lifecycle.install(package("conformance-domain", &digest(1))),
-            Err(DomainFailure::AlreadyInstalled)
+            Err(ModuleFailure::AlreadyInstalled)
         ));
         // A different package under the same slot is stale.
         assert!(matches!(
             lifecycle.install(package("conformance-domain", &digest(2))),
-            Err(DomainFailure::IdentityMismatch { .. })
+            Err(ModuleFailure::IdentityMismatch { .. })
         ));
-        // Disabled domains cannot activate.
+        // Disabled modules cannot activate.
         assert!(matches!(
             lifecycle.activate(
                 request("conformance-domain", &digest(1)),
-                &DomainAbi::parse(ABI).unwrap(),
+                &ModuleAbi::parse(ABI).unwrap(),
                 &authority(),
                 RuntimeCheckResult::Ready,
             ),
-            Err(DomainFailure::Disabled)
+            Err(ModuleFailure::Disabled)
         ));
     }
 
     #[test]
     fn enable_does_not_grant_authority() {
-        let mut lifecycle = DomainLifecycle::new();
+        let mut lifecycle = ModuleLifecycle::new();
         lifecycle.install(package("conformance-domain", &digest(1))).unwrap();
         lifecycle.enable().unwrap();
         assert_eq!(lifecycle.state(), LifecycleState::Enabled);
         assert!(matches!(
             lifecycle.enable(),
-            Err(DomainFailure::AlreadyEnabled)
+            Err(ModuleFailure::AlreadyEnabled)
         ));
         assert!(matches!(lifecycle.disable(), Ok(())));
         assert_eq!(lifecycle.state(), LifecycleState::Installed);
         assert!(matches!(
             lifecycle.disable(),
-            Err(DomainFailure::AlreadyDisabled)
+            Err(ModuleFailure::AlreadyDisabled)
         ));
     }
 
     #[test]
     fn activation_binds_exact_identity_and_grants_within_authority() {
-        let mut lifecycle = DomainLifecycle::new();
+        let mut lifecycle = ModuleLifecycle::new();
         let digest1 = digest(1);
         lifecycle.install(package("conformance-domain", &digest1)).unwrap();
         lifecycle.enable().unwrap();
-        let supported = DomainAbi::parse(ABI).unwrap();
+        let supported = ModuleAbi::parse(ABI).unwrap();
         let active = lifecycle
             .activate(
                 request("conformance-domain", &digest1),
@@ -976,7 +976,7 @@ mod tests {
                 &authority(),
                 RuntimeCheckResult::Ready,
             ),
-            Err(DomainFailure::Active)
+            Err(ModuleFailure::Active)
         ));
         assert_eq!(lifecycle.state(), LifecycleState::Active);
         let preserved = lifecycle.active().expect("session preserved");
@@ -992,7 +992,7 @@ mod tests {
                 &authority(),
                 RuntimeCheckResult::Ready,
             ),
-            Err(DomainFailure::IdentityMismatch { .. })
+            Err(ModuleFailure::IdentityMismatch { .. })
         ));
         // Wrong id fails.
         assert!(matches!(
@@ -1002,7 +1002,7 @@ mod tests {
                 &authority(),
                 RuntimeCheckResult::Ready,
             ),
-            Err(DomainFailure::IdentityMismatch { .. })
+            Err(ModuleFailure::IdentityMismatch { .. })
         ));
         // An ABI that identifies neither the installed package nor
         // the Host fails closed as a package identity mismatch (the
@@ -1020,7 +1020,7 @@ mod tests {
                 &authority(),
                 RuntimeCheckResult::Ready,
             ),
-            Err(DomainFailure::IdentityMismatch { .. })
+            Err(ModuleFailure::IdentityMismatch { .. })
         ));
         // Capability denial is typed and does not escalate.
         let narrow_authority = HostAuthority::parse(&[]).unwrap();
@@ -1031,7 +1031,7 @@ mod tests {
                 &narrow_authority,
                 RuntimeCheckResult::Ready,
             ),
-            Err(DomainFailure::CapabilityDenied { missing })
+            Err(ModuleFailure::CapabilityDenied { missing })
             if missing.len() == 1
         ));
         // Runtime checks gate activation.
@@ -1044,7 +1044,7 @@ mod tests {
                     ResourceExceededKind::Fuel,
                 ),
             ),
-            Err(DomainFailure::ResourceExceeded { kind })
+            Err(ModuleFailure::ResourceExceeded { kind })
             if kind == ResourceExceededKind::Fuel
         ));
         assert!(matches!(
@@ -1054,17 +1054,17 @@ mod tests {
                 &authority(),
                 RuntimeCheckResult::Unavailable,
             ),
-            Err(DomainFailure::Unavailable { .. })
+            Err(ModuleFailure::Unavailable { .. })
         ));
     }
 
     #[test]
     fn session_scoped_activation_and_deactivation() {
-        let mut lifecycle = DomainLifecycle::new();
+        let mut lifecycle = ModuleLifecycle::new();
         let digest1 = digest(1);
         lifecycle.install(package("conformance-domain", &digest1)).unwrap();
         lifecycle.enable().unwrap();
-        let supported = DomainAbi::parse(ABI).unwrap();
+        let supported = ModuleAbi::parse(ABI).unwrap();
         let first = lifecycle
             .activate(
                 request("conformance-domain", &digest1),
@@ -1087,8 +1087,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(second.session_id(), 2);
-        assert!(matches!(lifecycle.uninstall(), Err(DomainFailure::Active)));
-        assert!(matches!(lifecycle.disable(), Err(DomainFailure::Active)));
+        assert!(matches!(lifecycle.uninstall(), Err(ModuleFailure::Active)));
+        assert!(matches!(lifecycle.disable(), Err(ModuleFailure::Active)));
         lifecycle.deactivate().unwrap();
         lifecycle.disable().unwrap();
         lifecycle.uninstall().unwrap();
@@ -1097,10 +1097,10 @@ mod tests {
 
     #[test]
     fn eligibility_accumulates_deeper_reasons_in_fixed_order() {
-        let mut lifecycle = DomainLifecycle::new();
+        let mut lifecycle = ModuleLifecycle::new();
         let digest1 = digest(1);
         lifecycle.install(package("conformance-domain", &digest1)).unwrap();
-        let supported = DomainAbi::parse(ABI).unwrap();
+        let supported = ModuleAbi::parse(ABI).unwrap();
         let disabled = lifecycle.eligibility(
             &request("conformance-domain", &digest1),
             &supported,
@@ -1146,17 +1146,17 @@ mod tests {
                     ResourceExceededKind::Memory,
                 ),
             ),
-            Err(DomainFailure::IdentityMismatch { .. })
+            Err(ModuleFailure::IdentityMismatch { .. })
         ));
     }
 
     #[test]
     fn active_eligibility_is_explicitly_not_ready() {
-        let mut lifecycle = DomainLifecycle::new();
+        let mut lifecycle = ModuleLifecycle::new();
         let digest1 = digest(1);
         lifecycle.install(package("conformance-domain", &digest1)).unwrap();
         lifecycle.enable().unwrap();
-        let supported = DomainAbi::parse(ABI).unwrap();
+        let supported = ModuleAbi::parse(ABI).unwrap();
         lifecycle
             .activate(
                 request("conformance-domain", &digest1),
@@ -1177,17 +1177,17 @@ mod tests {
 
     #[test]
     fn package_declaration_bounds_activation_requests() {
-        let supported = DomainAbi::parse(ABI).unwrap();
+        let supported = ModuleAbi::parse(ABI).unwrap();
         let authority_both =
             HostAuthority::parse(&ids(&["workspace-read", "process-exec"]))
                 .unwrap();
 
         // Equal package/request capability set succeeds.
-        let mut lifecycle = DomainLifecycle::new();
+        let mut lifecycle = ModuleLifecycle::new();
         let digest1 = digest(1);
         lifecycle
             .install(
-                DomainPackage::parse(
+                ModulePackage::parse(
                     "conformance-domain",
                     &digest1,
                     ABI,
@@ -1254,7 +1254,7 @@ mod tests {
                 &authority_both,
                 RuntimeCheckResult::Ready,
             ),
-            Err(DomainFailure::UndeclaredCapability { missing })
+            Err(ModuleFailure::UndeclaredCapability { missing })
             if missing.len() == 1
                 && missing[0].as_str() == "network-access"
         ));
@@ -1279,7 +1279,7 @@ mod tests {
                 &narrow_authority,
                 RuntimeCheckResult::Ready,
             ),
-            Err(DomainFailure::CapabilityDenied { missing })
+            Err(ModuleFailure::CapabilityDenied { missing })
             if missing.len() == 1
                 && missing[0].as_str() == "process-exec"
         ));
@@ -1303,7 +1303,7 @@ mod tests {
             &authority_both,
             RuntimeCheckResult::Ready,
         ) {
-            Err(DomainFailure::UndeclaredCapability { missing }) => {
+            Err(ModuleFailure::UndeclaredCapability { missing }) => {
                 let missing: Vec<&str> =
                     missing.iter().map(|id| id.as_str()).collect();
                 assert_eq!(missing, vec!["network-access", "telemetry"],);
@@ -1311,8 +1311,8 @@ mod tests {
             other => panic!("unexpected activation outcome: {other:?}"),
         }
     }
-    fn enabled_lifecycle(id: &str, digest: &str) -> DomainLifecycle {
-        let mut lifecycle = DomainLifecycle::new();
+    fn enabled_lifecycle(id: &str, digest: &str) -> ModuleLifecycle {
+        let mut lifecycle = ModuleLifecycle::new();
         lifecycle.install(package(id, digest)).unwrap();
         lifecycle.enable().unwrap();
         lifecycle
@@ -1320,8 +1320,8 @@ mod tests {
 
     /// The typed stale failure is the machine-branchable staleness
     /// code, never a misclassification of another failure class.
-    fn assert_stale(result: Result<super::ActiveDomain, DomainFailure>) {
-        assert!(matches!(result, Err(DomainFailure::StaleActivation)));
+    fn assert_stale(result: Result<super::ActiveModule, ModuleFailure>) {
+        assert!(matches!(result, Err(ModuleFailure::StaleActivation)));
     }
 
     #[test]
@@ -1331,7 +1331,7 @@ mod tests {
         let prepared = lifecycle
             .prepare_activation(
                 &request("conformance-domain", &digest1),
-                &DomainAbi::parse(ABI).unwrap(),
+                &ModuleAbi::parse(ABI).unwrap(),
                 &authority(),
                 &RuntimeCheckResult::Ready,
             )
@@ -1340,7 +1340,7 @@ mod tests {
         let generation_before = lifecycle.generation;
         assert_stale(lifecycle.commit_activation(
             prepared,
-            &DomainAbi::parse(ABI).unwrap(),
+            &ModuleAbi::parse(ABI).unwrap(),
             &authority(),
             RuntimeCheckResult::Ready,
         ));
@@ -1360,7 +1360,7 @@ mod tests {
         let prepared = lifecycle
             .prepare_activation(
                 &request("conformance-domain", &digest_a),
-                &DomainAbi::parse(ABI).unwrap(),
+                &ModuleAbi::parse(ABI).unwrap(),
                 &authority(),
                 &RuntimeCheckResult::Ready,
             )
@@ -1371,7 +1371,7 @@ mod tests {
         lifecycle.enable().unwrap();
         assert_stale(lifecycle.commit_activation(
             prepared,
-            &DomainAbi::parse(ABI).unwrap(),
+            &ModuleAbi::parse(ABI).unwrap(),
             &authority(),
             RuntimeCheckResult::Ready,
         ));
@@ -1393,7 +1393,7 @@ mod tests {
         let prepared = lifecycle
             .prepare_activation(
                 &request("conformance-domain", &digest1),
-                &DomainAbi::parse(ABI).unwrap(),
+                &ModuleAbi::parse(ABI).unwrap(),
                 &authority(),
                 &RuntimeCheckResult::Ready,
             )
@@ -1404,7 +1404,7 @@ mod tests {
         lifecycle.enable().unwrap();
         assert_stale(lifecycle.commit_activation(
             prepared,
-            &DomainAbi::parse(ABI).unwrap(),
+            &ModuleAbi::parse(ABI).unwrap(),
             &authority(),
             RuntimeCheckResult::Ready,
         ));
@@ -1416,7 +1416,7 @@ mod tests {
     #[test]
     fn stale_preparation_fails_after_completed_activation() {
         let digest1 = digest(1);
-        let supported = DomainAbi::parse(ABI).unwrap();
+        let supported = ModuleAbi::parse(ABI).unwrap();
         let mut lifecycle = enabled_lifecycle("conformance-domain", &digest1);
         let first = lifecycle
             .prepare_activation(
@@ -1477,7 +1477,7 @@ mod tests {
     fn immediate_prepare_commit_binds_exactly_and_allocates_once() {
         let digest1 = digest(1);
         let mut lifecycle = enabled_lifecycle("conformance-domain", &digest1);
-        let supported = DomainAbi::parse(ABI).unwrap();
+        let supported = ModuleAbi::parse(ABI).unwrap();
         let prepared = lifecycle
             .prepare_activation(
                 &request("conformance-domain", &digest1),
@@ -1513,7 +1513,7 @@ mod tests {
     #[test]
     fn commit_misuse_returns_typed_failure_without_panic() {
         let digest1 = digest(1);
-        let supported = DomainAbi::parse(ABI).unwrap();
+        let supported = ModuleAbi::parse(ABI).unwrap();
         // Double commit: the second commit of the same preparation is
         // stale because the first commit advanced the generation.
         let mut lifecycle = enabled_lifecycle("conformance-domain", &digest1);
@@ -1535,7 +1535,7 @@ mod tests {
             .unwrap();
         assert_stale(lifecycle.commit_activation(
             prepared,
-            &DomainAbi::parse(ABI).unwrap(),
+            &ModuleAbi::parse(ABI).unwrap(),
             &authority(),
             RuntimeCheckResult::Ready,
         ));
@@ -1545,7 +1545,7 @@ mod tests {
         // A preparation from a different lifecycle (fresh slot) is a
         // publicly reachable invalid commit and fails typed, leaving
         // the fresh lifecycle untouched.
-        let mut other = DomainLifecycle::new();
+        let mut other = ModuleLifecycle::new();
         let foreign = enabled_lifecycle("conformance-domain", &digest1)
             .prepare_activation(
                 &request("conformance-domain", &digest1),
@@ -1567,8 +1567,8 @@ mod tests {
     #[test]
     fn failed_operations_do_not_advance_generation() {
         let digest1 = digest(1);
-        let supported = DomainAbi::parse(ABI).unwrap();
-        let mut lifecycle = DomainLifecycle::new();
+        let supported = ModuleAbi::parse(ABI).unwrap();
+        let mut lifecycle = ModuleLifecycle::new();
         // Failed operations on the fresh lifecycle.
         assert!(lifecycle.enable().is_err());
         assert!(lifecycle.disable().is_err());
@@ -1612,7 +1612,7 @@ mod tests {
     #[test]
     fn session_ids_advance_only_for_committed_activations() {
         let digest1 = digest(1);
-        let supported = DomainAbi::parse(ABI).unwrap();
+        let supported = ModuleAbi::parse(ABI).unwrap();
         let mut lifecycle = enabled_lifecycle("conformance-domain", &digest1);
         let prepared = lifecycle
             .prepare_activation(
@@ -1626,7 +1626,7 @@ mod tests {
         lifecycle.disable().unwrap();
         assert_stale(lifecycle.commit_activation(
             prepared,
-            &DomainAbi::parse(ABI).unwrap(),
+            &ModuleAbi::parse(ABI).unwrap(),
             &authority(),
             RuntimeCheckResult::Ready,
         ));
@@ -1685,8 +1685,8 @@ mod tests {
     fn package_declaring(
         capabilities: &[&str],
         digest: &str,
-    ) -> DomainPackage {
-        DomainPackage::parse(
+    ) -> ModulePackage {
+        ModulePackage::parse(
             "conformance-domain",
             digest,
             ABI,
@@ -1709,10 +1709,10 @@ mod tests {
     }
 
     fn denied_missing(
-        result: Result<super::ActiveDomain, DomainFailure>,
+        result: Result<super::ActiveModule, ModuleFailure>,
     ) -> Vec<String> {
         match result {
-            Err(DomainFailure::CapabilityDenied { missing }) => {
+            Err(ModuleFailure::CapabilityDenied { missing }) => {
                 missing.iter().map(|id| id.as_str().to_owned()).collect()
             }
             other => panic!("expected capability denial, got: {other:?}"),
@@ -1722,8 +1722,8 @@ mod tests {
     #[test]
     fn same_lifecycle_authority_narrowing_fails_closed() {
         let digest1 = digest(1);
-        let supported = DomainAbi::parse(ABI).unwrap();
-        let mut lifecycle = DomainLifecycle::new();
+        let supported = ModuleAbi::parse(ABI).unwrap();
+        let mut lifecycle = ModuleLifecycle::new();
         lifecycle
             .install(package_declaring(
                 &["workspace-read", "process-exec"],
@@ -1765,7 +1765,7 @@ mod tests {
     fn prepared_activation_cannot_import_broader_authority_across_lifecycles()
     {
         let digest1 = digest(1);
-        let supported = DomainAbi::parse(ABI).unwrap();
+        let supported = ModuleAbi::parse(ABI).unwrap();
         let request = request_capabilities(
             &["workspace-read", "process-exec"],
             &digest1,
@@ -1773,7 +1773,7 @@ mod tests {
         let declared =
             package_declaring(&["workspace-read", "process-exec"], &digest1);
         // Lifecycle A prepares under broad authority.
-        let mut a = DomainLifecycle::new();
+        let mut a = ModuleLifecycle::new();
         a.install(declared.clone()).unwrap();
         a.enable().unwrap();
         let prepared = a
@@ -1787,7 +1787,7 @@ mod tests {
         // Lifecycle B installs and enables the SAME package, so its
         // generation numerically equals A's — the security invariant
         // must not depend on globally unique generations.
-        let mut b = DomainLifecycle::new();
+        let mut b = ModuleLifecycle::new();
         b.install(declared).unwrap();
         b.enable().unwrap();
         assert_eq!(
@@ -1812,10 +1812,10 @@ mod tests {
     #[test]
     fn cloned_lifecycle_state_does_not_transfer_prepared_authority() {
         let digest1 = digest(1);
-        let supported = DomainAbi::parse(ABI).unwrap();
+        let supported = ModuleAbi::parse(ABI).unwrap();
         let declared =
             package_declaring(&["workspace-read", "process-exec"], &digest1);
-        let mut original = DomainLifecycle::new();
+        let mut original = ModuleLifecycle::new();
         original.install(declared).unwrap();
         original.enable().unwrap();
         let prepared = original
@@ -1864,7 +1864,7 @@ mod tests {
     #[test]
     fn wider_commit_authority_never_widens_the_activation_request() {
         let digest1 = digest(1);
-        let supported = DomainAbi::parse(ABI).unwrap();
+        let supported = ModuleAbi::parse(ABI).unwrap();
         let mut lifecycle = enabled_lifecycle("conformance-domain", &digest1);
         // The request asks only for [read]; preparation happens under
         // a [read] authority and the commit-time authority is broader.
@@ -1900,7 +1900,7 @@ mod tests {
     #[test]
     fn successful_grants_are_subsets_of_request_declaration_and_authority() {
         let digest1 = digest(1);
-        let supported = DomainAbi::parse(ABI).unwrap();
+        let supported = ModuleAbi::parse(ABI).unwrap();
         type GrantCase = (
             Vec<&'static str>,
             Vec<&'static str>,
@@ -1929,7 +1929,7 @@ mod tests {
             ),
         ];
         for (request_caps, declaration, authority_caps, expected) in cases {
-            let mut lifecycle = DomainLifecycle::new();
+            let mut lifecycle = ModuleLifecycle::new();
             lifecycle
                 .install(package_declaring(&declaration, &digest1))
                 .unwrap();
@@ -1980,7 +1980,7 @@ mod tests {
     /// activation (the monotonic commit count).
     #[test]
     fn active_state_invariants_hold_across_lifecycle_sequences() {
-        let supported = DomainAbi::parse(ABI).unwrap();
+        let supported = ModuleAbi::parse(ABI).unwrap();
         let sequences: Vec<Vec<&str>> = vec![
             vec!["activate"],
             vec!["activate", "deactivate", "activate"],
@@ -2015,7 +2015,7 @@ mod tests {
                                     &authority(),
                                     RuntimeCheckResult::Ready,
                                 ),
-                                Err(DomainFailure::Active)
+                                Err(ModuleFailure::Active)
                             ));
                         }
                     }
@@ -2025,7 +2025,7 @@ mod tests {
                         } else {
                             assert!(matches!(
                                 lifecycle.deactivate(),
-                                Err(DomainFailure::NotActive)
+                                Err(ModuleFailure::NotActive)
                             ));
                         }
                     }
@@ -2058,10 +2058,10 @@ mod tests {
     #[test]
     fn package_abi_mismatch_is_rejected_even_when_host_supports_request_abi() {
         let digest1 = digest(1);
-        let mut lifecycle = DomainLifecycle::new();
+        let mut lifecycle = ModuleLifecycle::new();
         lifecycle
             .install(
-                DomainPackage::parse(
+                ModulePackage::parse(
                     "conformance-domain",
                     &digest1,
                     "siralos:domain-abi@1.1.0",
@@ -2071,7 +2071,7 @@ mod tests {
             )
             .unwrap();
         lifecycle.enable().unwrap();
-        let supported = DomainAbi::parse(ABI).unwrap();
+        let supported = ModuleAbi::parse(ABI).unwrap();
         // Eligibility must not report ready: the ABI differs from the
         // installed package even though it matches the Host.
         let eligibility = lifecycle.eligibility(
@@ -2094,7 +2094,7 @@ mod tests {
                 &authority(),
                 RuntimeCheckResult::Ready,
             ),
-            Err(DomainFailure::IdentityMismatch { .. })
+            Err(ModuleFailure::IdentityMismatch { .. })
         ));
         assert_eq!(lifecycle.state(), LifecycleState::Enabled);
         assert!(lifecycle.active().is_none());
@@ -2114,7 +2114,7 @@ mod tests {
                 &authority(),
                 RuntimeCheckResult::Ready,
             ),
-            Err(DomainFailure::UnsupportedAbi { .. })
+            Err(ModuleFailure::UnsupportedAbi { .. })
         ));
         assert_eq!(lifecycle.state(), LifecycleState::Enabled);
         assert_eq!(lifecycle.next_session, 1);
@@ -2125,10 +2125,10 @@ mod tests {
     #[test]
     fn matching_package_and_request_abi_unsupported_by_host_fails_typed() {
         let digest1 = digest(1);
-        let mut lifecycle = DomainLifecycle::new();
+        let mut lifecycle = ModuleLifecycle::new();
         lifecycle
             .install(
-                DomainPackage::parse(
+                ModulePackage::parse(
                     "conformance-domain",
                     &digest1,
                     "siralos:domain-abi@1.1.0",
@@ -2138,7 +2138,7 @@ mod tests {
             )
             .unwrap();
         lifecycle.enable().unwrap();
-        let supported = DomainAbi::parse(ABI).unwrap();
+        let supported = ModuleAbi::parse(ABI).unwrap();
         let request = ActivationRequest::parse(
             "conformance-domain",
             &digest1,
@@ -2163,7 +2163,7 @@ mod tests {
                 &authority(),
                 RuntimeCheckResult::Ready,
             ),
-            Err(DomainFailure::UnsupportedAbi { .. })
+            Err(ModuleFailure::UnsupportedAbi { .. })
         ));
         assert_eq!(lifecycle.state(), LifecycleState::Enabled);
         assert!(lifecycle.active().is_none());
@@ -2175,8 +2175,8 @@ mod tests {
     #[test]
     fn successful_activations_always_satisfy_exact_binding_matches() {
         let digest1 = digest(1);
-        let supported = DomainAbi::parse(ABI).unwrap();
-        let mut lifecycle = DomainLifecycle::new();
+        let supported = ModuleAbi::parse(ABI).unwrap();
+        let mut lifecycle = ModuleLifecycle::new();
         lifecycle.install(package("conformance-domain", &digest1)).unwrap();
         lifecycle.enable().unwrap();
         let active = lifecycle
@@ -2203,7 +2203,7 @@ mod tests {
     #[test]
     fn commit_time_abi_revalidation_fails_before_mutation() {
         let digest1 = digest(1);
-        let supported = DomainAbi::parse(ABI).unwrap();
+        let supported = ModuleAbi::parse(ABI).unwrap();
         let mut lifecycle = enabled_lifecycle("conformance-domain", &digest1);
         let prepared = lifecycle
             .prepare_activation(
@@ -2214,14 +2214,14 @@ mod tests {
             )
             .unwrap();
         let other_host_abi =
-            DomainAbi::parse("siralos:domain-abi@1.1.0").unwrap();
+            ModuleAbi::parse("siralos:domain-abi@1.1.0").unwrap();
         match lifecycle.commit_activation(
             prepared,
             &other_host_abi,
             &authority(),
             RuntimeCheckResult::Ready,
         ) {
-            Err(DomainFailure::UnsupportedAbi { expected, found }) => {
+            Err(ModuleFailure::UnsupportedAbi { expected, found }) => {
                 assert_eq!(expected, "siralos:domain-abi@1.1.0");
                 assert_eq!(found, ABI);
             }
@@ -2240,7 +2240,7 @@ mod tests {
     #[test]
     fn commit_time_runtime_conditions_fail_before_mutation() {
         let digest1 = digest(1);
-        let supported = DomainAbi::parse(ABI).unwrap();
+        let supported = ModuleAbi::parse(ABI).unwrap();
         let cases = [
             RuntimeCheckResult::ResourceExceeded(ResourceExceededKind::Fuel),
             RuntimeCheckResult::Unavailable,
@@ -2266,7 +2266,7 @@ mod tests {
                 RuntimeCheckResult::ResourceExceeded(_) => {
                     assert!(matches!(
                         result,
-                        Err(DomainFailure::ResourceExceeded {
+                        Err(ModuleFailure::ResourceExceeded {
                             kind: ResourceExceededKind::Fuel
                         })
                     ));
@@ -2274,7 +2274,7 @@ mod tests {
                 RuntimeCheckResult::Unavailable => {
                     assert!(matches!(
                         result,
-                        Err(DomainFailure::Unavailable { .. })
+                        Err(ModuleFailure::Unavailable { .. })
                     ));
                 }
                 RuntimeCheckResult::Ready => panic!("unreachable case"),
@@ -2302,7 +2302,7 @@ mod tests {
                 super::WORKSPACE_FILE_OPAQUE
             );
         }
-        let scan = workspace_domain_scan(&files);
+        let scan = workspace_module_scan(&files);
         assert_eq!(scan.classified, 3);
         assert_eq!(scan.candidates, 0);
         assert_eq!(scan.installs, 0);
@@ -2314,11 +2314,11 @@ mod tests {
 
     #[test]
     fn rejected_protocol_requests_do_not_advance_the_generation() {
-        let mut lifecycle = DomainLifecycle::new();
+        let mut lifecycle = ModuleLifecycle::new();
         let digest1 = digest(1);
         lifecycle
             .install(
-                DomainPackage::parse(
+                ModulePackage::parse(
                     "conformance-domain",
                     &digest1,
                     "siralos:domain-abi@1.1.0",
@@ -2328,7 +2328,7 @@ mod tests {
             )
             .unwrap();
         lifecycle.enable().unwrap();
-        let supported = DomainAbi::parse(ABI).unwrap();
+        let supported = ModuleAbi::parse(ABI).unwrap();
         // Package and request ABI agree but the Host does not support
         // them: the typed unsupported-ABI failure, generation unchanged.
         let first = lifecycle.activate(
@@ -2343,7 +2343,7 @@ mod tests {
             &authority(),
             RuntimeCheckResult::Ready,
         );
-        assert!(matches!(first, Err(DomainFailure::UnsupportedAbi { .. })));
+        assert!(matches!(first, Err(ModuleFailure::UnsupportedAbi { .. })));
         assert_eq!(
             lifecycle.generation, 2,
             "failed activate must not advance"
@@ -2358,7 +2358,7 @@ mod tests {
                 &authority(),
                 RuntimeCheckResult::Ready,
             ),
-            Err(DomainFailure::IdentityMismatch { .. })
+            Err(ModuleFailure::IdentityMismatch { .. })
         ));
         assert_eq!(lifecycle.generation, 2);
         assert_eq!(lifecycle.state(), LifecycleState::Enabled);

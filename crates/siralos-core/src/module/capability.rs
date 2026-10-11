@@ -1,12 +1,12 @@
 //! Capability request/grant semantics (Stage 3R R6).
 //!
-//! A domain declares the capabilities it wants before activation. The
+//! A module declares the capabilities it wants before activation. The
 //! Host policy decides the effective grant: the grant can only be equal
-//! to or narrower than Host authority, and a domain can never grant
+//! to or narrower than Host authority, and a module can never grant
 //! itself capability. Enablement never implies authority: the authority
 //! set is separate Host state and activation still applies policy.
 
-use crate::domain::failure::DomainFailure;
+use crate::module::failure::ModuleFailure;
 
 use std::collections::BTreeSet;
 
@@ -42,9 +42,9 @@ pub struct CapabilityId(String);
 
 impl CapabilityId {
     /// Parse a canonical capability identifier.
-    pub fn parse(value: &str) -> Result<Self, DomainFailure> {
+    pub fn parse(value: &str) -> Result<Self, ModuleFailure> {
         if !valid_capability_id(value) {
-            return Err(DomainFailure::InvalidInput {
+            return Err(ModuleFailure::InvalidInput {
                 reason: "invalid capability id".to_owned(),
             });
         }
@@ -65,9 +65,9 @@ pub struct CapabilityRequest {
 
 impl CapabilityRequest {
     /// Parse and canonicalize a request (validation, dedup, sort).
-    pub fn parse(values: &[String]) -> Result<Self, DomainFailure> {
+    pub fn parse(values: &[String]) -> Result<Self, ModuleFailure> {
         if values.len() > MAX_CAPABILITIES {
-            return Err(DomainFailure::InvalidInput {
+            return Err(ModuleFailure::InvalidInput {
                 reason: "too many requested capabilities".to_owned(),
             });
         }
@@ -132,9 +132,9 @@ pub struct HostAuthority {
 
 impl HostAuthority {
     /// Parse and canonicalize a Host authority set.
-    pub fn parse(values: &[String]) -> Result<Self, DomainFailure> {
+    pub fn parse(values: &[String]) -> Result<Self, ModuleFailure> {
         if values.len() > MAX_CAPABILITIES {
-            return Err(DomainFailure::InvalidInput {
+            return Err(ModuleFailure::InvalidInput {
                 reason: "too many authority capabilities".to_owned(),
             });
         }

@@ -25,7 +25,7 @@ fn refused_profile_leaves_subsystem_off_in_harness_record() {
     let record = siralos_core::composition::ProfileRecord {
         name: "dev".to_owned(),
         overlay: vec![],
-        plugins: None,
+        modules: None,
         context: None,
         context_system_enabled: true,
         provider: None,
@@ -65,7 +65,7 @@ fn refused_profile_leaves_subsystem_off_in_harness_record() {
     };
     assert!(enabled_valid);
     let root = temp_dir("refused");
-    write(root.join("siralos.toml"), "[profile]\nname = \"dev\"\nplugins = \"not-an-array\"\n[profile.context_system]\nenabled = true\n").expect("write toml");
+    write(root.join("siralos.toml"), "[profile]\nname = \"dev\"\nmodules = \"not-an-array\"\n[profile.context_system]\nenabled = true\n").expect("write toml");
     let loaded =
         siralos_adapters::profile_config::load_workspace_profile(&root);
     assert!(matches!(loaded, WorkspaceProfileLoad::Invalid { .. }));

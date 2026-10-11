@@ -1,13 +1,13 @@
-//! Add Plugin manifest loading and workspace plugin record (decision 38).
+//! Add Module manifest loading and workspace module record (decision 38).
 //!
-//! The Add Plugin picker reads `domain-manifest.toml` at the picked
+//! The Add Module picker reads `module-manifest.toml` at the picked
 //! folder's ROOT only, validates its fields against the generic
-//! `siralos-core::domain` package parsers (id, digest, abi, declared
+//! `siralos-core::module` package parsers (id, digest, abi, declared
 //! capabilities), optionally verifies a named relative component file
 //! (bounded, regular, no symlink, digest-matched), and records the
-//! installed plugin in the workspace-root `siralos.toml`
-//! (`[plugins.<id>] path + digest`). Every failure is typed and
-//! performs no installation. This slice is View + Add Plugin only:
+//! installed module in the workspace-root `siralos.toml`
+//! (`[modules.<id>] path + digest`). Every failure is typed and
+//! performs no installation. This slice is View + Add Module only:
 //! `Enable`/`Activate` remain Host-gated and are not implemented here.
 //!
 //! Decision 114 Q4 — approved atomic-writer surfaces (documented):
@@ -15,8 +15,8 @@
 //! (`crates/siralos-adapters/src/lockfile.rs` `write_workspace_lock`),
 //! checkpoint storage (`crates/siralos-adapters/src/workspace/checkpoint.rs`),
 //! replay store (`crates/siralos-adapters/src/replay_store.rs`
-//! `write_replay_store`), domain manifest records
-//! (`crates/siralos-adapters/src/domain/manifest.rs`
+//! `write_replay_store`), module manifest records
+//! (`crates/siralos-adapters/src/module/manifest.rs`
 //! `write_record_document` at ~558–596), and the profile config
 //! (`crates/siralos-cli/src/interactive.rs` `write_profile_config`
 //! per decision 122 C2) — each with conflict/symlink refusal tests
@@ -24,26 +24,26 @@
 //! `crafted_record_with_absolute_path_is_refused` and symlink checks at
 //! ~640–656, 572–580).
 
-use crate::domain::host::DomainHost;
-use crate::domain::host::DomainHostBounds;
+use crate::module::host::ModuleHost;
+use crate::module::host::ModuleHostBounds;
 use crate::workspace::fs::{
     BoundedFileRead, MUTATION_TEMP_PREFIX, is_model_protected_workspace_path,
     read_complete_file_bounded,
 };
-use siralos_core::domain::capability::HostAuthority;
-use siralos_core::domain::failure::DomainFailure;
-use siralos_core::domain::package::{DomainPackage, DomainPackageId};
 use siralos_core::identity::sha256_hex;
+use siralos_core::module::capability::HostAuthority;
+use siralos_core::module::failure::ModuleFailure as CoreModuleFailure;
+use siralos_core::module::package::{ModulePackage, ModulePackageId};
 
-const MAX_PLUGIN_RECORDS: usize = 128;
-const MAX_PLUGIN_FIELD_BYTES: usize = 4096;
+const MAX_MODULE_RECORDS: usize = 128;
+const MAX_MODULE_FIELD_BYTES: usize = 4096;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
 
 /// The manifest file name looked for in the picked folder root.
-pub const DOMAIN_MANIFEST_FILE_NAME: &str = "domain-manifest.toml";
-/// The workspace plugin record file name.
+pub const MODULE_MANIFEST_FILE_NAME: &str = "module-manifest.toml";
+/// The workspace module record file name.
 pub const SIRALOS_TOML_FILE_NAME: &str = "siralos.toml";
 /// Maximum manifest size in bytes (bounded complete read).
 pub const MAX_MANIFEST_BYTES: usize = 4 * 1024;
@@ -52,27 +52,27 @@ pub const MAX_SIRALOS_TOML_BYTES: usize = 1024 * 1024;
 /// Maximum component file bytes accepted at add time.
 pub const MAX_COMPONENT_BYTES: usize = 16 * 1024 * 1024;
 
-/// A structurally valid plugin manifest parsed from
-/// `domain-manifest.toml`.
+/// A structurally valid module manifest parsed from
+/// `module-manifest.toml`.
 #[derive(Clone, PartialEq, Eq)]
-pub struct PluginManifest {
-    package: DomainPackage,
+pub struct ModuleManifest {
+    package: ModulePackage,
     component: Option<PathBuf>,
 }
 
-impl fmt::Debug for PluginManifest {
+impl fmt::Debug for ModuleManifest {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("PluginManifest")
+            .debug_struct("ModuleManifest")
             .field("package", &"validated")
             .field("component", &self.component.as_ref().map(|_| "<redacted>"))
             .finish()
     }
 }
 
-impl PluginManifest {
-    /// The validated domain package identity.
-    pub fn package(&self) -> &DomainPackage {
+impl ModuleManifest {
+    /// The validated module package identity.
+    pub fn package(&self) -> &ModulePackage {
         &self.package
     }
 
@@ -83,9 +83,9 @@ impl PluginManifest {
     }
 }
 
-/// Why a manifest or plugin record was rejected.
+/// Why a manifest or module record was rejected.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PluginFailure {
+pub enum ModuleManifestFailure {
     /// The manifest file is missing, a symlink, or not a regular file.
     ManifestNotReadable,
     /// The manifest exceeds the byte bound.
@@ -107,13 +107,13 @@ pub enum PluginFailure {
     },
     /// A record under the same id already has a different identity.
     RecordConflict(String),
-    /// The plugin record file could not be inspected or written.
+    /// The module record file could not be inspected or written.
     RecordIo(String),
     /// No `siralos.toml` exists yet (a clean empty workspace).
     NoRecord,
 }
 
-impl PluginFailure {
+impl ModuleManifestFailure {
     /// Stable machine-branchable code for this failure class.
     pub fn code(&self) -> &'static str {
         match self {
@@ -133,14 +133,14 @@ impl PluginFailure {
     }
 }
 
-impl fmt::Display for PluginFailure {
+impl fmt::Display for ModuleManifestFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let detail = match self {
             Self::ManifestNotReadable => {
-                "plugin manifest is missing, a symlink, or not a regular file"
+                "module manifest is missing, a symlink, or not a regular file"
             }
-            Self::ManifestTooLarge => "plugin manifest exceeds the byte bound",
-            Self::ManifestNotUtf8 => "plugin manifest is not UTF-8",
+            Self::ManifestTooLarge => "module manifest exceeds the byte bound",
+            Self::ManifestNotUtf8 => "module manifest is not UTF-8",
             Self::ManifestSyntax(_) => "manifest did not parse",
             Self::ManifestInvalid(_) => "manifest is invalid",
             Self::ComponentUnusable(_) => "component is unusable",
@@ -150,8 +150,8 @@ impl fmt::Display for PluginFailure {
                     "component digest does not match the declared package digest: declared {declared}, computed {computed}"
                 );
             }
-            Self::RecordConflict(_) => "plugin record conflict",
-            Self::RecordIo(_) => "plugin record I/O failure",
+            Self::RecordConflict(_) => "module record conflict",
+            Self::RecordIo(_) => "module record I/O failure",
             Self::NoRecord => {
                 return formatter.write_str("no siralos.toml exists yet");
             }
@@ -160,9 +160,9 @@ impl fmt::Display for PluginFailure {
     }
 }
 
-impl std::error::Error for PluginFailure {}
+impl std::error::Error for ModuleManifestFailure {}
 
-/// Read and validate `domain-manifest.toml` at the picked folder root.
+/// Read and validate `module-manifest.toml` at the picked folder root.
 ///
 /// `folder` must be a workspace-relative path under `root`; the containment is
 /// enforced here rather than trusted from the caller: an absolute or escaping
@@ -174,78 +174,82 @@ impl std::error::Error for PluginFailure {}
 pub fn load_manifest(
     root: &Path,
     folder: &Path,
-) -> Result<PluginManifest, PluginFailure> {
+) -> Result<ModuleManifest, ModuleManifestFailure> {
     if folder.as_os_str().is_empty()
         || folder.components().any(|component| {
             matches!(component, std::path::Component::ParentDir)
         })
     {
-        return Err(PluginFailure::ManifestInvalid(
-            "plugin folder must not escape the workspace".to_owned(),
+        return Err(ModuleManifestFailure::ManifestInvalid(
+            "module folder must not escape the workspace".to_owned(),
         ));
     }
     let canonical_root = std::fs::canonicalize(root)
-        .map_err(|_error| PluginFailure::ManifestNotReadable)?;
+        .map_err(|_error| ModuleManifestFailure::ManifestNotReadable)?;
     let joined = if folder.is_absolute() {
         folder.to_path_buf()
     } else {
         let Some(folder_text) = folder.to_str() else {
-            return Err(PluginFailure::ManifestInvalid(
-                "plugin folder must be valid UTF-8".to_owned(),
+            return Err(ModuleManifestFailure::ManifestInvalid(
+                "module folder must be valid UTF-8".to_owned(),
             ));
         };
         let joined =
             crate::workspace::fs::normalize_join(&canonical_root, folder_text);
         if joined != canonical_root && !joined.starts_with(&canonical_root) {
-            return Err(PluginFailure::ManifestInvalid(
-                "plugin folder is outside the workspace".to_owned(),
+            return Err(ModuleManifestFailure::ManifestInvalid(
+                "module folder is outside the workspace".to_owned(),
             ));
         }
         joined
     };
     let canonical_folder = std::fs::canonicalize(&joined)
-        .map_err(|_error| PluginFailure::ManifestNotReadable)?;
+        .map_err(|_error| ModuleManifestFailure::ManifestNotReadable)?;
     if canonical_folder != canonical_root
         && !canonical_folder.starts_with(&canonical_root)
     {
-        return Err(PluginFailure::ManifestInvalid(
-            "plugin folder resolves outside the workspace".to_owned(),
+        return Err(ModuleManifestFailure::ManifestInvalid(
+            "module folder resolves outside the workspace".to_owned(),
         ));
     }
-    let manifest_path = canonical_folder.join(DOMAIN_MANIFEST_FILE_NAME);
+    let manifest_path = canonical_folder.join(MODULE_MANIFEST_FILE_NAME);
     let bytes =
         match read_complete_file_bounded(&manifest_path, MAX_MANIFEST_BYTES) {
             BoundedFileRead::Complete(bytes) => bytes,
             BoundedFileRead::TooLarge => {
-                return Err(PluginFailure::ManifestTooLarge);
+                return Err(ModuleManifestFailure::ManifestTooLarge);
             }
             BoundedFileRead::NotReadable | BoundedFileRead::IoError(_) => {
-                return Err(PluginFailure::ManifestNotReadable);
+                return Err(ModuleManifestFailure::ManifestNotReadable);
             }
         };
     let text = String::from_utf8(bytes)
-        .map_err(|_| PluginFailure::ManifestNotUtf8)?;
+        .map_err(|_| ModuleManifestFailure::ManifestNotUtf8)?;
     let value: toml::Value = toml::from_str(&text).map_err(|_| {
-        PluginFailure::ManifestSyntax(
-            "plugin manifest TOML syntax is invalid".to_owned(),
+        ModuleManifestFailure::ManifestSyntax(
+            "module manifest TOML syntax is invalid".to_owned(),
         )
     })?;
     let table = match value {
         toml::Value::Table(table) => table,
         _ => {
-            return Err(PluginFailure::ManifestInvalid(
+            return Err(ModuleManifestFailure::ManifestInvalid(
                 "manifest must be a TOML table".to_owned(),
             ));
         }
     };
 
     let missing = |key: &str| {
-        PluginFailure::ManifestInvalid(format!("missing required key {key}"))
+        ModuleManifestFailure::ManifestInvalid(format!(
+            "missing required key {key}"
+        ))
     };
     let not_string = |key: &str| {
-        PluginFailure::ManifestInvalid(format!("{key} must be a string"))
+        ModuleManifestFailure::ManifestInvalid(format!(
+            "{key} must be a string"
+        ))
     };
-    let field = |key: &str| -> Result<String, PluginFailure> {
+    let field = |key: &str| -> Result<String, ModuleManifestFailure> {
         match table.get(key) {
             Some(toml::Value::String(value)) => Ok(value.clone()),
             Some(_) => Err(not_string(key)),
@@ -263,7 +267,7 @@ pub fn load_manifest(
                 match value {
                     toml::Value::String(text) => collected.push(text.clone()),
                     _ => {
-                        return Err(PluginFailure::ManifestInvalid(
+                        return Err(ModuleManifestFailure::ManifestInvalid(
                             "capabilities must be an array of strings"
                                 .to_owned(),
                         ));
@@ -273,7 +277,7 @@ pub fn load_manifest(
             collected
         }
         Some(_) => {
-            return Err(PluginFailure::ManifestInvalid(
+            return Err(ModuleManifestFailure::ManifestInvalid(
                 "capabilities must be an array of strings".to_owned(),
             ));
         }
@@ -291,7 +295,7 @@ pub fn load_manifest(
                 || !siralos_core::workspace::path::validate_relative_path(name)
                     .is_ok()
             {
-                return Err(PluginFailure::ManifestInvalid(
+                return Err(ModuleManifestFailure::ManifestInvalid(
                     "component must be a single relative file name".to_owned(),
                 ));
             }
@@ -302,7 +306,7 @@ pub fn load_manifest(
                 format!("{relative}/{}", name.replace('\\', "/"))
             };
             if is_model_protected_workspace_path(&requested) {
-                return Err(PluginFailure::ManifestInvalid(
+                return Err(ModuleManifestFailure::ManifestInvalid(
                     "component path is protected from model-facing inspection"
                         .to_owned(),
                 ));
@@ -312,7 +316,7 @@ pub fn load_manifest(
             // may legitimately not exist when the manifest is parsed).
             let canonical_root =
                 std::fs::canonicalize(root).map_err(|_| {
-                    PluginFailure::ComponentUnusable(
+                    ModuleManifestFailure::ComponentUnusable(
                         "workspace root is not accessible".to_owned(),
                     )
                 })?;
@@ -323,46 +327,46 @@ pub fn load_manifest(
             if resolved != canonical_root
                 && !resolved.starts_with(&canonical_root)
             {
-                return Err(PluginFailure::ComponentUnusable(
+                return Err(ModuleManifestFailure::ComponentUnusable(
                     "component path is outside the workspace".to_owned(),
                 ));
             }
             Some(resolved)
         }
         Some(_) => {
-            return Err(PluginFailure::ManifestInvalid(
+            return Err(ModuleManifestFailure::ManifestInvalid(
                 "component must be a string".to_owned(),
             ));
         }
     };
 
-    let package = DomainPackage::parse(&id, &digest, &abi, &capabilities)
+    let package = ModulePackage::parse(&id, &digest, &abi, &capabilities)
         .map_err(|_| {
-            PluginFailure::ManifestInvalid(
+            ModuleManifestFailure::ManifestInvalid(
                 "manifest package identity is invalid".to_owned(),
             )
         })?;
-    Ok(PluginManifest { package, component })
+    Ok(ModuleManifest { package, component })
 }
 
 /// Express an absolute folder path as its workspace-relative string.
 fn workspace_relative(
     root: &Path,
     folder: &Path,
-) -> Result<String, PluginFailure> {
+) -> Result<String, ModuleManifestFailure> {
     let canonical_root = std::fs::canonicalize(root).map_err(|_| {
-        PluginFailure::ComponentUnusable(
+        ModuleManifestFailure::ComponentUnusable(
             "workspace root is not accessible".to_owned(),
         )
     })?;
     let canonical_folder = std::fs::canonicalize(folder).map_err(|_| {
-        PluginFailure::ComponentUnusable(
+        ModuleManifestFailure::ComponentUnusable(
             "picked folder is not accessible".to_owned(),
         )
     })?;
     let relative =
         canonical_folder.strip_prefix(&canonical_root).map_err(|_| {
-            PluginFailure::ComponentUnusable(
+            ModuleManifestFailure::ComponentUnusable(
                 "picked folder is outside the workspace".to_owned(),
             )
         })?;
@@ -377,8 +381,8 @@ fn workspace_relative(
 /// symlink, bounded, and its SHA-256 equals the declared package
 /// digest.
 pub fn verify_component(
-    manifest: &PluginManifest,
-) -> Result<(), PluginFailure> {
+    manifest: &ModuleManifest,
+) -> Result<(), ModuleManifestFailure> {
     let Some(path) = manifest.component() else {
         return Ok(());
     };
@@ -394,13 +398,13 @@ pub fn verify_component(
                 if crate::workspace::fs::is_link_or_reparse(&metadata)
                     || !metadata.is_dir() =>
             {
-                return Err(PluginFailure::ComponentUnusable(
+                return Err(ModuleManifestFailure::ComponentUnusable(
                     "component directory must be a real directory".to_owned(),
                 ));
             }
             Ok(_) => {}
             Err(_) => {
-                return Err(PluginFailure::ComponentUnusable(
+                return Err(ModuleManifestFailure::ComponentUnusable(
                     "component directory is unavailable".to_owned(),
                 ));
             }
@@ -409,25 +413,25 @@ pub fn verify_component(
     let bytes = match read_complete_file_bounded(path, MAX_COMPONENT_BYTES) {
         BoundedFileRead::Complete(bytes) => bytes,
         BoundedFileRead::TooLarge => {
-            return Err(PluginFailure::ComponentUnusable(
+            return Err(ModuleManifestFailure::ComponentUnusable(
                 "component exceeds the byte bound".to_owned(),
             ));
         }
         BoundedFileRead::NotReadable => {
-            return Err(PluginFailure::ComponentUnusable(
+            return Err(ModuleManifestFailure::ComponentUnusable(
                 "component is missing, a symlink, or not a regular file"
                     .to_owned(),
             ));
         }
         BoundedFileRead::IoError(_) => {
-            return Err(PluginFailure::ComponentUnusable(
+            return Err(ModuleManifestFailure::ComponentUnusable(
                 "component could not be read".to_owned(),
             ));
         }
     };
     let computed = sha256_hex(&bytes);
     if computed != declared {
-        return Err(PluginFailure::ComponentDigestMismatch {
+        return Err(ModuleManifestFailure::ComponentDigestMismatch {
             declared: declared.to_owned(),
             computed,
         });
@@ -435,22 +439,22 @@ pub fn verify_component(
     Ok(())
 }
 
-/// One `[plugins.<id>]` record persisted in workspace `siralos.toml`.
+/// One `[modules.<id>]` record persisted in workspace `siralos.toml`.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct PluginRecord {
-    /// The installed plugin package id.
+pub struct ModuleRecord {
+    /// The installed module package id.
     pub id: String,
-    /// Workspace-relative folder of the plugin source (using `/`
+    /// Workspace-relative folder of the module source (using `/`
     /// separators; never an absolute path).
     pub path: String,
     /// The recorded package digest, spelled `sha256:<hex>`.
     pub digest: String,
 }
 
-impl fmt::Debug for PluginRecord {
+impl fmt::Debug for ModuleRecord {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("PluginRecord")
+            .debug_struct("ModuleRecord")
             .field("id", &"<redacted>")
             .field("path", &"<redacted>")
             .field("digest", &self.digest)
@@ -467,44 +471,44 @@ impl fmt::Debug for PluginRecord {
 /// remain separate Host-gated steps. When the manifest names no
 /// component there are no bytes to verify, so the declared manifest
 /// identity is recorded as-is (still typed, never silence).
-pub fn install_plugin(
-    manifest: &PluginManifest,
+pub fn install_module(
+    manifest: &ModuleManifest,
     workspace_root: &Path,
     folder: &Path,
-) -> Result<(), PluginFailure> {
-    let record = PluginRecord {
+) -> Result<(), ModuleManifestFailure> {
+    let record = ModuleRecord {
         id: manifest.package().id().as_str().to_owned(),
         path: workspace_relative(workspace_root, folder)?,
         digest: format!("sha256:{}", manifest.package().digest().as_str()),
     };
-    let current_records = load_plugin_records(workspace_root)?;
+    let current_records = load_module_records(workspace_root)?;
     if current_records.iter().any(|existing| {
         existing.id == record.id
             && (existing.path != record.path
                 || existing.digest != record.digest)
     }) {
-        return Err(PluginFailure::RecordConflict(
-            "plugin record conflict".to_owned(),
+        return Err(ModuleManifestFailure::RecordConflict(
+            "module record conflict".to_owned(),
         ));
     }
     if let Some(component) = manifest.component() {
         let abi = manifest.package().abi().clone();
         let authority = HostAuthority::parse(&[]).map_err(|_| {
-            PluginFailure::ManifestInvalid(
+            ModuleManifestFailure::ManifestInvalid(
                 "component authority is invalid".to_owned(),
             )
         })?;
-        let mut host = DomainHost::new(
+        let mut host = ModuleHost::new(
             abi,
             authority,
             component.to_path_buf(),
             workspace_root.to_path_buf(),
-            DomainHostBounds::default(),
+            ModuleHostBounds::default(),
         );
         host.install(manifest.package().clone()).map_err(
             |error| match error {
-                DomainFailure::IdentityMismatch { .. } => {
-                    PluginFailure::ComponentDigestMismatch {
+                CoreModuleFailure::IdentityMismatch { .. } => {
+                    ModuleManifestFailure::ComponentDigestMismatch {
                         declared: manifest
                             .package()
                             .digest()
@@ -513,26 +517,26 @@ pub fn install_plugin(
                         computed: "mismatch".to_owned(),
                     }
                 }
-                _ => PluginFailure::ComponentUnusable(
+                _ => ModuleManifestFailure::ComponentUnusable(
                     "component installation failed".to_owned(),
                 ),
             },
         )?;
         verify_component(manifest)?;
     }
-    record_plugin(workspace_root, &record)
+    record_module(workspace_root, &record)
 }
 
-/// Read the workspace plugin records from `siralos.toml`.
+/// Read the workspace module records from `siralos.toml`.
 ///
-/// A missing file means no plugins are installed (empty, not an
+/// A missing file means no modules are installed (empty, not an
 /// error). Unreadable, oversized, or non-UTF-8 files fail typed.
-/// Malformed `[plugins]` content is skipped per entry with a typed
+/// Malformed `[modules]` content is skipped per entry with a typed
 /// failure? No: this slice treats a malformed record file as a typed
 /// refusal (fail-closed: never a silent partial success).
-pub fn load_plugin_records(
+pub fn load_module_records(
     root: &Path,
-) -> Result<Vec<PluginRecord>, PluginFailure> {
+) -> Result<Vec<ModuleRecord>, ModuleManifestFailure> {
     let path = root.join(SIRALOS_TOML_FILE_NAME);
     let Some(text) = read_record_text(&path)? else {
         return Ok(Vec::new());
@@ -541,28 +545,28 @@ pub fn load_plugin_records(
         return Ok(Vec::new());
     }
     let value: toml::Value = toml::from_str(&text).map_err(|_| {
-        PluginFailure::ManifestSyntax(
+        ModuleManifestFailure::ManifestSyntax(
             "siralos.toml syntax is invalid".to_owned(),
         )
     })?;
-    let Some(plugins_value) = value.get("plugins") else {
+    let Some(plugins_value) = value.get("modules") else {
         return Ok(Vec::new());
     };
-    let toml::Value::Table(plugins) = plugins_value else {
-        return Err(PluginFailure::ManifestSyntax(
-            "the [plugins] entry must be a table".to_owned(),
+    let toml::Value::Table(modules) = plugins_value else {
+        return Err(ModuleManifestFailure::ManifestSyntax(
+            "the [modules] entry must be a table".to_owned(),
         ));
     };
-    if plugins.len() > MAX_PLUGIN_RECORDS {
-        return Err(PluginFailure::RecordConflict(
-            "plugin record count exceeds the safety bound".to_owned(),
+    if modules.len() > MAX_MODULE_RECORDS {
+        return Err(ModuleManifestFailure::RecordConflict(
+            "module record count exceeds the safety bound".to_owned(),
         ));
     }
-    let mut records = Vec::with_capacity(plugins.len());
-    for (id, entry) in plugins {
-        let (path, digest) = plugin_record_fields(entry)?;
+    let mut records = Vec::with_capacity(modules.len());
+    for (id, entry) in modules {
+        let (path, digest) = module_record_fields(entry)?;
         validate_record(id, path, digest)?;
-        records.push(PluginRecord {
+        records.push(ModuleRecord {
             id: id.clone(),
             path: path.to_owned(),
             digest: digest.to_owned(),
@@ -573,26 +577,26 @@ pub fn load_plugin_records(
 }
 
 /// Borrow the two required string fields from one stored record entry.
-fn plugin_record_fields(
+fn module_record_fields(
     entry: &toml::Value,
-) -> Result<(&str, &str), PluginFailure> {
+) -> Result<(&str, &str), ModuleManifestFailure> {
     let fields = entry.as_table().ok_or_else(|| {
-        PluginFailure::RecordConflict(
-            "plugin record entry must be a table".to_owned(),
+        ModuleManifestFailure::RecordConflict(
+            "module record entry must be a table".to_owned(),
         )
     })?;
     let path =
         fields.get("path").and_then(toml::Value::as_str).ok_or_else(|| {
-            PluginFailure::RecordConflict(
-                "plugin record requires a string path".to_owned(),
+            ModuleManifestFailure::RecordConflict(
+                "module record requires a string path".to_owned(),
             )
         })?;
     let digest = fields
         .get("digest")
         .and_then(toml::Value::as_str)
         .ok_or_else(|| {
-            PluginFailure::RecordConflict(
-                "plugin record requires a string digest".to_owned(),
+            ModuleManifestFailure::RecordConflict(
+                "module record requires a string digest".to_owned(),
             )
         })?;
     Ok((path, digest))
@@ -603,11 +607,13 @@ fn validate_record(
     id: &str,
     path: &str,
     digest: &str,
-) -> Result<(), PluginFailure> {
-    DomainPackageId::parse(id).map_err(|_| {
-        PluginFailure::RecordConflict("plugin record id is invalid".to_owned())
+) -> Result<(), ModuleManifestFailure> {
+    ModulePackageId::parse(id).map_err(|_| {
+        ModuleManifestFailure::RecordConflict(
+            "module record id is invalid".to_owned(),
+        )
     })?;
-    let path_ok = path.len() <= MAX_PLUGIN_FIELD_BYTES
+    let path_ok = path.len() <= MAX_MODULE_FIELD_BYTES
         && !path.chars().any(char::is_control)
         && !path.contains(':')
         && !path.contains('\\')
@@ -617,21 +623,23 @@ fn validate_record(
         && digest.starts_with("sha256:")
         && is_hex64(&digest["sha256:".len()..]);
     if !path_ok || !digest_ok {
-        return Err(PluginFailure::RecordConflict(
-            "plugin record has an invalid path or digest".to_owned(),
+        return Err(ModuleManifestFailure::RecordConflict(
+            "module record has an invalid path or digest".to_owned(),
         ));
     }
     Ok(())
 }
 
-fn validate_plugin_table(plugins: &toml::Table) -> Result<(), PluginFailure> {
-    if plugins.len() > MAX_PLUGIN_RECORDS {
-        return Err(PluginFailure::RecordConflict(
-            "plugin record count exceeds the safety bound".to_owned(),
+fn validate_module_table(
+    modules: &toml::Table,
+) -> Result<(), ModuleManifestFailure> {
+    if modules.len() > MAX_MODULE_RECORDS {
+        return Err(ModuleManifestFailure::RecordConflict(
+            "module record count exceeds the safety bound".to_owned(),
         ));
     }
-    for (id, entry) in plugins {
-        let (path, digest) = plugin_record_fields(entry)?;
+    for (id, entry) in modules {
+        let (path, digest) = module_record_fields(entry)?;
         validate_record(id, path, digest)?;
     }
     Ok(())
@@ -647,20 +655,22 @@ fn is_hex64(value: &str) -> bool {
 /// Read one bounded, UTF-8 file. A missing file yields `None`; a
 /// symlink or non-regular file is a typed refusal (the caller never
 /// writes through a substituted pathname).
-fn read_record_text(path: &Path) -> Result<Option<String>, PluginFailure> {
+fn read_record_text(
+    path: &Path,
+) -> Result<Option<String>, ModuleManifestFailure> {
     let metadata = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(None);
         }
         Err(_error) => {
-            return Err(PluginFailure::RecordIo(
+            return Err(ModuleManifestFailure::RecordIo(
                 "siralos.toml is unreadable".to_owned(),
             ));
         }
     };
     if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(PluginFailure::RecordConflict(
+        return Err(ModuleManifestFailure::RecordConflict(
             "siralos.toml must be a regular file; refusing symlink or special file"
                 .to_owned(),
         ));
@@ -669,22 +679,22 @@ fn read_record_text(path: &Path) -> Result<Option<String>, PluginFailure> {
         BoundedFileRead::Complete(bytes) => {
             String::from_utf8(bytes)
                 .map(Some)
-                .map_err(|_| PluginFailure::ManifestNotUtf8)
+                .map_err(|_| ModuleManifestFailure::ManifestNotUtf8)
         }
-        BoundedFileRead::TooLarge => Err(PluginFailure::RecordIo(
+        BoundedFileRead::TooLarge => Err(ModuleManifestFailure::RecordIo(
             "siralos.toml exceeds the byte bound".to_owned(),
         )),
-        BoundedFileRead::NotReadable => Err(PluginFailure::RecordConflict(
+        BoundedFileRead::NotReadable => Err(ModuleManifestFailure::RecordConflict(
             "siralos.toml must be a regular file; refusing symlink or special file"
                 .to_owned(),
         )),
-        BoundedFileRead::IoError(_error) => Err(PluginFailure::RecordIo(
+        BoundedFileRead::IoError(_error) => Err(ModuleManifestFailure::RecordIo(
             "siralos.toml is unreadable".to_owned(),
         )),
     }
 }
 
-/// Write the plugin record document atomically against the exact source
+/// Write the module record document atomically against the exact source
 /// revision. An existing target is committed only when its SHA-256 still
 /// matches; an initially absent target must still be absent at commit.
 ///
@@ -698,15 +708,15 @@ fn write_record_document(
     root: &Path,
     document: &toml::Table,
     expected_digest: Option<&str>,
-) -> Result<(), PluginFailure> {
+) -> Result<(), ModuleManifestFailure> {
     let serialized = toml::to_string(document).map_err(|_| {
-        PluginFailure::RecordIo(
+        ModuleManifestFailure::RecordIo(
             "siralos.toml could not be serialized".to_owned(),
         )
     })?;
     if serialized.len() > MAX_SIRALOS_TOML_BYTES {
-        return Err(PluginFailure::RecordConflict(
-            "serialized plugin record document exceeds the byte bound"
+        return Err(ModuleManifestFailure::RecordConflict(
+            "serialized module record document exceeds the byte bound"
                 .to_owned(),
         ));
     }
@@ -719,12 +729,12 @@ fn write_record_document(
     )
     .map_err(|error| match error {
         crate::atomic::AtomicWriteFailure::TargetIsNotARegularFile { .. } => {
-            PluginFailure::RecordConflict(
+            ModuleManifestFailure::RecordConflict(
                 "siralos.toml must be a regular file; refusing symlink or special file"
                     .to_owned(),
             )
         }
-        _ => PluginFailure::RecordIo(
+        _ => ModuleManifestFailure::RecordIo(
             "siralos.toml could not be staged".to_owned(),
         ),
     })?;
@@ -734,34 +744,34 @@ fn write_record_document(
     };
     commit.map_err(|error| match error {
         crate::atomic::AtomicWriteFailure::TargetIsNotARegularFile { .. } => {
-            PluginFailure::RecordConflict(
+            ModuleManifestFailure::RecordConflict(
                 "siralos.toml must be a regular file; refusing symlink or special file"
                     .to_owned(),
             )
         }
         crate::atomic::AtomicWriteFailure::TargetChanged { .. } => {
-            PluginFailure::RecordConflict(
+            ModuleManifestFailure::RecordConflict(
                 "siralos.toml changed before replacement".to_owned(),
             )
         }
-        _ => PluginFailure::RecordIo(
+        _ => ModuleManifestFailure::RecordIo(
             "siralos.toml could not be replaced".to_owned(),
         ),
     })?;
     Ok(())
 }
 
-/// Merge one plugin record into the workspace `siralos.toml`,
+/// Merge one module record into the workspace `siralos.toml`,
 /// preserving every other section and record (structurally; comments
 /// and original formatting are not preserved by the TOML round-trip).
-/// The incoming record and existing plugin table must satisfy the record
+/// The incoming record and existing module table must satisfy the record
 /// count and field bounds before any merge or serialization. Creating the
 /// file when absent is fine; an existing record under the same id with a
 /// different package identity conflicts (typed refusal, no write).
-pub fn record_plugin(
+pub fn record_module(
     root: &Path,
-    record: &PluginRecord,
-) -> Result<(), PluginFailure> {
+    record: &ModuleRecord,
+) -> Result<(), ModuleManifestFailure> {
     validate_record(&record.id, &record.path, &record.digest)?;
     let path = root.join(SIRALOS_TOML_FILE_NAME);
     let source = read_record_text(&path)?;
@@ -774,30 +784,30 @@ pub fn record_plugin(
         toml::from_str(&text).map_err(|_| {
             // Fail closed on any parse error of a pre-existing file:
             // never silently rewrite an unparseable record file.
-            PluginFailure::RecordConflict(
+            ModuleManifestFailure::RecordConflict(
                 "siralos.toml does not parse".to_owned(),
             )
         })?
     };
-    // The root plugin-record table is independent from the `[profile]`
+    // The root module-record table is independent from the `[profile]`
     // subtree; remove only this exact key before validating and merging it.
-    let plugins = match document.remove("plugins") {
+    let modules = match document.remove("modules") {
         None => toml::Table::new(),
-        Some(toml::Value::Table(plugins)) => plugins,
+        Some(toml::Value::Table(modules)) => modules,
         Some(_) => {
-            return Err(PluginFailure::RecordConflict(
-                "[plugins] must be a table".to_owned(),
+            return Err(ModuleManifestFailure::RecordConflict(
+                "[modules] must be a table".to_owned(),
             ));
         }
     };
-    validate_plugin_table(&plugins)?;
-    if plugins.len() >= MAX_PLUGIN_RECORDS && !plugins.contains_key(&record.id)
+    validate_module_table(&modules)?;
+    if modules.len() >= MAX_MODULE_RECORDS && !modules.contains_key(&record.id)
     {
-        return Err(PluginFailure::RecordConflict(
-            "plugin record count exceeds the safety bound".to_owned(),
+        return Err(ModuleManifestFailure::RecordConflict(
+            "module record count exceeds the safety bound".to_owned(),
         ));
     }
-    let conflict = match plugins.get(&record.id) {
+    let conflict = match modules.get(&record.id) {
         None => false,
         Some(toml::Value::Table(existing)) => {
             let same_path = existing
@@ -813,19 +823,19 @@ pub fn record_plugin(
         Some(_) => true,
     };
     if conflict {
-        return Err(PluginFailure::RecordConflict(
-            "plugin is already recorded with a different identity".to_owned(),
+        return Err(ModuleManifestFailure::RecordConflict(
+            "module is already recorded with a different identity".to_owned(),
         ));
     }
-    let mut plugins = plugins;
+    let mut modules = modules;
     let mut entry = toml::Table::new();
     entry.insert("path".to_owned(), toml::Value::String(record.path.clone()));
     entry.insert(
         "digest".to_owned(),
         toml::Value::String(record.digest.clone()),
     );
-    plugins.insert(record.id.clone(), toml::Value::Table(entry));
-    document.insert("plugins".to_owned(), toml::Value::Table(plugins));
+    modules.insert(record.id.clone(), toml::Value::Table(entry));
+    document.insert("modules".to_owned(), toml::Value::Table(modules));
     write_record_document(root, &document, expected_digest.as_deref())
 }
 
@@ -852,13 +862,13 @@ mod tests {
         format!("{byte:02x}").repeat(32)
     }
 
-    fn document_with_plugin_count(count: usize) -> String {
+    fn document_with_module_count(count: usize) -> String {
         let mut document = String::from(
             "[profile]\nname = \"dev\"\nplugins = [\"selected\"]\n\n",
         );
         for index in 0..count {
             document.push_str(&format!(
-                "[plugins.plugin{index:03}]\npath = \"plugins/plugin{index:03}\"\ndigest = \"sha256:{}\"\n",
+                "[modules.module{index:03}]\npath = \"plugins/plugin{index:03}\"\ndigest = \"sha256:{}\"\n",
                 digest_hex((index % 256) as u8),
             ));
         }
@@ -890,15 +900,15 @@ mod tests {
         "nested/.siralos/private-plugin-marker",
     ];
 
-    fn plugin_record_document(path: &str) -> String {
+    fn module_record_document(path: &str) -> String {
         format!(
-            "[plugins.godot]\npath = \"{path}\"\ndigest = \"sha256:{}\"\n",
+            "[modules.godot]\npath = \"{path}\"\ndigest = \"sha256:{}\"\n",
             digest_hex(0x42),
         )
     }
 
     fn assert_generic_record_rejections(
-        outcomes: Vec<(&'static str, Result<(), PluginFailure>)>,
+        outcomes: Vec<(&'static str, Result<(), ModuleManifestFailure>)>,
     ) {
         let observed = outcomes
             .iter()
@@ -911,7 +921,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(
             outcomes.iter().all(|(_, result)| result.is_err()),
-            "every unsafe plugin record path must be rejected: {observed:#?}",
+            "every unsafe module record path must be rejected: {observed:#?}",
         );
 
         for (path, result) in outcomes {
@@ -934,7 +944,7 @@ mod tests {
         let temp = workspace();
         create_dir_all(temp.join("plugins/godot")).unwrap();
         let manifest_path =
-            temp.join("plugins/godot").join(DOMAIN_MANIFEST_FILE_NAME);
+            temp.join("plugins/godot").join(MODULE_MANIFEST_FILE_NAME);
         write(
             &manifest_path,
             manifest_text(
@@ -965,7 +975,7 @@ mod tests {
         let temp = workspace();
         let outside = workspace();
         write(
-            outside.join(DOMAIN_MANIFEST_FILE_NAME),
+            outside.join(MODULE_MANIFEST_FILE_NAME),
             manifest_text("godot", &digest_hex(0xab), ABI, None),
         )
         .expect("write manifest outside");
@@ -985,7 +995,10 @@ mod tests {
     fn load_manifest_detects_missing_manifest() {
         let temp = workspace();
         let manifest = load_manifest(&temp, &temp);
-        assert_eq!(manifest.unwrap_err(), PluginFailure::ManifestNotReadable);
+        assert_eq!(
+            manifest.unwrap_err(),
+            ModuleManifestFailure::ManifestNotReadable
+        );
         let _ = remove_dir_all(temp);
     }
 
@@ -993,7 +1006,7 @@ mod tests {
     fn load_manifest_rejects_invalid_digest() {
         let temp = workspace();
         write(
-            temp.join(DOMAIN_MANIFEST_FILE_NAME),
+            temp.join(MODULE_MANIFEST_FILE_NAME),
             manifest_text("godot", "not-a-digest", ABI, None),
         )
         .expect("write manifest");
@@ -1005,27 +1018,27 @@ mod tests {
     #[test]
     fn manifest_and_record_documents_reject_non_utf8() {
         let temp = workspace();
-        std::fs::write(temp.join(DOMAIN_MANIFEST_FILE_NAME), [0xff])
+        std::fs::write(temp.join(MODULE_MANIFEST_FILE_NAME), [0xff])
             .expect("write manifest");
         assert_eq!(
             load_manifest(&temp, &temp).expect_err("manifest refused"),
-            PluginFailure::ManifestNotUtf8,
+            ModuleManifestFailure::ManifestNotUtf8,
         );
 
         std::fs::write(temp.join(SIRALOS_TOML_FILE_NAME), [0xff])
             .expect("write record document");
         assert_eq!(
-            load_plugin_records(&temp).expect_err("record document refused"),
-            PluginFailure::ManifestNotUtf8,
+            load_module_records(&temp).expect_err("record document refused"),
+            ModuleManifestFailure::ManifestNotUtf8,
         );
-        let record = PluginRecord {
+        let record = ModuleRecord {
             id: "godot".to_owned(),
             path: "plugins/godot".to_owned(),
             digest: format!("sha256:{}", digest_hex(0x42)),
         };
         assert_eq!(
-            record_plugin(&temp, &record).expect_err("write refused"),
-            PluginFailure::ManifestNotUtf8,
+            record_module(&temp, &record).expect_err("write refused"),
+            ModuleManifestFailure::ManifestNotUtf8,
         );
         assert_eq!(
             std::fs::read(temp.join(SIRALOS_TOML_FILE_NAME)).expect("read"),
@@ -1038,7 +1051,7 @@ mod tests {
     fn load_manifest_rejects_control_characters_in_component_path() {
         let temp = workspace();
         write(
-            temp.join(DOMAIN_MANIFEST_FILE_NAME),
+            temp.join(MODULE_MANIFEST_FILE_NAME),
             manifest_text(
                 "godot",
                 &digest_hex(0xab),
@@ -1061,7 +1074,7 @@ mod tests {
         let temp = workspace();
         for component in ["..", "../outside", r"nested\\component.wasm"] {
             write(
-                temp.join(DOMAIN_MANIFEST_FILE_NAME),
+                temp.join(MODULE_MANIFEST_FILE_NAME),
                 manifest_text(
                     "godot",
                     &digest_hex(0xab),
@@ -1096,7 +1109,7 @@ mod tests {
     fn load_manifest_ignores_unknown_keys() {
         let temp = workspace();
         write(
-            temp.join(DOMAIN_MANIFEST_FILE_NAME),
+            temp.join(MODULE_MANIFEST_FILE_NAME),
             format!(
                 "id = \"godot\"\ndigest = \"{}\"\nabi = \"{ABI}\"\nunknown = 42\n",
                 digest_hex(0x01)
@@ -1111,7 +1124,7 @@ mod tests {
     fn component_digest_mismatch_is_typed() {
         let temp = workspace();
         write(
-            temp.join(DOMAIN_MANIFEST_FILE_NAME),
+            temp.join(MODULE_MANIFEST_FILE_NAME),
             manifest_text("godot", &digest_hex(0xab), ABI, Some("c.wasm")),
         )
         .expect("write manifest");
@@ -1126,7 +1139,7 @@ mod tests {
     fn component_unreadable_is_typed() {
         let temp = workspace();
         write(
-            temp.join(DOMAIN_MANIFEST_FILE_NAME),
+            temp.join(MODULE_MANIFEST_FILE_NAME),
             manifest_text(
                 "godot",
                 &digest_hex(0xab),
@@ -1142,14 +1155,14 @@ mod tests {
     }
 
     #[test]
-    fn install_plugin_record_conflict_precedes_missing_component() {
+    fn install_module_record_conflict_precedes_missing_component() {
         let temp = workspace();
         let folder = temp.join("plugins/godot");
-        create_dir_all(&folder).expect("plugin folder");
+        create_dir_all(&folder).expect("module folder");
         let component_path = folder.join("missing.wasm");
         let candidate_digest = digest_hex(0xab);
         write(
-            folder.join(DOMAIN_MANIFEST_FILE_NAME),
+            folder.join(MODULE_MANIFEST_FILE_NAME),
             manifest_text(
                 "godot",
                 &candidate_digest,
@@ -1163,17 +1176,17 @@ mod tests {
         assert!(!component_path.exists());
 
         let existing_digest = digest_hex(0xcd);
-        let existing = PluginRecord {
+        let existing = ModuleRecord {
             id: "godot".to_owned(),
             path: "plugins/other".to_owned(),
             digest: format!("sha256:{existing_digest}"),
         };
-        record_plugin(&temp, &existing).expect("existing record");
+        record_module(&temp, &existing).expect("existing record");
         let record_path = temp.join(SIRALOS_TOML_FILE_NAME);
         let original_record =
             read(&record_path).expect("read existing record");
 
-        let failure = install_plugin(&manifest, &temp, &folder)
+        let failure = install_module(&manifest, &temp, &folder)
             .expect_err("persisted conflict must win over missing component");
 
         assert_eq!(failure.code(), "RECORD_CONFLICT");
@@ -1201,7 +1214,7 @@ mod tests {
     fn component_without_declared_path_passes_verification() {
         let temp = workspace();
         write(
-            temp.join(DOMAIN_MANIFEST_FILE_NAME),
+            temp.join(MODULE_MANIFEST_FILE_NAME),
             manifest_text("godot", &digest_hex(0xab), ABI, None),
         )
         .expect("write manifest");
@@ -1216,7 +1229,7 @@ mod tests {
         let bytes = b"exact component bytes".to_vec();
         let digest = sha256_hex(&bytes);
         write(
-            temp.join(DOMAIN_MANIFEST_FILE_NAME),
+            temp.join(MODULE_MANIFEST_FILE_NAME),
             manifest_text("godot", &digest, ABI, Some("c.wasm")),
         )
         .expect("write manifest");
@@ -1227,9 +1240,9 @@ mod tests {
     }
 
     #[test]
-    fn plugin_records_load_from_missing_file_as_empty() {
+    fn module_records_load_from_missing_file_as_empty() {
         let temp = workspace();
-        let records = load_plugin_records(&temp).expect("loads");
+        let records = load_module_records(&temp).expect("loads");
         assert!(records.is_empty());
         let _ = remove_dir_all(temp);
     }
@@ -1237,13 +1250,13 @@ mod tests {
     #[test]
     fn record_and_reread_roundtrip() {
         let temp = workspace();
-        let record = PluginRecord {
+        let record = ModuleRecord {
             id: "godot".to_owned(),
             path: "plugins/godot".to_owned(),
             digest: format!("sha256:{}", digest_hex(0xcd)),
         };
-        record_plugin(&temp, &record).expect("records");
-        let records = load_plugin_records(&temp).expect("loads");
+        record_module(&temp, &record).expect("records");
+        let records = load_module_records(&temp).expect("loads");
         assert_eq!(records, vec![record]);
         let _ = remove_dir_all(temp);
     }
@@ -1256,34 +1269,34 @@ mod tests {
             "[unrelated]\nkey = \"kept\"\ntitle = \"other\"\n",
         )
         .expect("write");
-        let record = PluginRecord {
+        let record = ModuleRecord {
             id: "godot".to_owned(),
             path: "plugins/godot".to_owned(),
             digest: format!("sha256:{}", digest_hex(0x01)),
         };
-        record_plugin(&temp, &record).expect("records");
+        record_module(&temp, &record).expect("records");
         let text = std::fs::read_to_string(temp.join(SIRALOS_TOML_FILE_NAME))
             .expect("read");
         assert!(text.contains("key = \"kept\""));
-        assert!(text.contains("[plugins.godot]"));
+        assert!(text.contains("[modules.godot]"));
         let _ = remove_dir_all(temp);
     }
 
     #[test]
-    fn record_preserves_independent_profile_plugin_fields() {
+    fn record_preserves_independent_profile_module_fields() {
         let temp = workspace();
         write(
             temp.join(SIRALOS_TOML_FILE_NAME),
-            "[profile]\nname = \"dev\"\nplugins = [\"selected\"]\n\n[profile.context]\nkind = \"live\"\n\n[plugins.existing]\npath = \"plugins/existing\"\ndigest = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n",
+            "[profile]\nname = \"dev\"\nmodules = [\"selected\"]\n\n[profile.context]\nkind = \"live\"\n\n[modules.existing]\npath = \"plugins/existing\"\ndigest = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n",
         )
         .expect("write");
-        let record = PluginRecord {
+        let record = ModuleRecord {
             id: "godot".to_owned(),
             path: "plugins/godot".to_owned(),
             digest: format!("sha256:{}", digest_hex(0xcd)),
         };
 
-        record_plugin(&temp, &record).expect("records");
+        record_module(&temp, &record).expect("records");
 
         let text = std::fs::read_to_string(temp.join(SIRALOS_TOML_FILE_NAME))
             .expect("read");
@@ -1293,9 +1306,9 @@ mod tests {
             .and_then(toml::Value::as_table)
             .expect("profile table");
         let selected = profile
-            .get("plugins")
+            .get("modules")
             .and_then(toml::Value::as_array)
-            .expect("profile plugin selection");
+            .expect("profile module selection");
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].as_str(), Some("selected"));
         assert_eq!(
@@ -1313,22 +1326,22 @@ mod tests {
     fn record_rejects_invalid_fields_before_writing() {
         let temp = workspace();
         let records = [
-            PluginRecord {
+            ModuleRecord {
                 id: "UPPER-case".to_owned(),
                 path: "plugins/godot".to_owned(),
                 digest: format!("sha256:{}", digest_hex(0x01)),
             },
-            PluginRecord {
+            ModuleRecord {
                 id: "godot".to_owned(),
-                path: "a".repeat(MAX_PLUGIN_FIELD_BYTES + 1),
+                path: "a".repeat(MAX_MODULE_FIELD_BYTES + 1),
                 digest: format!("sha256:{}", digest_hex(0x01)),
             },
-            PluginRecord {
+            ModuleRecord {
                 id: "godot".to_owned(),
                 path: "plugins/\u{0007}godot".to_owned(),
                 digest: format!("sha256:{}", digest_hex(0x01)),
             },
-            PluginRecord {
+            ModuleRecord {
                 id: "godot".to_owned(),
                 path: "plugins/godot".to_owned(),
                 digest: "not-a-digest".to_owned(),
@@ -1336,7 +1349,7 @@ mod tests {
         ];
 
         for record in records {
-            let failure = record_plugin(&temp, &record).expect_err("refused");
+            let failure = record_module(&temp, &record).expect_err("refused");
             assert_eq!(failure.code(), "RECORD_CONFLICT");
             assert!(!temp.join(SIRALOS_TOML_FILE_NAME).exists());
         }
@@ -1344,18 +1357,18 @@ mod tests {
     }
 
     #[test]
-    fn record_rejects_plugin_count_over_limit_before_rewrite() {
+    fn record_rejects_module_count_over_limit_before_rewrite() {
         let temp = workspace();
         let path = temp.join(SIRALOS_TOML_FILE_NAME);
-        let original = document_with_plugin_count(MAX_PLUGIN_RECORDS);
+        let original = document_with_module_count(MAX_MODULE_RECORDS);
         write(&path, &original).expect("write");
-        let record = PluginRecord {
+        let record = ModuleRecord {
             id: "plugin999".to_owned(),
             path: "plugins/plugin999".to_owned(),
             digest: format!("sha256:{}", digest_hex(0x99)),
         };
 
-        let failure = record_plugin(&temp, &record).expect_err("refused");
+        let failure = record_module(&temp, &record).expect_err("refused");
 
         assert_eq!(failure.code(), "RECORD_CONFLICT");
         assert!(!failure.to_string().contains("plugin999"));
@@ -1379,7 +1392,7 @@ mod tests {
             .expect_err("refused");
 
         match &failure {
-            PluginFailure::RecordConflict(reason) => {
+            ModuleManifestFailure::RecordConflict(reason) => {
                 assert!(reason.contains("serialized"));
             }
             other => panic!("unexpected failure: {other:?}"),
@@ -1435,7 +1448,7 @@ mod tests {
     fn record_diagnostics_do_not_echo_toml_id_or_path() {
         let temp = workspace();
         let path = temp.join(SIRALOS_TOML_FILE_NAME);
-        let record = PluginRecord {
+        let record = ModuleRecord {
             id: "godot".to_owned(),
             path: "plugins/godot".to_owned(),
             digest: format!("sha256:{}", digest_hex(0x01)),
@@ -1447,26 +1460,26 @@ mod tests {
 
         write(&path, "private_marker = ???\n").expect("write malformed TOML");
         let diagnostic =
-            record_plugin(&temp, &record).expect_err("refused").to_string();
+            record_module(&temp, &record).expect_err("refused").to_string();
         assert!(!diagnostic.contains("private_marker"));
 
         write(
             &path,
-            "[plugins.UPPER-private]\npath = \"plugins/private\"\ndigest = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n",
+            "[modules.UPPER-private]\npath = \"plugins/private\"\ndigest = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n",
         )
         .expect("write bad id");
         let diagnostic =
-            load_plugin_records(&temp).expect_err("refused").to_string();
+            load_module_records(&temp).expect_err("refused").to_string();
         assert!(!diagnostic.contains("UPPER-private"));
         assert!(!diagnostic.contains("plugins/private"));
 
         write(
             &path,
-            "[plugins.godot]\npath = \"C:/private/workspace\"\ndigest = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n",
+            "[modules.godot]\npath = \"C:/private/workspace\"\ndigest = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n",
         )
         .expect("write bad path");
         let diagnostic =
-            load_plugin_records(&temp).expect_err("refused").to_string();
+            load_module_records(&temp).expect_err("refused").to_string();
         assert!(!diagnostic.contains("godot"));
         assert!(!diagnostic.contains("C:/private/workspace"));
         let _ = remove_dir_all(temp);
@@ -1476,14 +1489,14 @@ mod tests {
     fn record_io_diagnostic_does_not_echo_workspace_path() {
         let temp = workspace();
         let missing_root = temp.join("private-workspace");
-        let record = PluginRecord {
+        let record = ModuleRecord {
             id: "godot".to_owned(),
             path: "plugins/godot".to_owned(),
             digest: format!("sha256:{}", digest_hex(0x01)),
         };
 
         let failure =
-            record_plugin(&missing_root, &record).expect_err("refused");
+            record_module(&missing_root, &record).expect_err("refused");
 
         assert_eq!(failure.code(), "RECORD_IO");
         assert!(!failure.to_string().contains("private-workspace"));
@@ -1491,21 +1504,21 @@ mod tests {
     }
 
     #[test]
-    fn record_second_plugin_is_appended() {
+    fn record_second_module_is_appended() {
         let temp = workspace();
-        let first = PluginRecord {
+        let first = ModuleRecord {
             id: "godot".to_owned(),
             path: "plugins/godot".to_owned(),
             digest: format!("sha256:{}", digest_hex(0x01)),
         };
-        let second = PluginRecord {
+        let second = ModuleRecord {
             id: "konstruct".to_owned(),
             path: "plugins/konstruct".to_owned(),
             digest: format!("sha256:{}", digest_hex(0x02)),
         };
-        record_plugin(&temp, &first).expect("first");
-        record_plugin(&temp, &second).expect("second");
-        let records = load_plugin_records(&temp).expect("loads");
+        record_module(&temp, &first).expect("first");
+        record_module(&temp, &second).expect("second");
+        let records = load_module_records(&temp).expect("loads");
         assert_eq!(records, vec![first, second]);
         let _ = remove_dir_all(temp);
     }
@@ -1513,14 +1526,14 @@ mod tests {
     #[test]
     fn record_same_identity_is_idempotent() {
         let temp = workspace();
-        let record = PluginRecord {
+        let record = ModuleRecord {
             id: "godot".to_owned(),
             path: "plugins/godot".to_owned(),
             digest: format!("sha256:{}", digest_hex(0x01)),
         };
-        record_plugin(&temp, &record).expect("first");
-        record_plugin(&temp, &record).expect("second (same identity)");
-        let records = load_plugin_records(&temp).expect("loads");
+        record_module(&temp, &record).expect("first");
+        record_module(&temp, &record).expect("second (same identity)");
+        let records = load_module_records(&temp).expect("loads");
         assert_eq!(records, vec![record]);
         let _ = remove_dir_all(temp);
     }
@@ -1528,18 +1541,18 @@ mod tests {
     #[test]
     fn record_conflicting_identity_is_refused() {
         let temp = workspace();
-        let first = PluginRecord {
+        let first = ModuleRecord {
             id: "godot".to_owned(),
             path: "plugins/godot".to_owned(),
             digest: format!("sha256:{}", digest_hex(0x01)),
         };
-        let conflicting = PluginRecord {
+        let conflicting = ModuleRecord {
             id: "godot".to_owned(),
             path: "plugins/godot".to_owned(),
             digest: format!("sha256:{}", digest_hex(0x02)),
         };
-        record_plugin(&temp, &first).expect("first");
-        let failure = record_plugin(&temp, &conflicting).unwrap_err();
+        record_module(&temp, &first).expect("first");
+        let failure = record_module(&temp, &conflicting).unwrap_err();
         assert_eq!(failure.code(), "RECORD_CONFLICT");
         let _ = remove_dir_all(temp);
     }
@@ -1557,12 +1570,12 @@ mod tests {
                 temp.join(SIRALOS_TOML_FILE_NAME),
             )
             .expect("symlink");
-            let record = PluginRecord {
+            let record = ModuleRecord {
                 id: "godot".to_owned(),
                 path: "plugins/godot".to_owned(),
                 digest: format!("sha256:{}", digest_hex(0x01)),
             };
-            let failure = record_plugin(&temp, &record).unwrap_err();
+            let failure = record_module(&temp, &record).unwrap_err();
             assert_eq!(failure.code(), "RECORD_CONFLICT");
             let target_text =
                 std::fs::read_to_string(&target).expect("target unchanged");
@@ -1575,12 +1588,12 @@ mod tests {
     fn record_directory_target_is_refused() {
         let temp = workspace();
         std::fs::create_dir(temp.join(SIRALOS_TOML_FILE_NAME)).expect("dir");
-        let record = PluginRecord {
+        let record = ModuleRecord {
             id: "godot".to_owned(),
             path: "plugins/godot".to_owned(),
             digest: format!("sha256:{}", digest_hex(0x01)),
         };
-        let failure = record_plugin(&temp, &record).unwrap_err();
+        let failure = record_module(&temp, &record).unwrap_err();
         assert_eq!(failure.code(), "RECORD_CONFLICT");
         let _ = remove_dir_all(temp);
     }
@@ -1590,12 +1603,12 @@ mod tests {
         let temp = workspace();
         let oversized = vec![b'x'; MAX_SIRALOS_TOML_BYTES + 1];
         write(temp.join(SIRALOS_TOML_FILE_NAME), &oversized).expect("file");
-        let record = PluginRecord {
+        let record = ModuleRecord {
             id: "godot".to_owned(),
             path: "plugins/godot".to_owned(),
             digest: format!("sha256:{}", digest_hex(0x01)),
         };
-        let failure = record_plugin(&temp, &record).unwrap_err();
+        let failure = record_module(&temp, &record).unwrap_err();
         assert_eq!(failure.code(), "RECORD_IO");
         // The target must be untouched (still the original oversized bytes).
         assert_eq!(
@@ -1612,10 +1625,10 @@ mod tests {
         let temp = workspace();
         write(
             temp.join(SIRALOS_TOML_FILE_NAME),
-            "[plugins.UPPER-case]\npath = \"plugins/x\"\ndigest = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n",
+            "[modules.UPPER-case]\npath = \"plugins/x\"\ndigest = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n",
         )
         .expect("file");
-        let failure = load_plugin_records(&temp).unwrap_err();
+        let failure = load_module_records(&temp).unwrap_err();
         assert_eq!(failure.code(), "RECORD_CONFLICT");
         let _ = remove_dir_all(temp);
     }
@@ -1625,10 +1638,10 @@ mod tests {
         let temp = workspace();
         write(
             temp.join(SIRALOS_TOML_FILE_NAME),
-            "[plugins.godot]\npath = \"plugins/x\"\ndigest = \"md5:deadbeef\"\n",
+            "[modules.godot]\npath = \"plugins/x\"\ndigest = \"md5:deadbeef\"\n",
         )
         .expect("file");
-        let failure = load_plugin_records(&temp).unwrap_err();
+        let failure = load_module_records(&temp).unwrap_err();
         assert_eq!(failure.code(), "RECORD_CONFLICT");
         let _ = remove_dir_all(temp);
     }
@@ -1638,25 +1651,25 @@ mod tests {
         let temp = workspace();
         write(
             temp.join(SIRALOS_TOML_FILE_NAME),
-            "[plugins.godot]\npath = \"C:/outside\"\ndigest = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n",
+            "[modules.godot]\npath = \"C:/outside\"\ndigest = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n",
         )
         .expect("file");
-        let failure = load_plugin_records(&temp).unwrap_err();
+        let failure = load_module_records(&temp).unwrap_err();
         assert_eq!(failure.code(), "RECORD_CONFLICT");
         let _ = remove_dir_all(temp);
     }
 
     #[test]
-    fn load_plugin_records_rejects_escaped_control_path() {
+    fn load_module_records_rejects_escaped_control_path() {
         let temp = workspace();
         write(
             temp.join(SIRALOS_TOML_FILE_NAME),
-            plugin_record_document(r"plugins/\u0007godot"),
+            module_record_document(r"plugins/\u0007godot"),
         )
-        .expect("write plugin record");
+        .expect("write module record");
 
         let failure =
-            load_plugin_records(&temp).expect_err("control path refused");
+            load_module_records(&temp).expect_err("control path refused");
 
         assert_eq!(failure.code(), "RECORD_CONFLICT");
         assert!(!failure.to_string().contains("godot"));
@@ -1664,17 +1677,17 @@ mod tests {
     }
 
     #[test]
-    fn load_plugin_records_rejects_unsafe_paths_generically() {
+    fn load_module_records_rejects_unsafe_paths_generically() {
         let outcomes = UNSAFE_PLUGIN_RECORD_PATHS
             .iter()
             .map(|path| {
                 let temp = workspace();
                 write(
                     temp.join(SIRALOS_TOML_FILE_NAME),
-                    plugin_record_document(path),
+                    module_record_document(path),
                 )
-                .expect("write plugin record");
-                let result = load_plugin_records(&temp).map(|_| ());
+                .expect("write module record");
+                let result = load_module_records(&temp).map(|_| ());
                 let _ = remove_dir_all(temp);
                 (*path, result)
             })
@@ -1684,17 +1697,17 @@ mod tests {
     }
 
     #[test]
-    fn record_plugin_rejects_unsafe_paths_generically() {
+    fn record_module_rejects_unsafe_paths_generically() {
         let outcomes = UNSAFE_PLUGIN_RECORD_PATHS
             .iter()
             .map(|path| {
                 let temp = workspace();
-                let record = PluginRecord {
+                let record = ModuleRecord {
                     id: "godot".to_owned(),
                     path: (*path).to_owned(),
                     digest: format!("sha256:{}", digest_hex(0x42)),
                 };
-                let result = record_plugin(&temp, &record);
+                let result = record_module(&temp, &record);
                 let wrote_record = temp.join(SIRALOS_TOML_FILE_NAME).exists();
                 let _ = remove_dir_all(temp);
                 (*path, result, wrote_record)
@@ -1703,11 +1716,11 @@ mod tests {
 
         assert!(
             outcomes.iter().all(|(_, result, _)| result.is_err()),
-            "every unsafe plugin record path must be rejected: {outcomes:#?}",
+            "every unsafe module record path must be rejected: {outcomes:#?}",
         );
         assert!(
             outcomes.iter().all(|(_, _, wrote_record)| !wrote_record),
-            "a rejected plugin record path must not be written: {outcomes:#?}",
+            "a rejected module record path must not be written: {outcomes:#?}",
         );
         assert_generic_record_rejections(
             outcomes

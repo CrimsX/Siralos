@@ -5,7 +5,7 @@
 //! evaluation → comparison → reject|propose`) per ADR 0036 §§44–48. This
 //! module owns the first slice: **typed, bounded evaluation corpora** with
 //! deterministic digests and scoring. An evaluation corpus is a declarative
-//! set of cases (`id → prompt → expected`); it is not code, not a plugin,
+//! set of cases (`id → prompt → expected`); it is not code, not a module,
 //! and never grants authority (C2). Scoring is exact-match over the
 //! expected payload, fully deterministic and order-independent.
 //!
@@ -335,8 +335,8 @@ pub enum Escalation {
     Context,
     /// Skill-level improvement.
     Skill,
-    /// Plugin-level improvement.
-    Plugin,
+    /// Module-level improvement.
+    Module,
     /// Host-level improvement (most expensive).
     Host,
 }
@@ -349,7 +349,7 @@ impl Escalation {
             Self::Profile => "profile",
             Self::Context => "context",
             Self::Skill => "skill",
-            Self::Plugin => "plugin",
+            Self::Module => "module",
             Self::Host => "host",
         }
     }
@@ -364,7 +364,7 @@ impl Escalation {
             "profile" => Ok(Self::Profile),
             "context" => Ok(Self::Context),
             "skill" => Ok(Self::Skill),
-            "plugin" => Ok(Self::Plugin),
+            "module" => Ok(Self::Module),
             "host" => Ok(Self::Host),
             _ => Err(CorpusValidationError {
                 message: format!("Unknown escalation level {value:?}."),
@@ -575,7 +575,7 @@ pub(crate) const MAX_PROPOSAL_ID_BYTES: usize = 64;
 pub(crate) const MAX_PROPOSAL_DESCRIPTION_BYTES: usize = 512;
 
 /// A typed proposal for an evolve improvement (Stage 6.3, decision 58 C2):
-/// `Skill` and `Plugin` proposals carry declarative guidance or plugin
+/// `Skill` and `Module` proposals carry declarative guidance or module
 /// selection; `Host` proposals carry a bounded description of the required
 /// Host change and are the only ones that may set `requires_host_approval`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -671,7 +671,7 @@ impl Proposal {
                     });
                 }
             }
-            Escalation::Skill | Escalation::Plugin => {
+            Escalation::Skill | Escalation::Module => {
                 if self.requires_host_approval {
                     return Err(ProposalValidationError {
                         message:
@@ -682,7 +682,7 @@ impl Proposal {
             }
             Escalation::Profile | Escalation::Context => {
                 return Err(ProposalValidationError {
-                    message: "A proposal kind must be skill, plugin, or host."
+                    message: "A proposal kind must be skill, module, or host."
                         .to_owned(),
                 });
             }
@@ -1287,7 +1287,7 @@ mod tests {
         let eval = super::evaluate_proposal(Some(proposal));
         match eval {
             super::ProposalEvaluation::Invalid { reason } => {
-                assert!(reason.contains("skill, plugin, or host"));
+                assert!(reason.contains("skill, module, or host"));
             }
             other => panic!("unexpected {other:?}"),
         }

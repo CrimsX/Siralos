@@ -978,12 +978,12 @@ mod context_pane_tests {
     #[test]
     fn palette_lists_catalog_filtered_by_prefix() {
         let mut state = TuiState::new();
-        state.input = "/do".to_owned();
+        state.input = "/mo".to_owned();
         state.update_palette();
-        let palette = state.palette.expect("palette for /do");
-        // /do matches domains* variants
-        assert!(palette.iter().any(|(name, _)| name == "/domains"));
-        assert!(palette.iter().any(|(name, _)| name == "/domains-add"));
+        let palette = state.palette.expect("palette for /mo");
+        // /mo matches modules* variants
+        assert!(palette.iter().any(|(name, _)| name == "/modules"));
+        assert!(palette.iter().any(|(name, _)| name == "/modules-add"));
         // /m matches model
         let mut state2 = TuiState::new();
         state2.input = "/m".to_owned();
@@ -1144,7 +1144,7 @@ fn latency_drained_batch_draws_once_shape() {
     // One draw would render the batched input immediately.
     let buf = render(&state, 80, 24);
     let content: String = buf.content().iter().map(|c| c.symbol()).collect();
-    assert!(content.contains("/do") || content.contains("/domains"));
+    assert!(content.contains("/do") || content.contains("/modules"));
 }
 
 #[test]
@@ -1153,7 +1153,7 @@ fn evolve_lists_exactly_four_surfaces_via_catalog() {
     // the catalog lists it and render text contains each.
     let catalog = command_catalog();
     assert!(catalog.iter().any(|(name, _)| name == "/evolve"));
-    let evolve_text = "corpus — evaluation corpus & baselines\nworkflow — baseline → candidate → evaluation → comparison\nproposal — skill/plugin/host proposals\npackaging — release stabilization";
+    let evolve_text = "corpus — evaluation corpus & baselines\nworkflow — baseline → candidate → evaluation → comparison\nproposal — skill/module/host proposals\npackaging — release stabilization";
     assert!(evolve_text.contains("corpus"));
     assert!(evolve_text.contains("workflow"));
     assert!(evolve_text.contains("proposal"));
@@ -1932,12 +1932,12 @@ fn palette_bounded_and_prefix_highlight() {
     let content: String = buf.content().iter().map(|c| c.symbol()).collect();
     assert!(content.contains("/context"));
     assert!(content.contains(" commands "));
-    // Prefix highlight: input "/do" should highlight " /do" prefix in palette
+    // Prefix highlight: input "/mo" should highlight " /mo" prefix in palette
     let mut state2 = TuiState::new();
-    state2.input = "/do".to_owned();
+    state2.input = "/mo".to_owned();
     state2.update_palette();
     assert!(
-        state2.palette.as_ref().unwrap().iter().any(|(n, _)| n == "/domains")
+        state2.palette.as_ref().unwrap().iter().any(|(n, _)| n == "/modules")
     );
     let buf2 = render(&state2, 80, 24);
     // Buffer style for the highlighted prefix should be Yellow Bold somewhere
@@ -2732,11 +2732,11 @@ fn tab_completion_single_common_prefix_noop() {
             .iter()
             .any(|(n, _)| n == "/provider")
     );
-    // `/d` matches /domains + /domains-* -> common prefix `/domains`.
+    // `/modu` matches /modules + /modules-* -> common prefix `/modules`.
     let mut multi = TuiState::new();
-    multi.input = "/d".to_owned();
+    multi.input = "/modu".to_owned();
     handle_key(&mut multi, t108_key(crossterm::event::KeyCode::Tab), 10);
-    assert_eq!(multi.input, "/domains");
+    assert_eq!(multi.input, "/modules");
     // No match: input untouched.
     let mut none = TuiState::new();
     none.input = "/zz".to_owned();

@@ -1,31 +1,31 @@
-//! Domain host: lifecycle semantics plus the Component Model runtime
+//! Module host: lifecycle semantics plus the Component Model runtime
 //! (Stage 3R R6, ADR 0034).
 //!
 //! The host owns installation/enablement/activation state through
-//! `siralos-core::domain`, and it executes activated domains through
-//! the versioned WIT world (`wit/domain-abi.wit`). Every activation
+//! `siralos-core::module`, and it executes activated modules through
+//! the versioned WIT world (`wit/module-abi.wit`). Every activation
 //! re-verifies the exact component bytes: the digest is computed from
 //! the bytes the host accepts, and any stale or wrong identity fails
 //! before any semantic work. Calls are fuel-bounded and input/output
 //! bounded; traps stay contained in the runtime and surface as typed
 //! failures.
 
-use crate::domain::effects::{
+use crate::module::effects::{
     EffectMediation, EffectMediationBounds, EffectMediator, MediatedAnswer,
     validate_effect_request,
 };
 use crate::workspace::fs::{BoundedReadOutcome, read_complete_bounded};
 
-use siralos_core::domain::capability::{CapabilityGrant, HostAuthority};
-use siralos_core::domain::failure::{DomainFailure, ResourceExceededKind};
-use siralos_core::domain::lifecycle::{
-    ActivationRequest, ActiveDomain, DomainLifecycle, LifecycleState,
+use siralos_core::identity::sha256_hex;
+use siralos_core::module::capability::{CapabilityGrant, HostAuthority};
+use siralos_core::module::failure::{ModuleFailure, ResourceExceededKind};
+use siralos_core::module::lifecycle::{
+    ActivationRequest, ActiveModule, LifecycleState, ModuleLifecycle,
     RuntimeCheckResult,
 };
-use siralos_core::domain::package::{
-    DomainAbi, DomainPackage, PackageDigest, verify_package_digest,
+use siralos_core::module::package::{
+    ModuleAbi, ModulePackage, PackageDigest, verify_package_digest,
 };
-use siralos_core::identity::sha256_hex;
 
 use std::fs::{File, Metadata, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -37,16 +37,16 @@ use wasmtime_wasi::{
 };
 
 wasmtime::component::bindgen!({
-    path: "wit/domain-abi.wit",
+    path: "wit/module-abi.wit",
     world: "siralos-domain",
 });
 
 /// Re-export the world's generated effect request type.
 pub use siralos::domain_abi::domain_api::EffectRequest;
 
-/// Host runtime bounds for one domain host.
+/// Host runtime bounds for one module host.
 #[derive(Debug, Clone)]
-pub struct DomainHostBounds {
+pub struct ModuleHostBounds {
     /// Maximum component bytes accepted at install/activation.
     pub max_component_bytes: usize,
     /// Maximum query input bytes per call.
@@ -61,7 +61,7 @@ pub struct DomainHostBounds {
     pub effects: EffectMediationBounds,
 }
 
-impl Default for DomainHostBounds {
+impl Default for ModuleHostBounds {
     fn default() -> Self {
         Self {
             max_component_bytes: 16 * 1024 * 1024,
@@ -98,9 +98,9 @@ pub enum QueryOutcome {
         reason: String,
     },
     /// The host refused the call (no session, cancelled, bound).
-    Refused(DomainFailure),
+    Refused(ModuleFailure),
     /// The runtime trapped or exhausted a bound.
-    Failed(DomainFailure),
+    Failed(ModuleFailure),
 }
 
 /// Host state stored in the wasmtime store. The store limits live in
@@ -240,8 +240,8 @@ impl siralos::domain_abi::host_effects::Host for HostState {
     }
 }
 
-/// One loaded, bound, active domain session. The authoritative active
-/// domain (binding + grant) stays in the lifecycle; the session holds
+/// One loaded, bound, active module session. The authoritative active
+/// module (binding + grant) stays in the lifecycle; the session holds
 /// the runtime handles.
 struct HostSession {
     store: Store<HostState>,
@@ -249,14 +249,14 @@ struct HostSession {
     cancelled: bool,
 }
 
-/// The domain host: lifecycle state plus the runtime boundary.
-pub struct DomainHost {
-    lifecycle: DomainLifecycle,
-    supported_abi: DomainAbi,
+/// The module host: lifecycle state plus the runtime boundary.
+pub struct ModuleHost {
+    lifecycle: ModuleLifecycle,
+    supported_abi: ModuleAbi,
     authority: HostAuthority,
     component_path: PathBuf,
     workspace_root: PathBuf,
-    bounds: DomainHostBounds,
+    bounds: ModuleHostBounds,
     session: Option<HostSession>,
 }
 
@@ -319,7 +319,7 @@ const MAX_FUEL_PER_CALL: u64 = 10_000_000;
 /// `max_result_bytes`.
 const MAX_RESULT_NODES: u64 = 1_000_000;
 
-fn bounded_host_bounds(mut bounds: DomainHostBounds) -> DomainHostBounds {
+fn bounded_host_bounds(mut bounds: ModuleHostBounds) -> ModuleHostBounds {
     bounds.max_component_bytes =
         bounds.max_component_bytes.min(MAX_COMPONENT_BYTES);
     bounds.max_query_bytes = bounds.max_query_bytes.min(MAX_QUERY_BYTES);
@@ -336,18 +336,18 @@ fn bounded_host_bounds(mut bounds: DomainHostBounds) -> DomainHostBounds {
     bounds
 }
 
-impl DomainHost {
-    /// A host for one domain slot over the given component file.
+impl ModuleHost {
+    /// A host for one module slot over the given component file.
     pub fn new(
-        supported_abi: DomainAbi,
+        supported_abi: ModuleAbi,
         authority: HostAuthority,
         component_path: PathBuf,
         workspace_root: PathBuf,
-        bounds: DomainHostBounds,
+        bounds: ModuleHostBounds,
     ) -> Self {
         let bounds = bounded_host_bounds(bounds);
         Self {
-            lifecycle: DomainLifecycle::new(),
+            lifecycle: ModuleLifecycle::new(),
             supported_abi,
             authority,
             component_path,
@@ -363,12 +363,12 @@ impl DomainHost {
     }
 
     /// The installed package, if any.
-    pub fn installed_package(&self) -> Option<&DomainPackage> {
+    pub fn installed_package(&self) -> Option<&ModulePackage> {
         self.lifecycle.installed_package()
     }
 
     /// The active session, if any.
-    pub fn active(&self) -> Option<&ActiveDomain> {
+    pub fn active(&self) -> Option<&ActiveModule> {
         self.lifecycle.active()
     }
 
@@ -379,38 +379,38 @@ impl DomainHost {
     /// must still identify the same file. The bounded reader reads at most
     /// `max_component_bytes + 1`, so a file that grows after the metadata
     /// check cannot cause an unbounded host allocation.
-    fn component_bytes(&self) -> Result<Vec<u8>, DomainFailure> {
+    fn component_bytes(&self) -> Result<Vec<u8>, ModuleFailure> {
         let initial = std::fs::symlink_metadata(&self.component_path)
-            .map_err(|_error| DomainFailure::Unavailable {
+            .map_err(|_error| ModuleFailure::Unavailable {
                 reason: "cannot inspect component".to_owned(),
             })?;
         if initial.file_type().is_symlink() || !initial.is_file() {
-            return Err(DomainFailure::Unavailable {
+            return Err(ModuleFailure::Unavailable {
                 reason: "component must be a regular file".to_owned(),
             });
         }
         if initial.len() > self.bounds.max_component_bytes as u64 {
-            return Err(DomainFailure::InvalidInput {
+            return Err(ModuleFailure::InvalidInput {
                 reason: "component exceeds the byte bound".to_owned(),
             });
         }
         let initial_canonical = std::fs::canonicalize(&self.component_path)
-            .map_err(|_error| DomainFailure::Unavailable {
+            .map_err(|_error| ModuleFailure::Unavailable {
                 reason: "cannot resolve component path".to_owned(),
             })?;
 
         let mut file =
             open_component_file(&self.component_path).map_err(|_error| {
-                DomainFailure::Unavailable {
+                ModuleFailure::Unavailable {
                     reason: "cannot open component".to_owned(),
                 }
             })?;
         let opened =
-            file.metadata().map_err(|_error| DomainFailure::Unavailable {
+            file.metadata().map_err(|_error| ModuleFailure::Unavailable {
                 reason: "cannot inspect opened component".to_owned(),
             })?;
         if !same_component_identity(&initial, &opened) {
-            return Err(DomainFailure::Unavailable {
+            return Err(ModuleFailure::Unavailable {
                 reason: "component identity changed before read".to_owned(),
             });
         }
@@ -421,27 +421,27 @@ impl DomainHost {
         ) {
             Ok(BoundedReadOutcome::Complete(bytes)) => bytes,
             Ok(BoundedReadOutcome::TooLarge) => {
-                return Err(DomainFailure::InvalidInput {
+                return Err(ModuleFailure::InvalidInput {
                     reason: "component exceeds the byte bound".to_owned(),
                 });
             }
             Err(_error) => {
-                return Err(DomainFailure::Unavailable {
+                return Err(ModuleFailure::Unavailable {
                     reason: "cannot read component".to_owned(),
                 });
             }
         };
 
         let after_read =
-            file.metadata().map_err(|_error| DomainFailure::Unavailable {
+            file.metadata().map_err(|_error| ModuleFailure::Unavailable {
                 reason: "cannot recheck component".to_owned(),
             })?;
         let path_after_read = std::fs::symlink_metadata(&self.component_path)
-            .map_err(|_error| DomainFailure::Unavailable {
+            .map_err(|_error| ModuleFailure::Unavailable {
                 reason: "cannot recheck component path".to_owned(),
             })?;
         let final_canonical = std::fs::canonicalize(&self.component_path)
-            .map_err(|_error| DomainFailure::Unavailable {
+            .map_err(|_error| ModuleFailure::Unavailable {
                 reason: "cannot recheck component path".to_owned(),
             })?;
         if !same_component_identity(&opened, &after_read)
@@ -449,7 +449,7 @@ impl DomainHost {
             || initial_canonical != final_canonical
             || bytes.len() as u64 != after_read.len()
         {
-            return Err(DomainFailure::Unavailable {
+            return Err(ModuleFailure::Unavailable {
                 reason: "component identity changed during read".to_owned(),
             });
         }
@@ -460,8 +460,8 @@ impl DomainHost {
     /// the exact component bytes and verifies the digest itself.
     pub fn install(
         &mut self,
-        package: DomainPackage,
-    ) -> Result<(), DomainFailure> {
+        package: ModulePackage,
+    ) -> Result<(), ModuleFailure> {
         let bytes = self.component_bytes()?;
         let computed = PackageDigest::parse(&sha256_hex(&bytes))?;
         verify_package_digest(package.digest(), &computed)?;
@@ -469,17 +469,17 @@ impl DomainHost {
     }
 
     /// Explicitly remove the installed package.
-    pub fn uninstall(&mut self) -> Result<(), DomainFailure> {
+    pub fn uninstall(&mut self) -> Result<(), ModuleFailure> {
         self.lifecycle.uninstall()
     }
 
     /// Explicitly enable the installed package.
-    pub fn enable(&mut self) -> Result<(), DomainFailure> {
+    pub fn enable(&mut self) -> Result<(), ModuleFailure> {
         self.lifecycle.enable()
     }
 
     /// Explicitly disable the installed package.
-    pub fn disable(&mut self) -> Result<(), DomainFailure> {
+    pub fn disable(&mut self) -> Result<(), ModuleFailure> {
         self.lifecycle.disable()
     }
 
@@ -493,7 +493,7 @@ impl DomainHost {
     }
 
     /// End the current run/session-scoped activation.
-    pub fn deactivate(&mut self) -> Result<(), DomainFailure> {
+    pub fn deactivate(&mut self) -> Result<(), ModuleFailure> {
         self.session = None;
         self.lifecycle.deactivate()
     }
@@ -519,9 +519,9 @@ impl DomainHost {
         &mut self,
         request: ActivationRequest,
         runtime: RuntimeCheckResult,
-    ) -> Result<ActiveDomain, DomainFailure> {
+    ) -> Result<ActiveModule, ModuleFailure> {
         if self.session.is_some() {
-            return Err(DomainFailure::Active);
+            return Err(ModuleFailure::Active);
         }
         // 1. Pure lifecycle/authority gates run before any component I/O
         // or guest instantiation. A disabled, profile-denied, or
@@ -540,7 +540,7 @@ impl DomainHost {
         let engine = self.engine()?;
         let component =
             Component::from_binary(&engine, &bytes).map_err(|_error| {
-                DomainFailure::InvalidInput {
+                ModuleFailure::InvalidInput {
                     reason: "component bytes are malformed".to_owned(),
                 }
             })?;
@@ -550,14 +550,14 @@ impl DomainHost {
         //    ABI version fails closed here, before instantiation and
         //    before any semantic work. This is the boundary-level
         //    complement to the lifecycle ABI check.
-        let expected_export = expected_domain_export(&self.supported_abi);
+        let expected_export = expected_module_export(&self.supported_abi);
         let export_names: Vec<String> = component
             .component_type()
             .exports(&engine)
             .map(|(name, _)| name.to_string())
             .collect();
         if !export_names.iter().any(|name| name == &expected_export) {
-            return Err(DomainFailure::UnsupportedAbi {
+            return Err(ModuleFailure::UnsupportedAbi {
                 expected: self.supported_abi.as_str().to_owned(),
                 found: request.abi().as_str().to_owned(),
             });
@@ -569,7 +569,7 @@ impl DomainHost {
         //    with the prepared effective grant.
         // The provisional store's mediator is configured with the
         // NON-AUTHORITATIVE provisional grant (computed from the
-        // prepare-time authority). The authoritative ActiveDomain
+        // prepare-time authority). The authoritative ActiveModule
         // grant is recomputed by the final commit from the
         // commit-time Host authority; the provisional grant is
         // discarded with the store if that commit fails.
@@ -591,13 +591,13 @@ impl DomainHost {
         // initialization, which also consumes fuel; grant the call
         // budget for it.
         store.set_fuel(self.bounds.fuel_per_call).map_err(|_error| {
-            DomainFailure::Unavailable {
+            ModuleFailure::Unavailable {
                 reason: "fuel unavailable".to_owned(),
             }
         })?;
         let mut linker = Linker::new(&engine);
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker).map_err(
-            |_error| DomainFailure::Unavailable {
+            |_error| ModuleFailure::Unavailable {
                 reason: "cannot link wasi plumbing".to_owned(),
             },
         )?;
@@ -605,12 +605,12 @@ impl DomainHost {
             HostState,
             wasmtime::component::HasSelf<HostState>,
         >(&mut linker, |state: &mut HostState| state)
-        .map_err(|_error| DomainFailure::Unavailable {
+        .map_err(|_error| ModuleFailure::Unavailable {
             reason: "cannot link host effects".to_owned(),
         })?;
         let instance =
             SiralosDomain::instantiate(&mut store, &component, &linker)
-                .map_err(|_error| DomainFailure::UnsupportedAbi {
+                .map_err(|_error| ModuleFailure::UnsupportedAbi {
                     expected: self.supported_abi.as_str().to_owned(),
                     found: request.abi().as_str().to_owned(),
                 })?;
@@ -640,12 +640,12 @@ impl DomainHost {
             })?;
         if let Err(reason) = bound {
             if reason.len() > self.bounds.max_result_bytes {
-                return Err(DomainFailure::ResourceExceeded {
+                return Err(ModuleFailure::ResourceExceeded {
                     kind: ResourceExceededKind::OutputBytes,
                 });
             }
             let _ = reason;
-            return Err(DomainFailure::InvalidOutput {
+            return Err(ModuleFailure::InvalidOutput {
                 reason: "guest rejected the activation identity".to_owned(),
             });
         }
@@ -672,13 +672,13 @@ impl DomainHost {
         let cancelled =
             self.session.as_ref().is_some_and(|session| session.cancelled);
         if self.session.is_none() {
-            return QueryOutcome::Refused(DomainFailure::NotActive);
+            return QueryOutcome::Refused(ModuleFailure::NotActive);
         }
         if cancelled {
-            return QueryOutcome::Refused(DomainFailure::Cancelled);
+            return QueryOutcome::Refused(ModuleFailure::Cancelled);
         }
         if text.len() > self.bounds.max_query_bytes {
-            return QueryOutcome::Refused(DomainFailure::InvalidInput {
+            return QueryOutcome::Refused(ModuleFailure::InvalidInput {
                 reason: "query exceeds the input byte bound".to_owned(),
             });
         }
@@ -688,7 +688,7 @@ impl DomainHost {
             if let Err(_error) =
                 session.store.set_fuel(self.bounds.fuel_per_call)
             {
-                return QueryOutcome::Failed(DomainFailure::Unavailable {
+                return QueryOutcome::Failed(ModuleFailure::Unavailable {
                     reason: "fuel unavailable".to_owned(),
                 });
             }
@@ -704,7 +704,7 @@ impl DomainHost {
             .as_ref()
             .and_then(|session| session.store.data().last_mediation.clone());
         if let Some(EffectMediation::ResourceExceeded(kind)) = mediation {
-            return QueryOutcome::Failed(DomainFailure::ResourceExceeded {
+            return QueryOutcome::Failed(ModuleFailure::ResourceExceeded {
                 kind,
             });
         }
@@ -729,7 +729,7 @@ impl DomainHost {
                         .map(|active| active.binding().package_id().as_str())
                         .unwrap_or_default()
                 {
-                    return QueryOutcome::Failed(DomainFailure::InvalidOutput {
+                    return QueryOutcome::Failed(ModuleFailure::InvalidOutput {
                         reason: "query result identity did not match the request"
                             .to_owned(),
                     });
@@ -738,7 +738,7 @@ impl DomainHost {
                     > self.bounds.max_result_bytes
                 {
                     return QueryOutcome::Failed(
-                        DomainFailure::ResourceExceeded {
+                        ModuleFailure::ResourceExceeded {
                             kind: ResourceExceededKind::OutputBytes,
                         },
                     );
@@ -747,14 +747,14 @@ impl DomainHost {
                 // its own ceiling, never against the byte bound.
                 if u64::from(result.node_count) > MAX_RESULT_NODES {
                     return QueryOutcome::Failed(
-                        DomainFailure::ResourceExceeded {
+                        ModuleFailure::ResourceExceeded {
                             kind: ResourceExceededKind::Memory,
                         },
                     );
                 }
                 if output_bytes > self.bounds.max_result_bytes {
                     return QueryOutcome::Failed(
-                        DomainFailure::ResourceExceeded {
+                        ModuleFailure::ResourceExceeded {
                             kind: ResourceExceededKind::OutputBytes,
                         },
                     );
@@ -771,7 +771,7 @@ impl DomainHost {
                 // and cannot bypass the semantic result bound.
                 if reason.len() > self.bounds.max_result_bytes {
                     return QueryOutcome::Failed(
-                        DomainFailure::ResourceExceeded {
+                        ModuleFailure::ResourceExceeded {
                             kind: ResourceExceededKind::OutputBytes,
                         },
                     );
@@ -788,18 +788,18 @@ impl DomainHost {
     }
 
     /// One mediated effect request against the active session. The
-    /// domain forwards the request; the host validates it against the
+    /// module forwards the request; the host validates it against the
     /// grant and returns the typed answer. A guest fault stops the
     /// session with the typed failure.
     pub fn request_effect(
         &mut self,
         request: EffectRequest,
-    ) -> Result<MediatedAnswer, DomainFailure> {
+    ) -> Result<MediatedAnswer, ModuleFailure> {
         if self.session.is_none() {
-            return Err(DomainFailure::NotActive);
+            return Err(ModuleFailure::NotActive);
         }
         if self.session.as_ref().is_some_and(|session| session.cancelled) {
-            return Err(DomainFailure::Cancelled);
+            return Err(ModuleFailure::Cancelled);
         }
         // Validate the untrusted strings before converting them into the
         // export-side WIT type. The generated ABI owns the incoming
@@ -839,7 +839,7 @@ impl DomainHost {
             if let Err(_error) =
                 session.store.set_fuel(self.bounds.fuel_per_call)
             {
-                return Err(DomainFailure::Unavailable {
+                return Err(ModuleFailure::Unavailable {
                     reason: "fuel unavailable".to_owned(),
                 });
             }
@@ -864,7 +864,7 @@ impl DomainHost {
                 || bytes > self.bounds.effects.max_answer_bytes
         }) {
             self.stop_session();
-            return Err(DomainFailure::ResourceExceeded {
+            return Err(ModuleFailure::ResourceExceeded {
                 kind: ResourceExceededKind::OutputBytes,
             });
         }
@@ -880,44 +880,44 @@ impl DomainHost {
         });
         let Some(observed_request) = observed_request else {
             self.stop_session();
-            return Err(DomainFailure::InvalidOutput {
+            return Err(ModuleFailure::InvalidOutput {
                 reason: "effect answer was not host-mediated".to_owned(),
             });
         };
         if !effect_requests_equal(&request, observed_request) {
             self.stop_session();
-            return Err(DomainFailure::InvalidOutput {
+            return Err(ModuleFailure::InvalidOutput {
                 reason: "effect mediation did not match the request"
                     .to_owned(),
             });
         }
         let Some(mediation) = mediation else {
             self.stop_session();
-            return Err(DomainFailure::InvalidOutput {
+            return Err(ModuleFailure::InvalidOutput {
                 reason: "effect answer was not host-mediated".to_owned(),
             });
         };
         let answer = match mediation {
             EffectMediation::ResourceExceeded(kind) => {
-                return Err(DomainFailure::ResourceExceeded { kind });
+                return Err(ModuleFailure::ResourceExceeded { kind });
             }
             EffectMediation::Answer(answer) => answer,
         };
         if answer_text_len(&answer)
             .is_some_and(|bytes| bytes > self.bounds.effects.max_answer_bytes)
         {
-            return Err(DomainFailure::ResourceExceeded {
+            return Err(ModuleFailure::ResourceExceeded {
                 kind: ResourceExceededKind::OutputBytes,
             });
         }
         Ok(answer)
     }
 
-    fn engine(&self) -> Result<Engine, DomainFailure> {
+    fn engine(&self) -> Result<Engine, ModuleFailure> {
         let mut config = Config::new();
         config.consume_fuel(true);
         config.wasm_component_model(true);
-        Engine::new(&config).map_err(|_error| DomainFailure::Unavailable {
+        Engine::new(&config).map_err(|_error| ModuleFailure::Unavailable {
             reason: "cannot create engine".to_owned(),
         })
     }
@@ -926,7 +926,7 @@ impl DomainHost {
         &self,
         grant: CapabilityGrant,
         engine: &Engine,
-    ) -> Result<Store<HostState>, DomainFailure> {
+    ) -> Result<Store<HostState>, ModuleFailure> {
         let mediator = EffectMediator::new(
             grant,
             self.workspace_root.clone(),
@@ -959,7 +959,7 @@ impl DomainHost {
 /// (siralos:domain-abi/domain-api@1.0.0). The package version is
 /// part of the name, so unknown or incompatible ABI versions fail
 /// closed explicitly.
-fn expected_domain_export(supported_abi: &DomainAbi) -> String {
+fn expected_module_export(supported_abi: &ModuleAbi) -> String {
     let (package, version) = supported_abi
         .as_str()
         .split_once("@")
@@ -967,20 +967,20 @@ fn expected_domain_export(supported_abi: &DomainAbi) -> String {
     format!("{package}/domain-api@{version}")
 }
 
-/// Classify a runtime error into a typed domain failure. The trap
+/// Classify a runtime error into a typed module failure. The trap
 /// message lives in the error's cause chain, so the full debug chain
 /// is classified (fuel/memory bounds before generic guest faults).
-fn classify_trap(error: &wasmtime::Error, maximum: usize) -> DomainFailure {
+fn classify_trap(error: &wasmtime::Error, maximum: usize) -> ModuleFailure {
     if let Some(trap) = error.downcast_ref::<wasmtime::Trap>() {
         match trap {
             wasmtime::Trap::OutOfFuel => {
-                return DomainFailure::ResourceExceeded {
+                return ModuleFailure::ResourceExceeded {
                     kind: ResourceExceededKind::Fuel,
                 };
             }
             wasmtime::Trap::MemoryOutOfBounds
             | wasmtime::Trap::AllocationTooLarge => {
-                return DomainFailure::ResourceExceeded {
+                return ModuleFailure::ResourceExceeded {
                     kind: ResourceExceededKind::Memory,
                 };
             }
@@ -1021,28 +1021,28 @@ fn classify_trap(error: &wasmtime::Error, maximum: usize) -> DomainFailure {
     let root = bounded.text;
     if root.len() <= maximum {
         if root.contains("all fuel consumed") {
-            return DomainFailure::ResourceExceeded {
+            return ModuleFailure::ResourceExceeded {
                 kind: ResourceExceededKind::Fuel,
             };
         }
         if root.contains("memory limit") {
-            return DomainFailure::ResourceExceeded {
+            return ModuleFailure::ResourceExceeded {
                 kind: ResourceExceededKind::Memory,
             };
         }
     }
-    DomainFailure::GuestFault { detail: "guest trap".to_owned() }
+    ModuleFailure::GuestFault { detail: "guest trap".to_owned() }
 }
 #[cfg(test)]
 mod tests {
     use super::classify_trap;
-    use siralos_core::domain::failure::{DomainFailure, ResourceExceededKind};
+    use siralos_core::module::failure::{ModuleFailure, ResourceExceededKind};
 
     #[test]
     fn memory_limit_traps_classify_as_memory_resource_exhaustion() {
         let error = wasmtime::Error::msg("wasm trap: memory limit exceeded");
         match classify_trap(&error, 4096) {
-            DomainFailure::ResourceExceeded { kind } => {
+            ModuleFailure::ResourceExceeded { kind } => {
                 assert_eq!(kind, ResourceExceededKind::Memory);
             }
             other => panic!("unexpected classification: {other:?}"),
@@ -1055,7 +1055,7 @@ mod tests {
             "wasm trap: all fuel consumed by WebAssembly",
         );
         match classify_trap(&error, 4096) {
-            DomainFailure::ResourceExceeded { kind } => {
+            ModuleFailure::ResourceExceeded { kind } => {
                 assert_eq!(kind, ResourceExceededKind::Fuel);
             }
             other => panic!("unexpected classification: {other:?}"),

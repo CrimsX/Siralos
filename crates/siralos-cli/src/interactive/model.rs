@@ -239,10 +239,10 @@ impl siralos_core::provider::ModelProvider for SessionProvider {
 /// Core owns the segment model and projection mechanics; this product text
 /// lives at the composition boundary.
 ///
-/// It was re-framed when the Godot domain was externalized (decisions
+/// It was re-framed when the Godot module was externalized (decisions
 /// 60-65): the harness is no longer "for Godot Engine development", and a
-/// session without the plugin installed must not be told that it is. Domain
-/// guidance arrives with the domain (its own prompt segment), so this text
+/// session without the module installed must not be told that it is. Module
+/// guidance arrives with the module (its own prompt segment), so this text
 /// stays product-neutral.
 pub(super) const SIRALOS_SYSTEM_INSTRUCTIONS: &str = r#"You are Siralos, a host-owned AI agent harness with an inspectable execution environment.
 
@@ -260,7 +260,7 @@ Workspace work
 - Inspect the workspace before proposing changes. Propose exact change sets through the provided mutation tool; every change set requires its own host approval and checkpoint.
 - After a change is applied, validation and an independent review run host-side; incorporate their findings into focused repairs.
 - Stay within the workspace; never attempt network access, application execution, or unrestricted commands.
-- Optional domain intelligence is installed explicitly and never assumed. When a domain is active, its own guidance appears in this prompt; without one, work generically."#;
+- Optional module intelligence is installed explicitly and never assumed. When a module is active, its own guidance appears in this prompt; without one, work generically."#;
 
 /// Options used by the testable and stdio session entry points.
 #[derive(Debug, Clone, Copy, Default)]

@@ -1124,7 +1124,7 @@ pub(in crate::harness) fn validate_godot_input(
             }
             Ok(())
         }
-        SUBJECT_COMPOSITION_PLUGIN_SELECTION => {
+        SUBJECT_COMPOSITION_MODULE_SELECTION => {
             const SELECTION_KEYS: [&str; 2] = ["enabled", "selected"];
             for key in input.as_object().into_iter().flat_map(|map| map.keys())
             {
@@ -1211,7 +1211,7 @@ pub(in crate::harness) fn validate_godot_input(
             }
             Ok(())
         }
-        SUBJECT_COMPOSITION_PLUGIN_ACTIVATION => {
+        SUBJECT_COMPOSITION_MODULE_ACTIVATION => {
             const ACTIVATION_KEYS: [&str; 3] =
                 ["enabled", "requested", "selected"];
             for key in input.as_object().into_iter().flat_map(|map| map.keys())

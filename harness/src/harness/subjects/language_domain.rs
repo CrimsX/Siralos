@@ -361,13 +361,13 @@ pub(in crate::harness) fn language_definition_record(
 // TypeScript object layout.
 
 /// Failure record: the stable code plus typed detail fields.
-fn domain_failure_record(op: &str, failure: &DomainFailure) -> Value {
+fn module_failure_record(op: &str, failure: &ModuleFailure) -> Value {
     let mut record = serde_json::Map::new();
     record.insert("op".to_owned(), json!(op));
     record.insert("ok".to_owned(), json!(false));
     record.insert("code".to_owned(), json!(failure.code()));
-    if let DomainFailure::CapabilityDenied { missing }
-    | DomainFailure::UndeclaredCapability { missing } = failure
+    if let ModuleFailure::CapabilityDenied { missing }
+    | ModuleFailure::UndeclaredCapability { missing } = failure
     {
         record.insert(
             "missing".to_owned(),
@@ -381,39 +381,39 @@ fn domain_failure_record(op: &str, failure: &DomainFailure) -> Value {
 /// matching the reference parse order: id, digest, abi, capabilities).
 fn parse_scenario_package(
     value: &Value,
-) -> Result<DomainPackage, DomainFailure> {
-    let id = domain_string(value.get("id"))?;
-    let digest = domain_string(value.get("digest"))?;
-    let abi = domain_string(value.get("abi"))?;
+) -> Result<ModulePackage, ModuleFailure> {
+    let id = module_string(value.get("id"))?;
+    let digest = module_string(value.get("digest"))?;
+    let abi = module_string(value.get("abi"))?;
     let capabilities =
-        domain_string_array(value.get("requestedCapabilities"))?;
-    DomainPackage::parse(&id, &digest, &abi, &capabilities)
+        module_string_array(value.get("requestedCapabilities"))?;
+    ModulePackage::parse(&id, &digest, &abi, &capabilities)
 }
 
 /// Parse an activation request from a scenario value.
 fn parse_scenario_request(
     value: &Value,
-) -> Result<ActivationRequest, DomainFailure> {
-    let package_id = domain_string(value.get("packageId"))?;
-    let digest = domain_string(value.get("digest"))?;
-    let abi = domain_string(value.get("abi"))?;
-    let capabilities = domain_string_array(value.get("capabilities"))?;
+) -> Result<ActivationRequest, ModuleFailure> {
+    let package_id = module_string(value.get("packageId"))?;
+    let digest = module_string(value.get("digest"))?;
+    let abi = module_string(value.get("abi"))?;
+    let capabilities = module_string_array(value.get("capabilities"))?;
     ActivationRequest::parse(&package_id, &digest, &abi, &capabilities)
 }
 
 /// One scenario string field (typed invalid-input failure).
-fn domain_string(value: Option<&Value>) -> Result<String, DomainFailure> {
+fn module_string(value: Option<&Value>) -> Result<String, ModuleFailure> {
     value.and_then(Value::as_str).map(str::to_owned).ok_or_else(|| {
-        DomainFailure::InvalidInput {
+        ModuleFailure::InvalidInput {
             reason: "missing string field".to_owned(),
         }
     })
 }
 
 /// One scenario string array field (typed invalid-input failure).
-fn domain_string_array(
+fn module_string_array(
     value: Option<&Value>,
-) -> Result<Vec<String>, DomainFailure> {
+) -> Result<Vec<String>, ModuleFailure> {
     value
         .and_then(Value::as_array)
         .map(|entries| {
@@ -421,7 +421,7 @@ fn domain_string_array(
                 .iter()
                 .map(|entry| {
                     entry.as_str().map(str::to_owned).ok_or_else(|| {
-                        DomainFailure::InvalidInput {
+                        ModuleFailure::InvalidInput {
                             reason: "array entry is not a string".to_owned(),
                         }
                     })
@@ -429,14 +429,14 @@ fn domain_string_array(
                 .collect::<Result<Vec<_>, _>>()
         })
         .unwrap_or_else(|| {
-            Err(DomainFailure::InvalidInput {
+            Err(ModuleFailure::InvalidInput {
                 reason: "array field expected".to_owned(),
             })
         })
 }
 
 /// The canonical inspect observation for the current lifecycle state.
-fn domain_inspect_value(lifecycle: &DomainLifecycle) -> Value {
+fn module_inspect_value(lifecycle: &ModuleLifecycle) -> Value {
     let package = lifecycle.installed_package();
     let active = lifecycle.active();
     json!({
@@ -473,35 +473,35 @@ fn domain_inspect_value(lifecycle: &DomainLifecycle) -> Value {
 
 /// Execute one domain-lifecycle operation and return its canonical
 /// observation.
-fn run_domain_lifecycle_op(
-    lifecycle: &mut DomainLifecycle,
+fn run_module_lifecycle_op(
+    lifecycle: &mut ModuleLifecycle,
     op: &str,
     entry: &Value,
-    supported_abi: &DomainAbi,
+    supported_abi: &ModuleAbi,
     authority: &HostAuthority,
 ) -> Result<Value, HarnessError> {
     match op {
-        "inspect" => Ok(domain_inspect_value(lifecycle)),
+        "inspect" => Ok(module_inspect_value(lifecycle)),
         "install" => {
             let package = match parse_scenario_package(object_field(
                 entry, "package",
             )?) {
                 Ok(package) => package,
                 Err(failure) => {
-                    return Ok(domain_failure_record("install", &failure));
+                    return Ok(module_failure_record("install", &failure));
                 }
             };
             let computed = scenario_string(entry, "computedDigest")?;
             let computed_digest = match PackageDigest::parse(&computed) {
                 Ok(digest) => digest,
                 Err(failure) => {
-                    return Ok(domain_failure_record("install", &failure));
+                    return Ok(module_failure_record("install", &failure));
                 }
             };
             if let Err(failure) =
                 verify_package_digest(package.digest(), &computed_digest)
             {
-                return Ok(domain_failure_record("install", &failure));
+                return Ok(module_failure_record("install", &failure));
             }
             match lifecycle.install(package) {
                 Ok(()) => Ok(json!({
@@ -509,7 +509,7 @@ fn run_domain_lifecycle_op(
                     "ok": true,
                     "state": lifecycle.state().as_str(),
                 })),
-                Err(failure) => Ok(domain_failure_record("install", &failure)),
+                Err(failure) => Ok(module_failure_record("install", &failure)),
             }
         }
         "uninstall" | "enable" | "disable" | "deactivate" => {
@@ -521,7 +521,7 @@ fn run_domain_lifecycle_op(
             };
             Ok(match result {
                 Ok(()) => json!({ "op": op, "ok": true }),
-                Err(failure) => domain_failure_record(op, &failure),
+                Err(failure) => module_failure_record(op, &failure),
             })
         }
         "eligibility" => {
@@ -531,7 +531,7 @@ fn run_domain_lifecycle_op(
             )?) {
                 Ok(request) => request,
                 Err(failure) => {
-                    return Ok(domain_failure_record("eligibility", &failure));
+                    return Ok(module_failure_record("eligibility", &failure));
                 }
             };
             let runtime = match RuntimeCheckResult::parse(&scenario_string(
@@ -539,7 +539,7 @@ fn run_domain_lifecycle_op(
             )?) {
                 Ok(runtime) => runtime,
                 Err(failure) => {
-                    return Ok(domain_failure_record("eligibility", &failure));
+                    return Ok(module_failure_record("eligibility", &failure));
                 }
             };
             let eligibility = lifecycle.eligibility(
@@ -565,7 +565,7 @@ fn run_domain_lifecycle_op(
             )?) {
                 Ok(request) => request,
                 Err(failure) => {
-                    return Ok(domain_failure_record("activate", &failure));
+                    return Ok(module_failure_record("activate", &failure));
                 }
             };
             let runtime = match RuntimeCheckResult::parse(&scenario_string(
@@ -573,7 +573,7 @@ fn run_domain_lifecycle_op(
             )?) {
                 Ok(runtime) => runtime,
                 Err(failure) => {
-                    return Ok(domain_failure_record("activate", &failure));
+                    return Ok(module_failure_record("activate", &failure));
                 }
             };
             match lifecycle.activate(
@@ -598,7 +598,7 @@ fn run_domain_lifecycle_op(
                         .collect::<Vec<_>>(),
                 })),
                 Err(failure) => {
-                    Ok(domain_failure_record("activate", &failure))
+                    Ok(module_failure_record("activate", &failure))
                 }
             }
         }
@@ -608,7 +608,7 @@ fn run_domain_lifecycle_op(
                 .iter()
                 .map(|name| json!({ "name": name, "kind": classify_workspace_file(name) }))
                 .collect::<Vec<_>>();
-            let scan = workspace_domain_scan(&files);
+            let scan = workspace_module_scan(&files);
             Ok(json!({
                 "op": "workspaceScan",
                 "files": classified,
@@ -625,11 +625,11 @@ fn run_domain_lifecycle_op(
 }
 
 /// Canonical record for one domain-lifecycle scenario.
-pub(in crate::harness) fn domain_lifecycle_record(
+pub(in crate::harness) fn module_lifecycle_record(
     input: &Value,
 ) -> Result<Value, HarnessError> {
     let supported_abi =
-        DomainAbi::parse(&scenario_string(input, "supportedAbi")?).map_err(
+        ModuleAbi::parse(&scenario_string(input, "supportedAbi")?).map_err(
             |failure| {
                 HarnessError::corpus(format!(
                     "domain input has an invalid supported ABI: {}",
@@ -645,11 +645,11 @@ pub(in crate::harness) fn domain_lifecycle_record(
                     failure.code()
                 ))
             })?;
-    let mut lifecycle = DomainLifecycle::new();
+    let mut lifecycle = ModuleLifecycle::new();
     let mut ops: Vec<Value> = Vec::new();
     for entry in scenario_array(input, "ops")? {
         let op = scenario_string(entry, "op")?;
-        let observation = run_domain_lifecycle_op(
+        let observation = run_module_lifecycle_op(
             &mut lifecycle,
             &op,
             entry,
@@ -662,7 +662,7 @@ pub(in crate::harness) fn domain_lifecycle_record(
 }
 
 /// Canonical record for one domain-capability scenario.
-pub(in crate::harness) fn domain_capability_record(
+pub(in crate::harness) fn module_capability_record(
     input: &Value,
 ) -> Result<Value, HarnessError> {
     let authority = match HostAuthority::parse(&scenario_string_array(

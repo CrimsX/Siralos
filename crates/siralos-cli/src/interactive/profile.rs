@@ -2,24 +2,24 @@
 //! observed-byte-consumption writes, model switching, and removal.
 
 use super::{
-    BoundedFileRead, EffectiveRunPolicy, LockPluginIdentity, LockVerification,
+    BoundedFileRead, EffectiveRunPolicy, LockModuleIdentity, LockVerification,
     LockVerificationDecision, Path, SessionProvider, StoredLockDigest,
     WorkspaceProfileLoad, WorkspaceProfileWriteToken,
     create_effective_policy_evidence, create_workspace_lock,
-    decide_lock_verification, display_field_redacted, io, load_plugin_records,
+    decide_lock_verification, display_field_redacted, io, load_module_records,
     load_workspace_profile_write_token, read_complete_file_bounded,
     verify_workspace_lock,
 };
 
 /// Stage 5.9 (decision 55): verify the on-disk `siralos.lock` against
 /// the recomputed current lock. The current lock is recomputed from the
-/// applied profile's effective-policy identity and the installed plugin
+/// applied profile's effective-policy identity and the installed module
 /// records; the on-disk lock is read through the unchanged 5.4 adapter.
 /// The lock never gates authority: every outcome is advisory and the
 /// session proceeds on live Host state.
 ///
 /// Decision 114 Q5 — authority-only lock (documented as intentional):
-/// the session lock covers AUTHORITY identity (effective policy, plugins);
+/// the session lock covers AUTHORITY identity (effective policy, modules);
 /// provider/model/endpoint are routing configuration set by the workspace
 /// owner and intentionally do not drift the lock.
 pub(super) fn verify_session_lock(
@@ -34,11 +34,11 @@ pub(super) fn verify_session_lock(
         } else {
             None
         };
-    let lock_identities: Vec<LockPluginIdentity> =
-        match load_plugin_records(workspace_root) {
+    let lock_identities: Vec<LockModuleIdentity> =
+        match load_module_records(workspace_root) {
             Ok(records) => records
                 .iter()
-                .map(|record| LockPluginIdentity {
+                .map(|record| LockModuleIdentity {
                     id: record.id.clone(),
                     path: record.path.clone(),
                     digest: record
@@ -54,7 +54,7 @@ pub(super) fn verify_session_lock(
                 // the session cannot see.
                 return decide_lock_verification(
                     StoredLockDigest::Untrusted(
-                        "the workspace plugin records could not be read"
+                        "the workspace module records could not be read"
                             .to_owned(),
                     ),
                     "",
@@ -111,7 +111,7 @@ fn profile_snapshot_unchanged(
 ) -> Result<bool, String> {
     let bytes = match read_profile_bytes_bounded(
         path,
-        siralos_adapters::domain::manifest::MAX_SIRALOS_TOML_BYTES,
+        siralos_adapters::module::manifest::MAX_SIRALOS_TOML_BYTES,
     ) {
         Ok(bytes) => Some(bytes),
         Err(reason) if reason == "profile target is absent" => None,
@@ -354,14 +354,14 @@ fn write_profile_config_at_after_consumption(
         }
     }
     let path = workspace_root
-        .join(siralos_adapters::domain::manifest::SIRALOS_TOML_FILE_NAME);
+        .join(siralos_adapters::module::manifest::SIRALOS_TOML_FILE_NAME);
     // Read the current bytes once, then bind the merge to the caller's exact
     // observation before parsing or serializing anything. The final atomic
     // commit below repeats the same identity check for the stage-to-swap
     // window.
     let current_bytes: Option<Vec<u8>> = match read_profile_bytes_bounded(
         &path,
-        siralos_adapters::domain::manifest::MAX_SIRALOS_TOML_BYTES,
+        siralos_adapters::module::manifest::MAX_SIRALOS_TOML_BYTES,
     ) {
         Ok(bytes) => Some(bytes),
         Err(reason) if reason == "profile target is absent" => None,
@@ -468,7 +468,7 @@ fn write_profile_config_at_after_consumption(
     }
     let serialized = doc.to_string();
     if serialized.len()
-        > siralos_adapters::domain::manifest::MAX_SIRALOS_TOML_BYTES
+        > siralos_adapters::module::manifest::MAX_SIRALOS_TOML_BYTES
     {
         return Err("siralos.toml exceeds the byte bound".to_owned());
     }
@@ -477,7 +477,7 @@ fn write_profile_config_at_after_consumption(
     // refuses a symlinked or special-file target.
     let staged = siralos_adapters::atomic::stage_atomic(
         workspace_root,
-        siralos_adapters::domain::manifest::SIRALOS_TOML_FILE_NAME,
+        siralos_adapters::module::manifest::SIRALOS_TOML_FILE_NAME,
         &format!(
             "{}siralos-toml",
             siralos_adapters::workspace::fs::MUTATION_TEMP_PREFIX
@@ -491,7 +491,7 @@ fn write_profile_config_at_after_consumption(
     // written to an unrelated temporary directory merely to validate it.
     let verify_bytes = read_profile_bytes_bounded(
         staged.path(),
-        siralos_adapters::domain::manifest::MAX_SIRALOS_TOML_BYTES,
+        siralos_adapters::module::manifest::MAX_SIRALOS_TOML_BYTES,
     )?;
     match siralos_adapters::profile_config::parse_workspace_profile_bytes(
         &verify_bytes,
@@ -540,7 +540,7 @@ fn write_profile_config_at_after_consumption(
     // that sequence fail closed before the pathname swap.
     let final_bytes: Option<Vec<u8>> = match read_profile_bytes_bounded(
         &path,
-        siralos_adapters::domain::manifest::MAX_SIRALOS_TOML_BYTES,
+        siralos_adapters::module::manifest::MAX_SIRALOS_TOML_BYTES,
     ) {
         Ok(bytes) => Some(bytes),
         Err(reason) if reason == "profile target is absent" => None,
@@ -639,10 +639,10 @@ pub fn persist_switched_model_at(
         );
     }
     let path = workspace_root
-        .join(siralos_adapters::domain::manifest::SIRALOS_TOML_FILE_NAME);
+        .join(siralos_adapters::module::manifest::SIRALOS_TOML_FILE_NAME);
     let current_bytes: Option<Vec<u8>> = match read_profile_bytes_bounded(
         &path,
-        siralos_adapters::domain::manifest::MAX_SIRALOS_TOML_BYTES,
+        siralos_adapters::module::manifest::MAX_SIRALOS_TOML_BYTES,
     ) {
         Ok(bytes) => Some(bytes),
         Err(reason) if reason == "profile target is absent" => None,
@@ -753,7 +753,7 @@ pub fn remove_profile_config(workspace_root: &Path) -> Result<(), String> {
     // target is refused for what it IS. Reporting it as an "unavailable
     // snapshot" would send the user looking for a reload that cannot help.
     let path = workspace_root
-        .join(siralos_adapters::domain::manifest::SIRALOS_TOML_FILE_NAME);
+        .join(siralos_adapters::module::manifest::SIRALOS_TOML_FILE_NAME);
     match std::fs::symlink_metadata(&path) {
         Ok(metadata) if !metadata.is_file() => {
             return Err("profile target must be a regular file".to_owned());
@@ -774,7 +774,7 @@ pub fn remove_profile_config(workspace_root: &Path) -> Result<(), String> {
 
 /// Remove provider-owned fields atomically (provider deletion) — the
 /// sixth atomic writer, reusing the fifth's pattern beside
-/// [`write_profile_config_at`]. Policy, plugin, context, and skills fields
+/// [`write_profile_config_at`]. Policy, module, context, and skills fields
 /// inside `[profile]` are preserved. A symlinked or non-regular target is
 /// refused with the write path's diagnostic; the temp is deleted on failure.
 ///
@@ -787,13 +787,13 @@ pub fn remove_profile_config_at(
 ) -> Result<(), String> {
     observed.consume()?;
     let path = workspace_root
-        .join(siralos_adapters::domain::manifest::SIRALOS_TOML_FILE_NAME);
+        .join(siralos_adapters::module::manifest::SIRALOS_TOML_FILE_NAME);
     // Read current bytes, then bind every subsequent decision to the exact
     // observation supplied by the caller. This catches drift that happened
     // while a confirmation modal was open, before the writer's own stage.
     let current_bytes: Option<Vec<u8>> = match read_profile_bytes_bounded(
         &path,
-        siralos_adapters::domain::manifest::MAX_SIRALOS_TOML_BYTES,
+        siralos_adapters::module::manifest::MAX_SIRALOS_TOML_BYTES,
     ) {
         Ok(bytes) => Some(bytes),
         Err(reason) if reason == "profile target is absent" => None,
@@ -833,7 +833,7 @@ pub fn remove_profile_config_at(
         }
         return Ok(());
     }
-    // Remove only provider-owned fields. Policy, plugin selection, context
+    // Remove only provider-owned fields. Policy, module selection, context
     // narrowing, and skills are independent authority/state and must survive
     // provider removal.
     let provider_keys = [
@@ -867,7 +867,7 @@ pub fn remove_profile_config_at(
         }
         // A table that now holds nothing but its own name is not a profile
         // any more -- it names a provider that no longer exists -- so it goes
-        // with the provider. Anything else the user declared (policy, plugin
+        // with the provider. Anything else the user declared (policy, module
         // selection, context narrowing, skills) keeps the table alive.
         table.iter().all(|(key, _)| key == "name")
     };
@@ -876,14 +876,14 @@ pub fn remove_profile_config_at(
     }
     let serialized = doc.to_string();
     if serialized.len()
-        > siralos_adapters::domain::manifest::MAX_SIRALOS_TOML_BYTES
+        > siralos_adapters::module::manifest::MAX_SIRALOS_TOML_BYTES
     {
         return Err("siralos.toml exceeds the byte bound".to_owned());
     }
     // The write path's staging verbatim, through the shared atomic writer.
     let staged = siralos_adapters::atomic::stage_atomic(
         workspace_root,
-        siralos_adapters::domain::manifest::SIRALOS_TOML_FILE_NAME,
+        siralos_adapters::module::manifest::SIRALOS_TOML_FILE_NAME,
         &format!(
             "{}siralos-toml",
             siralos_adapters::workspace::fs::MUTATION_TEMP_PREFIX
@@ -896,7 +896,7 @@ pub fn remove_profile_config_at(
     // text into a second temporary directory.
     let verify_bytes = read_profile_bytes_bounded(
         staged.path(),
-        siralos_adapters::domain::manifest::MAX_SIRALOS_TOML_BYTES,
+        siralos_adapters::module::manifest::MAX_SIRALOS_TOML_BYTES,
     )?;
     match siralos_adapters::profile_config::parse_workspace_profile_bytes(
         &verify_bytes,
@@ -937,7 +937,7 @@ pub fn remove_profile_config_at(
     }
     let final_bytes: Option<Vec<u8>> = match read_profile_bytes_bounded(
         &path,
-        siralos_adapters::domain::manifest::MAX_SIRALOS_TOML_BYTES,
+        siralos_adapters::module::manifest::MAX_SIRALOS_TOML_BYTES,
     ) {
         Ok(bytes) => Some(bytes),
         Err(reason) if reason == "profile target is absent" => None,

@@ -1,13 +1,13 @@
-//! Domain package identity (Stage 3R R6).
+//! Module package identity (Stage 3R R6).
 //!
-//! A domain package is bound to a stable package identifier, the exact
+//! A module package is bound to a stable package identifier, the exact
 //! SHA-256 digest of the component bytes the Host accepted, and a
 //! versioned ABI identity. The Host computes and verifies the digest
 //! itself; filename, directory name, declared version, mtime, and
 //! caller-provided digests are never trusted.
 
-use crate::domain::capability::CapabilityRequest;
-use crate::domain::failure::DomainFailure;
+use crate::module::capability::CapabilityRequest;
+use crate::module::failure::ModuleFailure;
 
 /// Maximum length of a package identifier in bytes.
 pub(crate) const MAX_PACKAGE_ID_BYTES: usize = 128;
@@ -41,13 +41,13 @@ fn valid_digest(value: &str) -> bool {
 
 /// Stable package identifier (validated, detached).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct DomainPackageId(String);
+pub struct ModulePackageId(String);
 
-impl DomainPackageId {
+impl ModulePackageId {
     /// Parse a canonical package identifier.
-    pub fn parse(value: &str) -> Result<Self, DomainFailure> {
+    pub fn parse(value: &str) -> Result<Self, ModuleFailure> {
         if !valid_separated_identifier(value) {
-            return Err(DomainFailure::InvalidInput {
+            return Err(ModuleFailure::InvalidInput {
                 reason: "invalid package id".to_owned(),
             });
         }
@@ -67,9 +67,9 @@ pub struct PackageDigest(String);
 
 impl PackageDigest {
     /// Parse a canonical hex SHA-256 digest.
-    pub fn parse(value: &str) -> Result<Self, DomainFailure> {
+    pub fn parse(value: &str) -> Result<Self, ModuleFailure> {
         if !valid_digest(value) {
-            return Err(DomainFailure::InvalidInput {
+            return Err(ModuleFailure::InvalidInput {
                 reason: "invalid package digest".to_owned(),
             });
         }
@@ -89,13 +89,13 @@ impl PackageDigest {
 /// fail closed and are never downgraded, reinterpreted, or
 /// best-effort deserialized (docs/development/PROTOCOL_VERSIONING.md).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct DomainAbi(String);
+pub struct ModuleAbi(String);
 
-impl DomainAbi {
+impl ModuleAbi {
     /// Parse a canonical ABI string.
-    pub fn parse(value: &str) -> Result<Self, DomainFailure> {
+    pub fn parse(value: &str) -> Result<Self, ModuleFailure> {
         if !valid_abi(value) {
-            return Err(DomainFailure::InvalidInput {
+            return Err(ModuleFailure::InvalidInput {
                 reason: "invalid domain ABI".to_owned(),
             });
         }
@@ -139,19 +139,19 @@ fn valid_abi(value: &str) -> bool {
 /// All fields are validated and detached; the digest is the exact
 /// digest of the bytes the Host accepted, computed by the Host.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DomainPackage {
-    id: DomainPackageId,
+pub struct ModulePackage {
+    id: ModulePackageId,
     digest: PackageDigest,
-    abi: DomainAbi,
+    abi: ModuleAbi,
     requested_capabilities: CapabilityRequest,
 }
 
-impl DomainPackage {
+impl ModulePackage {
     /// Construct a package from already-validated parts.
     pub fn new(
-        id: DomainPackageId,
+        id: ModulePackageId,
         digest: PackageDigest,
-        abi: DomainAbi,
+        abi: ModuleAbi,
         requested_capabilities: CapabilityRequest,
     ) -> Self {
         Self { id, digest, abi, requested_capabilities }
@@ -163,11 +163,11 @@ impl DomainPackage {
         digest: &str,
         abi: &str,
         requested_capabilities: &[String],
-    ) -> Result<Self, DomainFailure> {
+    ) -> Result<Self, ModuleFailure> {
         Ok(Self {
-            id: DomainPackageId::parse(id)?,
+            id: ModulePackageId::parse(id)?,
             digest: PackageDigest::parse(digest)?,
-            abi: DomainAbi::parse(abi)?,
+            abi: ModuleAbi::parse(abi)?,
             requested_capabilities: CapabilityRequest::parse(
                 requested_capabilities,
             )?,
@@ -175,7 +175,7 @@ impl DomainPackage {
     }
 
     /// The stable package identifier.
-    pub fn id(&self) -> &DomainPackageId {
+    pub fn id(&self) -> &ModulePackageId {
         &self.id
     }
 
@@ -185,7 +185,7 @@ impl DomainPackage {
     }
 
     /// The versioned ABI identity.
-    pub fn abi(&self) -> &DomainAbi {
+    pub fn abi(&self) -> &ModuleAbi {
         &self.abi
     }
 
@@ -201,11 +201,11 @@ impl DomainPackage {
 pub fn verify_package_digest(
     declared: &PackageDigest,
     computed: &PackageDigest,
-) -> Result<(), DomainFailure> {
+) -> Result<(), ModuleFailure> {
     if declared == computed {
         Ok(())
     } else {
-        Err(DomainFailure::IdentityMismatch {
+        Err(ModuleFailure::IdentityMismatch {
             detail:
                 "package digest does not match the accepted component bytes"
                     .to_owned(),
@@ -216,20 +216,20 @@ pub fn verify_package_digest(
 #[cfg(test)]
 mod tests {
     use super::{
-        DomainAbi, DomainPackage, DomainPackageId, PackageDigest,
+        ModuleAbi, ModulePackage, ModulePackageId, PackageDigest,
         verify_package_digest,
     };
-    use crate::domain::failure::DomainFailure;
+    use crate::module::failure::ModuleFailure;
 
     #[test]
     fn package_id_validation() {
-        assert!(DomainPackageId::parse("conformance-domain").is_ok());
-        assert!(DomainPackageId::parse("a.b-c").is_ok());
-        assert!(DomainPackageId::parse("").is_err());
-        assert!(DomainPackageId::parse("UPPER").is_err());
-        assert!(DomainPackageId::parse("-lead").is_err());
-        assert!(DomainPackageId::parse("trail-").is_err());
-        assert!(DomainPackageId::parse("a..b").is_err());
+        assert!(ModulePackageId::parse("conformance-domain").is_ok());
+        assert!(ModulePackageId::parse("a.b-c").is_ok());
+        assert!(ModulePackageId::parse("").is_err());
+        assert!(ModulePackageId::parse("UPPER").is_err());
+        assert!(ModulePackageId::parse("-lead").is_err());
+        assert!(ModulePackageId::parse("trail-").is_err());
+        assert!(ModulePackageId::parse("a..b").is_err());
     }
 
     #[test]
@@ -243,18 +243,18 @@ mod tests {
 
     #[test]
     fn abi_validation_and_exact_compatibility() {
-        let v1 = DomainAbi::parse("siralos:domain-abi@1.0.0").unwrap();
-        let v1_again = DomainAbi::parse("siralos:domain-abi@1.0.0").unwrap();
-        let v2 = DomainAbi::parse("siralos:domain-abi@1.1.0").unwrap();
+        let v1 = ModuleAbi::parse("siralos:domain-abi@1.0.0").unwrap();
+        let v1_again = ModuleAbi::parse("siralos:domain-abi@1.0.0").unwrap();
+        let v2 = ModuleAbi::parse("siralos:domain-abi@1.1.0").unwrap();
         assert!(v1.is_compatible_with(&v1_again));
         assert!(!v1.is_compatible_with(&v2));
-        assert!(DomainAbi::parse("siralos:domain-abi@1.0.0").is_ok());
-        assert!(DomainAbi::parse("name@1.0.0").is_err(), "needs a namespace");
-        assert!(DomainAbi::parse("siralos:domain-abi@1.0").is_ok());
-        assert!(DomainAbi::parse("siralos:domain-abi@1").is_err());
-        assert!(DomainAbi::parse("siralos:domain-abi@x").is_err());
-        assert!(DomainAbi::parse("siralos:domain-abi").is_err());
-        assert!(DomainAbi::parse("siralos:domain-abi@1.0.0.0").is_err());
+        assert!(ModuleAbi::parse("siralos:domain-abi@1.0.0").is_ok());
+        assert!(ModuleAbi::parse("name@1.0.0").is_err(), "needs a namespace");
+        assert!(ModuleAbi::parse("siralos:domain-abi@1.0").is_ok());
+        assert!(ModuleAbi::parse("siralos:domain-abi@1").is_err());
+        assert!(ModuleAbi::parse("siralos:domain-abi@x").is_err());
+        assert!(ModuleAbi::parse("siralos:domain-abi").is_err());
+        assert!(ModuleAbi::parse("siralos:domain-abi@1.0.0.0").is_err());
     }
 
     #[test]
@@ -264,7 +264,7 @@ mod tests {
         assert!(verify_package_digest(&a, &a).is_ok());
         assert!(matches!(
             verify_package_digest(&a, &b),
-            Err(DomainFailure::IdentityMismatch { .. })
+            Err(ModuleFailure::IdentityMismatch { .. })
         ));
     }
 
@@ -272,7 +272,7 @@ mod tests {
     fn package_parse_rejects_malformed_descriptors() {
         let digest = "ab".repeat(32);
         assert!(
-            DomainPackage::parse(
+            ModulePackage::parse(
                 "conformance-domain",
                 &digest,
                 "siralos:domain-abi@1.0.0",
@@ -281,17 +281,17 @@ mod tests {
             .is_ok()
         );
         assert!(matches!(
-            DomainPackage::parse("", &digest, "siralos:domain-abi@1.0.0", &[],),
-            Err(DomainFailure::InvalidInput { .. })
+            ModulePackage::parse("", &digest, "siralos:domain-abi@1.0.0", &[],),
+            Err(ModuleFailure::InvalidInput { .. })
         ));
         assert!(matches!(
-            DomainPackage::parse(
+            ModulePackage::parse(
                 "conformance-domain",
                 "nope",
                 "siralos:domain-abi@1.0.0",
                 &[],
             ),
-            Err(DomainFailure::InvalidInput { .. })
+            Err(ModuleFailure::InvalidInput { .. })
         ));
     }
 }

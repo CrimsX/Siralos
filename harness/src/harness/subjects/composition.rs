@@ -445,7 +445,7 @@ pub(in crate::harness) fn composition_lock_record(
     input: &Value,
 ) -> Result<Value, HarnessError> {
     use siralos_core::composition::lock::{
-        LockPluginIdentity, create_workspace_lock,
+        LockModuleIdentity, create_workspace_lock,
     };
     let profile_digest = input.get("profileDigest").and_then(Value::as_str);
     let mut plugins = Vec::new();
@@ -459,7 +459,7 @@ pub(in crate::harness) fn composition_lock_record(
             let get = |key: &str| {
                 table.get(key).and_then(Value::as_str).unwrap_or("")
             };
-            plugins.push(LockPluginIdentity {
+            plugins.push(LockModuleIdentity {
                 id: get("id").to_owned(),
                 path: get("path").to_owned(),
                 digest: get("digest").to_owned(),
@@ -471,7 +471,7 @@ pub(in crate::harness) fn composition_lock_record(
     let stored = input.get("storedLockDigest").and_then(Value::as_str);
     let (disposition, rendered) = match stored {
         None => {
-            ("resolved", format!("resolved plugins={}", lock.plugins.len()))
+            ("resolved", format!("resolved modules={}", lock.modules.len()))
         }
         Some(digest) if digest == lock.lock_digest => {
             ("current", "verified current".to_owned())
@@ -486,7 +486,7 @@ pub(in crate::harness) fn composition_lock_record(
         ),
     };
     let identities: Vec<Value> = lock
-        .plugins
+        .modules
         .iter()
         .map(|identity| {
             json!({
@@ -508,8 +508,8 @@ pub(in crate::harness) fn composition_plugin_selection_record(
     input: &Value,
 ) -> Result<Value, HarnessError> {
     use siralos_core::composition::{
-        create_plugin_selection_evidence, render_plugin_selection_evidence,
-        select_profile_plugins,
+        create_module_selection_evidence, render_module_selection_evidence,
+        select_profile_modules,
     };
     let strings = |key: &str| -> Option<Vec<String>> {
         input.get(key).and_then(Value::as_array).map(|list| {
@@ -520,8 +520,8 @@ pub(in crate::harness) fn composition_plugin_selection_record(
     };
     let enabled = strings("enabled").unwrap_or_default();
     let selected = strings("selected");
-    let selection = select_profile_plugins(&enabled, selected.as_deref());
-    let evidence = create_plugin_selection_evidence(&selection)
+    let selection = select_profile_modules(&enabled, selected.as_deref());
+    let evidence = create_module_selection_evidence(&selection)
         .map_err(|error| HarnessError::corpus(error.message))?;
     let reason = if selection.unknown.is_empty() {
         None
@@ -535,7 +535,7 @@ pub(in crate::harness) fn composition_plugin_selection_record(
         "activated": evidence.activated,
         "disposition": evidence.disposition,
         "reason": reason,
-        "rendered": render_plugin_selection_evidence(&evidence),
+        "rendered": render_module_selection_evidence(&evidence),
         "selectionDigest": evidence.selection_digest,
     }))
 }
@@ -576,7 +576,7 @@ pub(in crate::harness) fn composition_lock_verify_record(
     input: &Value,
 ) -> Result<Value, HarnessError> {
     use siralos_core::composition::lock::{
-        LockPluginIdentity, create_workspace_lock,
+        LockModuleIdentity, create_workspace_lock,
     };
     use siralos_core::composition::{
         StoredLockDigest, create_lock_verification_evidence,
@@ -593,7 +593,7 @@ pub(in crate::harness) fn composition_lock_verify_record(
                         .and_then(Value::as_str)
                         .unwrap_or("")
                 };
-                plugins.push(LockPluginIdentity {
+                plugins.push(LockModuleIdentity {
                     id: get("id").to_owned(),
                     path: get("path").to_owned(),
                     digest: get("digest").to_owned(),
@@ -1115,8 +1115,8 @@ pub(in crate::harness) fn composition_plugin_activation_record(
     input: &Value,
 ) -> Result<Value, HarnessError> {
     use siralos_core::composition::{
-        create_plugin_activation_evidence, decide_plugin_activation,
-        render_plugin_activation_evidence,
+        create_module_activation_evidence, decide_module_activation,
+        render_module_activation_evidence,
     };
     let enabled: Vec<String> = input
         .get("enabled")
@@ -1139,15 +1139,15 @@ pub(in crate::harness) fn composition_plugin_activation_record(
         .unwrap_or("")
         .to_owned();
     let decision =
-        decide_plugin_activation(&enabled, selected.as_deref(), &requested);
+        decide_module_activation(&enabled, selected.as_deref(), &requested);
     let evidence =
-        create_plugin_activation_evidence(&decision, selected.is_some())
+        create_module_activation_evidence(&decision, selected.is_some())
             .map_err(|error| HarnessError::corpus(error.message))?;
     Ok(json!({
         "activationDigest": evidence.activation_digest,
         "decision": evidence.decision,
         "reason": evidence.reason,
-        "rendered": render_plugin_activation_evidence(&evidence, &requested),
+        "rendered": render_module_activation_evidence(&evidence, &requested),
     }))
 }
 pub(in crate::harness) fn composition_skills_record(

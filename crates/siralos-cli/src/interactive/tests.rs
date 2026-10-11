@@ -212,8 +212,8 @@ fn the_dispatcher_asks_the_worker_and_renders_its_answer() {
             "Tool projection: 3 available",
         ),
         (
-            SlashCommand::DomainsAdd(Some("demo")),
-            crate::session_worker::WorkerCommand::DomainsAdd(
+            SlashCommand::ModulesAdd(Some("demo")),
+            crate::session_worker::WorkerCommand::ModulesAdd(
                 "demo".to_owned(),
             ),
             crate::session_worker::WorkerEvent::Report(
@@ -222,8 +222,8 @@ fn the_dispatcher_asks_the_worker_and_renders_its_answer() {
             "added demo",
         ),
         (
-            SlashCommand::DomainsEnable(Some("demo")),
-            crate::session_worker::WorkerCommand::DomainsEnable(
+            SlashCommand::ModulesEnable(Some("demo")),
+            crate::session_worker::WorkerCommand::ModulesEnable(
                 "demo".to_owned(),
             ),
             crate::session_worker::WorkerEvent::Report(
@@ -232,8 +232,8 @@ fn the_dispatcher_asks_the_worker_and_renders_its_answer() {
             "enabled demo",
         ),
         (
-            SlashCommand::DomainsActivate(Some("demo")),
-            crate::session_worker::WorkerCommand::DomainsActivate(
+            SlashCommand::ModulesActivate(Some("demo")),
+            crate::session_worker::WorkerCommand::ModulesActivate(
                 "demo".to_owned(),
             ),
             crate::session_worker::WorkerEvent::Report(
@@ -1780,27 +1780,27 @@ fn config_is_composed_before_rendering_without_granting_extra_authority() {
 }
 
 #[test]
-fn domains_renders_the_deterministic_empty_state() {
-    let root = temporary_directory("domains-empty");
-    let output = run("/domains\n/exit\n", &root, None);
-    assert!(output.contains("No domains installed.\n"));
-    assert!(output.contains("/domains-add <folder>"));
+fn modules_renders_the_deterministic_empty_state() {
+    let root = temporary_directory("modules-empty");
+    let output = run("/modules\n/exit\n", &root, None);
+    assert!(output.contains("No modules installed.\n"));
+    assert!(output.contains("/modules-add <folder>"));
     let _ = remove_dir_all(root);
 }
 
 #[test]
-fn domains_add_records_and_renders() {
-    let root = temporary_directory("domains-add");
-    create_dir_all(root.join("plugins/godot")).expect("folder");
+fn modules_add_records_and_renders() {
+    let root = temporary_directory("modules-add");
+    create_dir_all(root.join("modules/godot")).expect("folder");
     let bytes = b"conformance component bytes";
     let digest = {
         use siralos_core::identity::sha256_hex;
         sha256_hex(bytes)
     };
-    write(root.join("plugins/godot/godot.component.wasm"), bytes)
+    write(root.join("modules/godot/godot.component.wasm"), bytes)
         .expect("component");
     write(
-        root.join("plugins/godot/domain-manifest.toml"),
+        root.join("modules/godot/module-manifest.toml"),
         format!(
             "id = \"godot\"\ndigest = \"{digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncomponent = \"godot.component.wasm\"\n"
         ),
@@ -1808,30 +1808,30 @@ fn domains_add_records_and_renders() {
     .expect("manifest");
     let siralos_toml = root.join("siralos.toml");
     let output =
-        run("/domains-add plugins/godot\n/domains\n/exit\n", &root, None);
+        run("/modules-add modules/godot\n/modules\n/exit\n", &root, None);
     assert!(output.contains("Installed godot (digest sha256:"));
-    assert!(output.contains("Domains installed:\n"));
+    assert!(output.contains("Modules installed:\n"));
     assert!(output.contains("godot (digest "));
     assert!(siralos_toml.exists());
     let _ = remove_dir_all(root);
 }
 
 #[test]
-fn domains_add_missing_manifest_fails_closed() {
-    let root = temporary_directory("domains-add-missing");
+fn modules_add_missing_manifest_fails_closed() {
+    let root = temporary_directory("modules-add-missing");
     create_dir(root.join("empty")).expect("folder");
-    let output = run("/domains-add empty\n/domains\n/exit\n", &root, None);
-    assert!(output.contains("Add Plugin failed:"));
-    assert!(output.contains("No domains installed.\n"));
+    let output = run("/modules-add empty\n/modules\n/exit\n", &root, None);
+    assert!(output.contains("Add Module failed:"));
+    assert!(output.contains("No modules installed.\n"));
     let _ = remove_dir_all(root);
 }
 
 #[test]
-fn domains_add_outside_workspace_is_rejected() {
-    let root = temporary_directory("domains-add-outside");
+fn modules_add_outside_workspace_is_rejected() {
+    let root = temporary_directory("modules-add-outside");
     let mut outside =
         PathBuf::from(std::env::temp_dir().to_string_lossy().into_owned());
-    outside.push("outside-plugin-inspection");
+    outside.push("outside-module-inspection");
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
@@ -1839,7 +1839,7 @@ fn domains_add_outside_workspace_is_rejected() {
     outside.push(format!("{unique}"));
     create_dir_all(&outside).expect("outside folder");
     let output = run(
-        &format!("/domains-add {}\n/exit\n", outside.display()),
+        &format!("/modules-add {}\n/exit\n", outside.display()),
         &root,
         None,
     );
@@ -1849,27 +1849,27 @@ fn domains_add_outside_workspace_is_rejected() {
 }
 
 #[test]
-fn domains_enable_and_activate_are_host_gated() {
-    let root = temporary_directory("domains-enable-activate");
-    create_dir_all(root.join("plugins/godot")).expect("folder");
+fn modules_enable_and_activate_are_host_gated() {
+    let root = temporary_directory("modules-enable-activate");
+    create_dir_all(root.join("modules/godot")).expect("folder");
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/domain-conformance/fixtures/conformance-domain.component.wasm");
+        .join("../../tests/domain-conformance/fixtures/conformance-module.component.wasm");
     let bytes = std::fs::read(&fixture).expect("fixture");
     let digest = {
         use siralos_core::identity::sha256_hex;
         sha256_hex(&bytes)
     };
-    write(root.join("plugins/godot/godot.component.wasm"), &bytes)
+    write(root.join("modules/godot/godot.component.wasm"), &bytes)
         .expect("component");
     write(
-        root.join("plugins/godot/domain-manifest.toml"),
+        root.join("modules/godot/module-manifest.toml"),
         format!(
             "id = \"godot\"\ndigest = \"{digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncomponent = \"godot.component.wasm\"\n"
         ),
     )
     .expect("manifest");
     let output = run(
-        "/domains-add plugins/godot\n/domains-enable godot\n/domains-activate godot\n/exit\n",
+        "/modules-add modules/godot\n/modules-enable godot\n/modules-activate godot\n/exit\n",
         &root,
         None,
     );
@@ -1880,30 +1880,30 @@ fn domains_enable_and_activate_are_host_gated() {
 }
 
 #[test]
-fn domains_enable_on_missing_id_fails_typed() {
-    let root = temporary_directory("domains-enable-missing");
-    let output = run("/domains-enable missing\n/exit\n", &root, None);
+fn modules_enable_on_missing_id_fails_typed() {
+    let root = temporary_directory("modules-enable-missing");
+    let output = run("/modules-enable missing\n/exit\n", &root, None);
     assert!(output.contains("Enable failed:"));
     let _ = remove_dir_all(root);
 }
 
 #[test]
-fn domains_activate_requires_host_authority_and_component() {
-    let root = temporary_directory("domains-activate-no-component");
-    create_dir_all(root.join("plugins/godot")).expect("folder");
+fn modules_activate_requires_host_authority_and_component() {
+    let root = temporary_directory("modules-activate-no-component");
+    create_dir_all(root.join("modules/godot")).expect("folder");
     let digest = {
         use siralos_core::identity::sha256_hex;
         sha256_hex(b"no-component")
     };
     write(
-        root.join("plugins/godot/domain-manifest.toml"),
+        root.join("modules/godot/module-manifest.toml"),
         format!(
             "id = \"godot\"\ndigest = \"{digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\n"
         ),
     )
     .expect("manifest");
     let output = run(
-        "/domains-add plugins/godot\n/domains-enable godot\n/domains-activate godot\n/exit\n",
+        "/modules-add modules/godot\n/modules-enable godot\n/modules-activate godot\n/exit\n",
         &root,
         None,
     );
@@ -1913,20 +1913,20 @@ fn domains_activate_requires_host_authority_and_component() {
 }
 
 #[test]
-fn profile_plugin_selection_gates_domains_activate() {
-    let root = temporary_directory("domains-activate-gate");
-    create_dir_all(root.join("plugins/godot")).expect("folder");
+fn profile_module_selection_gates_modules_activate() {
+    let root = temporary_directory("modules-activate-gate");
+    create_dir_all(root.join("modules/godot")).expect("folder");
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/domain-conformance/fixtures/conformance-domain.component.wasm");
+        .join("../../tests/domain-conformance/fixtures/conformance-module.component.wasm");
     let bytes = std::fs::read(&fixture).expect("fixture");
     let digest = {
         use siralos_core::identity::sha256_hex;
         sha256_hex(&bytes)
     };
-    write(root.join("plugins/godot/godot.component.wasm"), &bytes)
+    write(root.join("modules/godot/godot.component.wasm"), &bytes)
         .expect("component");
     write(
-        root.join("plugins/godot/domain-manifest.toml"),
+        root.join("modules/godot/module-manifest.toml"),
         format!(
             "id = \"godot\"\ndigest = \"{digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncomponent = \"godot.component.wasm\"\n"
         ),
@@ -1936,16 +1936,16 @@ fn profile_plugin_selection_gates_domains_activate() {
     // gate refuses before any install/enable/activate side effect.
     write(
         root.join("siralos.toml"),
-        "\n[profile]\nname = \"dev\"\nplugins = [\"other\"]\n",
+        "\n[profile]\nname = \"dev\"\nmodules = [\"other\"]\n",
     )
     .expect("profile");
     let output = run(
-        "/domains-add plugins/godot\n/domains-enable godot\n/domains-activate godot\n/exit\n",
+        "/modules-add modules/godot\n/modules-enable godot\n/modules-activate godot\n/exit\n",
         &root,
         None,
     );
     assert!(output.contains(
-        "Enable failed: plugin is outside the applied profile selection"
+        "Enable failed: module is outside the applied profile selection"
     ));
     assert!(output.contains(
         "Activate failed: the Host has not enabled \"godot\"; a profile can never enable"
@@ -1954,11 +1954,11 @@ fn profile_plugin_selection_gates_domains_activate() {
     // Narrowed allow: the selection includes godot.
     write(
         root.join("siralos.toml"),
-        "\n[profile]\nname = \"dev\"\nplugins = [\"godot\"]\n",
+        "\n[profile]\nname = \"dev\"\nmodules = [\"godot\"]\n",
     )
     .expect("profile");
     let output = run(
-        "/domains-add plugins/godot\n/domains-enable godot\n/domains-activate godot\n/exit\n",
+        "/modules-add modules/godot\n/modules-enable godot\n/modules-activate godot\n/exit\n",
         &root,
         None,
     );
@@ -1966,11 +1966,11 @@ fn profile_plugin_selection_gates_domains_activate() {
     // Invalid profile: no selection, gate transparent (5.2).
     write(
         root.join("siralos.toml"),
-        "\n[profile]\nname = \"dev\"\nplugins = [7]\n",
+        "\n[profile]\nname = \"dev\"\nmodules = [7]\n",
     )
     .expect("profile");
     let output = run(
-        "/domains-add plugins/godot\n/domains-enable godot\n/domains-activate godot\n/exit\n",
+        "/modules-add modules/godot\n/modules-enable godot\n/modules-activate godot\n/exit\n",
         &root,
         None,
     );
@@ -2132,7 +2132,7 @@ fn session_lock_verification_reports_without_gating() {
     };
     use siralos_adapters::lockfile::write_workspace_lock;
     use siralos_core::composition::lock::{
-        LockPluginIdentity, create_workspace_lock,
+        LockModuleIdentity, create_workspace_lock,
     };
     let root = temporary_directory("lock-verify");
     // Missing: verification is transparent.
@@ -2151,11 +2151,11 @@ fn session_lock_verification_reports_without_gating() {
     let decision = verify_session_lock(&root, &effective);
     assert_eq!(decision.outcome.as_str(), "current");
     assert_eq!(decision.reason, None);
-    // Stale: a lock from a different plugin set drifts truthfully,
+    // Stale: a lock from a different module set drifts truthfully,
     // and the session still proceeds on live Host state.
     let drifted = create_workspace_lock(
         None,
-        &[LockPluginIdentity {
+        &[LockModuleIdentity {
             id: "ghost".to_owned(),
             path: "ghost".to_owned(),
             digest: "a".repeat(64),
@@ -2235,19 +2235,19 @@ fn t4_dispatch_same_parse_both_loops_call() {
     for (line, expected) in [
         ("/context", SlashCommand::Context),
         ("/tools", SlashCommand::Tools),
-        ("/domains", SlashCommand::Domains),
+        ("/modules", SlashCommand::Modules),
         ("/exit", SlashCommand::Exit),
-        ("/domains-add", SlashCommand::DomainsAdd(None)),
+        ("/modules-add", SlashCommand::ModulesAdd(None)),
         (
-            "/domains-add plugins/godot",
-            SlashCommand::DomainsAdd(Some("plugins/godot")),
+            "/modules-add modules/godot",
+            SlashCommand::ModulesAdd(Some("modules/godot")),
         ),
-        ("/domains-enable", SlashCommand::DomainsEnable(None)),
-        ("/domains-enable godot", SlashCommand::DomainsEnable(Some("godot"))),
-        ("/domains-activate", SlashCommand::DomainsActivate(None)),
+        ("/modules-enable", SlashCommand::ModulesEnable(None)),
+        ("/modules-enable godot", SlashCommand::ModulesEnable(Some("godot"))),
+        ("/modules-activate", SlashCommand::ModulesActivate(None)),
         (
-            "/domains-activate godot",
-            SlashCommand::DomainsActivate(Some("godot")),
+            "/modules-activate godot",
+            SlashCommand::ModulesActivate(Some("godot")),
         ),
         ("/model", SlashCommand::Model(None)),
         (
@@ -2272,8 +2272,8 @@ fn t4_dispatch_same_parse_both_loops_call() {
     }
     // The stdio loop and the TUI loop call the same parser: parse
     // twice (once per loop) and require byte-equal commands.
-    let stdio_parsed = parse_slash_command("/domains-enable godot");
-    let tui_parsed = parse_slash_command("/domains-enable godot");
+    let stdio_parsed = parse_slash_command("/modules-enable godot");
+    let tui_parsed = parse_slash_command("/modules-enable godot");
     assert_eq!(stdio_parsed, tui_parsed);
 }
 #[test]
@@ -3668,7 +3668,7 @@ fn is_unknown_slash_command_shared_helper_both_loops_call() {
     assert!(!via_fn_ptr("/tools"));
     assert!(!via_fn_ptr("/provider"));
     assert!(!via_fn_ptr("hello"));
-    assert!(!via_fn_ptr("/domains-add"));
+    assert!(!via_fn_ptr("/modules-add"));
     assert!(!via_fn_ptr(""));
     // Both frontends use the same catalog; unknown line is derived from it.
     let catalog = slash_command_catalog();
@@ -3750,7 +3750,7 @@ fn remove_profile_config_strips_section_preserving_rest() {
     // Provider deletion removes the provider-owned KEYS and nothing else: every
     // other key, table, comment, and line survives byte-for-byte. A [profile]
     // table that keeps nothing but its own name is no longer a provider, so it
-    // is dropped as well; a table that still carries policy, plugin selection,
+    // is dropped as well; a table that still carries policy, module selection,
     // context narrowing or skills stays.
     let root = temporary_directory("remove-strips");
     let original = "# workspace config\n[workspace]\nroot = \".\"\n\n[profile]\nname = \"default\"\nprovider = \"openai\"\nmodel = \"gpt-4o\"\ncredential = \"env:OPENAI_API_KEY\"\nendpoint = \"https://api.example.com/v1\"\n\n[other]\nkey = \"value\"\n# trailing comment\n";
@@ -4626,18 +4626,18 @@ fn persist_switched_model_clears_display_name_only() {
 }
 
 #[test]
-fn render_add_plugin_conflict_leaves_existing_host_unchanged() {
-    use siralos_adapters::domain::{DomainHost, DomainHostBounds};
-    use siralos_core::domain::{
-        DomainAbi, DomainPackage, HostAuthority, LifecycleState,
+fn render_add_module_conflict_leaves_existing_host_unchanged() {
+    use siralos_adapters::module::{ModuleHost, ModuleHostBounds};
+    use siralos_core::module::{
+        HostAuthority, LifecycleState, ModuleAbi, ModulePackage,
     };
 
-    let root = temporary_directory("add-plugin-conflict-host");
+    let root = temporary_directory("add-module-conflict-host");
     let existing_component = root.join("existing.component.wasm");
     let existing_bytes = b"existing arbitrary component bytes";
     let existing_digest = siralos_core::identity::sha256_hex(existing_bytes);
     write(&existing_component, existing_bytes).expect("existing component");
-    let existing_package = DomainPackage::parse(
+    let existing_package = ModulePackage::parse(
         "godot",
         &existing_digest,
         "siralos:domain-abi@1.0.0",
@@ -4645,13 +4645,13 @@ fn render_add_plugin_conflict_leaves_existing_host_unchanged() {
     )
     .expect("existing package");
     let abi =
-        DomainAbi::parse("siralos:domain-abi@1.0.0").expect("domain ABI");
-    let mut existing_host = DomainHost::new(
+        ModuleAbi::parse("siralos:domain-abi@1.0.0").expect("module ABI");
+    let mut existing_host = ModuleHost::new(
         abi,
         HostAuthority::parse(&[]).expect("host authority"),
         existing_component,
         root.clone(),
-        DomainHostBounds::default(),
+        ModuleHostBounds::default(),
     );
     // Install authenticates exact bytes but does not compile until activation,
     // so deliberately non-component bytes keep this regression focused.
@@ -4661,14 +4661,14 @@ fn render_add_plugin_conflict_leaves_existing_host_unchanged() {
     let existing_package =
         existing_host.installed_package().cloned().expect("installed package");
 
-    let folder = root.join("plugins/godot");
-    create_dir_all(&folder).expect("plugin folder");
+    let folder = root.join("modules/godot");
+    create_dir_all(&folder).expect("module folder");
     let incoming_component = folder.join("godot.component.wasm");
     let incoming_bytes = b"incoming arbitrary component bytes";
     let incoming_digest = siralos_core::identity::sha256_hex(incoming_bytes);
     write(&incoming_component, incoming_bytes).expect("incoming component");
     write(
-        folder.join("domain-manifest.toml"),
+        folder.join("module-manifest.toml"),
         format!(
             "id = \"godot\"\ndigest = \"{incoming_digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncomponent = \"godot.component.wasm\"\n",
         ),
@@ -4677,7 +4677,7 @@ fn render_add_plugin_conflict_leaves_existing_host_unchanged() {
 
     let record_path = root.join("siralos.toml");
     let original_record = format!(
-        "[plugins.godot]\npath = \"plugins/conflicting\"\ndigest = \"sha256:{existing_digest}\"\n",
+        "[modules.godot]\npath = \"modules/conflicting\"\ndigest = \"sha256:{existing_digest}\"\n",
     );
     write(&record_path, &original_record).expect("conflicting record");
     let mut hosts = std::collections::BTreeMap::from([(
@@ -4686,9 +4686,9 @@ fn render_add_plugin_conflict_leaves_existing_host_unchanged() {
     )]);
     let mut manifests = std::collections::BTreeMap::new();
 
-    let output = super::render_add_plugin(
+    let output = super::render_add_module(
         &root,
-        "plugins/godot",
+        "modules/godot",
         &mut hosts,
         &mut manifests,
     );
@@ -4707,21 +4707,21 @@ fn render_add_plugin_conflict_leaves_existing_host_unchanged() {
 
 #[test]
 fn render_add_componentless_conflict_leaves_existing_state_unchanged() {
-    use siralos_adapters::domain::{DomainHost, DomainHostBounds};
-    use siralos_core::domain::{
-        DomainAbi, DomainPackage, HostAuthority, LifecycleState,
+    use siralos_adapters::module::{ModuleHost, ModuleHostBounds};
+    use siralos_core::module::{
+        HostAuthority, LifecycleState, ModuleAbi, ModulePackage,
     };
 
     let root = temporary_directory("add-componentless-conflict");
-    let relative_path = "plugins/componentless";
+    let relative_path = "modules/componentless";
     let folder = root.join(relative_path);
     let component_path = folder.join("existing.component.wasm");
-    let manifest_path = folder.join("domain-manifest.toml");
-    create_dir_all(&folder).expect("plugin folder");
+    let manifest_path = folder.join("module-manifest.toml");
+    create_dir_all(&folder).expect("module folder");
     let existing_bytes = b"existing arbitrary component bytes";
     let existing_digest = siralos_core::identity::sha256_hex(existing_bytes);
     write(&component_path, existing_bytes).expect("existing component");
-    let existing_package = DomainPackage::parse(
+    let existing_package = ModulePackage::parse(
         "godot",
         &existing_digest,
         "siralos:domain-abi@1.0.0",
@@ -4729,13 +4729,13 @@ fn render_add_componentless_conflict_leaves_existing_state_unchanged() {
     )
     .expect("existing package");
     let abi =
-        DomainAbi::parse("siralos:domain-abi@1.0.0").expect("domain ABI");
-    let mut existing_host = DomainHost::new(
+        ModuleAbi::parse("siralos:domain-abi@1.0.0").expect("module ABI");
+    let mut existing_host = ModuleHost::new(
         abi,
         HostAuthority::parse(&[]).expect("host authority"),
         component_path,
         root.clone(),
-        DomainHostBounds::default(),
+        ModuleHostBounds::default(),
     );
     existing_host
         .install(existing_package.clone())
@@ -4754,7 +4754,7 @@ fn render_add_componentless_conflict_leaves_existing_state_unchanged() {
         super::load_manifest(&root, &folder).expect("existing manifest loads");
     let record_path = root.join("siralos.toml");
     let original_record = format!(
-        "[plugins.godot]\npath = \"{relative_path}\"\ndigest = \"sha256:{existing_digest}\"\n",
+        "[modules.godot]\npath = \"{relative_path}\"\ndigest = \"sha256:{existing_digest}\"\n",
     );
     write(&record_path, &original_record).expect("existing record");
     let mut hosts = std::collections::BTreeMap::from([(
@@ -4776,7 +4776,7 @@ fn render_add_componentless_conflict_leaves_existing_state_unchanged() {
     let incoming_manifest =
         read(&manifest_path).expect("read incoming manifest");
 
-    let output = super::render_add_plugin(
+    let output = super::render_add_module(
         &root,
         relative_path,
         &mut hosts,
@@ -4806,29 +4806,29 @@ fn render_add_componentless_conflict_leaves_existing_state_unchanged() {
 }
 
 #[test]
-fn render_add_plugin_rejects_unsafe_sources_before_root_resolution() {
+fn render_add_module_rejects_unsafe_sources_before_root_resolution() {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
         .as_nanos();
     let missing_root = std::env::temp_dir()
-        .join(format!("siralos-cli-add-plugin-missing-{nonce}"));
+        .join(format!("siralos-cli-add-module-missing-{nonce}"));
     assert!(!missing_root.exists(), "fixture root must not exist");
     let mut hosts = std::collections::BTreeMap::new();
     let mut manifests = std::collections::BTreeMap::new();
 
     let observed = [
-        ("../private-plugin-marker", "PATH_PARENT_TRAVERSAL"),
-        ("plugins/../private-plugin-marker", "PATH_PARENT_TRAVERSAL"),
-        ("plugins/private-plugin-marker/..", "PATH_PARENT_TRAVERSAL"),
+        ("../private-module-marker", "PATH_PARENT_TRAVERSAL"),
+        ("modules/../private-module-marker", "PATH_PARENT_TRAVERSAL"),
+        ("modules/private-module-marker/..", "PATH_PARENT_TRAVERSAL"),
         ("AGENTS.md", "PATH_PROTECTED"),
         ("nested/AGENTS.md", "PATH_PROTECTED"),
-        (".siralos/private-plugin-marker", "PATH_PROTECTED"),
-        ("nested/.siralos/private-plugin-marker", "PATH_PROTECTED"),
+        (".siralos/private-module-marker", "PATH_PROTECTED"),
+        ("nested/.siralos/private-module-marker", "PATH_PROTECTED"),
     ]
     .into_iter()
     .map(|(source, expected_code)| {
-        let output = super::render_add_plugin(
+        let output = super::render_add_module(
             &missing_root,
             source,
             &mut hosts,
@@ -4840,7 +4840,7 @@ fn render_add_plugin_rejects_unsafe_sources_before_root_resolution() {
             && !output.contains("..")
             && !output.contains("AGENTS.md")
             && !output.contains(".siralos")
-            && !output.contains("private-plugin-marker");
+            && !output.contains("private-module-marker");
         (source, expected_code, output, valid)
     })
     .collect::<Vec<_>>();
@@ -4855,30 +4855,30 @@ fn render_add_plugin_rejects_unsafe_sources_before_root_resolution() {
 }
 
 #[test]
-fn domains_enable_rejects_unsafe_plugin_record_before_path_resolution() {
+fn modules_enable_rejects_unsafe_module_record_before_path_resolution() {
     for (index, source) in [
-        "../private-plugin-marker",
-        "plugins/../private-plugin-marker",
-        "plugins/private-plugin-marker/..",
+        "../private-module-marker",
+        "modules/../private-module-marker",
+        "modules/private-module-marker/..",
         "AGENTS.md",
         "nested/AGENTS.md",
-        ".siralos/private-plugin-marker",
-        "nested/.siralos/private-plugin-marker",
+        ".siralos/private-module-marker",
+        "nested/.siralos/private-module-marker",
     ]
     .into_iter()
     .enumerate()
     {
         let root =
-            temporary_directory(&format!("domains-enable-record-{index}"));
+            temporary_directory(&format!("modules-enable-record-{index}"));
         write(
             root.join("siralos.toml"),
             format!(
-                "[plugins.godot]\npath = \"{source}\"\ndigest = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n",
+                "[modules.godot]\npath = \"{source}\"\ndigest = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n",
             ),
         )
-        .expect("plugin record");
+        .expect("module record");
 
-        let output = run("/domains-enable godot\n/exit\n", &root, None);
+        let output = run("/modules-enable godot\n/exit\n", &root, None);
 
         assert!(
             output.contains("(code RECORD_CONFLICT)")
@@ -4888,7 +4888,7 @@ fn domains_enable_rejects_unsafe_plugin_record_before_path_resolution() {
                 && !output.contains("..")
                 && !output.contains("AGENTS.md")
                 && !output.contains(".siralos")
-                && !output.contains("private-plugin-marker")
+                && !output.contains("private-module-marker")
                 && !output.contains("godot"),
             "unsafe record for {source:?} reached path resolution: {output}",
         );
@@ -4897,37 +4897,42 @@ fn domains_enable_rejects_unsafe_plugin_record_before_path_resolution() {
 }
 
 #[test]
-fn render_enable_refuses_digest_mismatch_without_enabling() {
-    use siralos_core::domain::LifecycleState;
+fn render_enable_module_refuses_digest_mismatch_without_enabling() {
+    use siralos_core::module::LifecycleState;
 
     let root = temporary_directory("enable-digest-mismatch");
-    let relative_path = "plugins/private-plugin-marker";
+    let relative_path = "modules/private-module-marker";
     let folder = root.join(relative_path);
-    create_dir_all(&folder).expect("plugin folder");
+    create_dir_all(&folder).expect("module folder");
     let component_bytes = b"arbitrary component bytes with digest B";
     let digest_b = siralos_core::identity::sha256_hex(component_bytes);
     let digest_a = "a".repeat(64);
-    write(folder.join("plugin.component.wasm"), component_bytes)
+    write(folder.join("module.component.wasm"), component_bytes)
         .expect("component");
     write(
-        folder.join("domain-manifest.toml"),
+        folder.join("module-manifest.toml"),
         format!(
-            "id = \"godot\"\ndigest = \"{digest_b}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncomponent = \"plugin.component.wasm\"\n",
+            "id = \"godot\"\ndigest = \"{digest_b}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncomponent = \"module.component.wasm\"\n",
         ),
     )
     .expect("manifest");
     write(
         root.join("siralos.toml"),
         format!(
-            "[plugins.godot]\npath = \"{relative_path}\"\ndigest = \"sha256:{digest_a}\"\n",
+            "[modules.godot]\npath = \"{relative_path}\"\ndigest = \"sha256:{digest_a}\"\n",
         ),
     )
     .expect("persisted record");
     let mut hosts = std::collections::BTreeMap::new();
     let mut manifests = std::collections::BTreeMap::new();
 
-    let output =
-        super::render_enable(&root, &mut hosts, &mut manifests, "godot", None);
+    let output = super::render_enable_module(
+        &root,
+        &mut hosts,
+        &mut manifests,
+        "godot",
+        None,
+    );
     let states = hosts
         .values()
         .map(|host| host.state())
@@ -4936,7 +4941,7 @@ fn render_enable_refuses_digest_mismatch_without_enabling() {
         && !output.contains(&digest_a)
         && !output.contains(&digest_b)
         && !output.contains(relative_path)
-        && !output.contains("private-plugin-marker")
+        && !output.contains("private-module-marker")
         && !output.contains("godot");
 
     assert!(
@@ -4948,19 +4953,19 @@ fn render_enable_refuses_digest_mismatch_without_enabling() {
 }
 
 #[test]
-fn render_enable_rechecks_persisted_identity_for_an_existing_host() {
-    use siralos_core::domain::LifecycleState;
+fn render_enable_module_rechecks_persisted_identity_for_an_existing_host() {
+    use siralos_core::module::LifecycleState;
 
     let root = temporary_directory("enable-stale-host-record");
-    let relative_path = "plugins/godot";
+    let relative_path = "modules/godot";
     let folder = root.join(relative_path);
-    create_dir_all(&folder).expect("plugin folder");
+    create_dir_all(&folder).expect("module folder");
     let component_bytes = b"arbitrary installed component bytes";
     let installed_digest = siralos_core::identity::sha256_hex(component_bytes);
     write(folder.join("godot.component.wasm"), component_bytes)
         .expect("component");
     write(
-        folder.join("domain-manifest.toml"),
+        folder.join("module-manifest.toml"),
         format!(
             "id = \"godot\"\ndigest = \"{installed_digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncomponent = \"godot.component.wasm\"\n",
         ),
@@ -4968,7 +4973,7 @@ fn render_enable_rechecks_persisted_identity_for_an_existing_host() {
     .expect("manifest");
     let mut hosts = std::collections::BTreeMap::new();
     let mut manifests = std::collections::BTreeMap::new();
-    let added = super::render_add_plugin(
+    let added = super::render_add_module(
         &root,
         relative_path,
         &mut hosts,
@@ -4986,7 +4991,7 @@ fn render_enable_rechecks_persisted_identity_for_an_existing_host() {
     write(folder.join("godot.component.wasm"), replacement_bytes)
         .expect("replacement component");
     write(
-        folder.join("domain-manifest.toml"),
+        folder.join("module-manifest.toml"),
         format!(
             "id = \"godot\"\ndigest = \"{replacement_digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncomponent = \"godot.component.wasm\"\n",
         ),
@@ -4995,13 +5000,18 @@ fn render_enable_rechecks_persisted_identity_for_an_existing_host() {
     write(
         root.join("siralos.toml"),
         format!(
-            "[plugins.godot]\npath = \"{relative_path}\"\ndigest = \"sha256:{replacement_digest}\"\n",
+            "[modules.godot]\npath = \"{relative_path}\"\ndigest = \"sha256:{replacement_digest}\"\n",
         ),
     )
     .expect("replacement record");
 
-    let output =
-        super::render_enable(&root, &mut hosts, &mut manifests, "godot", None);
+    let output = super::render_enable_module(
+        &root,
+        &mut hosts,
+        &mut manifests,
+        "godot",
+        None,
+    );
     let state = hosts.get("godot").expect("existing host").state();
     let generic = output.contains("(code RECORD_CONFLICT)")
         && !output.contains(&installed_digest)
@@ -5018,29 +5028,29 @@ fn render_enable_rechecks_persisted_identity_for_an_existing_host() {
 }
 
 #[test]
-fn render_enable_rejects_changed_component_bytes_for_existing_host() {
-    use siralos_core::domain::LifecycleState;
+fn render_enable_module_rejects_changed_component_bytes_for_existing_host() {
+    use siralos_core::module::LifecycleState;
 
     let root = temporary_directory("enable-changed-component-bytes");
-    let relative_path = "plugins/private-plugin-marker";
+    let relative_path = "modules/private-module-marker";
     let folder = root.join(relative_path);
-    let component_path = folder.join("plugin.component.wasm");
-    let manifest_path = folder.join("domain-manifest.toml");
+    let component_path = folder.join("module.component.wasm");
+    let manifest_path = folder.join("module-manifest.toml");
     let record_path = root.join("siralos.toml");
-    create_dir_all(&folder).expect("plugin folder");
+    create_dir_all(&folder).expect("module folder");
     let installed_bytes = b"installed arbitrary component bytes";
     let installed_digest = siralos_core::identity::sha256_hex(installed_bytes);
     write(&component_path, installed_bytes).expect("installed component");
     write(
         &manifest_path,
         format!(
-            "id = \"godot\"\ndigest = \"{installed_digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncomponent = \"plugin.component.wasm\"\n",
+            "id = \"godot\"\ndigest = \"{installed_digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncomponent = \"module.component.wasm\"\n",
         ),
     )
     .expect("manifest");
     let mut hosts = std::collections::BTreeMap::new();
     let mut manifests = std::collections::BTreeMap::new();
-    let added = super::render_add_plugin(
+    let added = super::render_add_module(
         &root,
         relative_path,
         &mut hosts,
@@ -5063,13 +5073,18 @@ fn render_enable_rejects_changed_component_bytes_for_existing_host() {
     assert_ne!(changed_digest, installed_digest);
     write(&component_path, changed_bytes).expect("changed component");
 
-    let output =
-        super::render_enable(&root, &mut hosts, &mut manifests, "godot", None);
+    let output = super::render_enable_module(
+        &root,
+        &mut hosts,
+        &mut manifests,
+        "godot",
+        None,
+    );
     let host = hosts.get("godot").expect("existing host");
     let generic = output.contains("(code RECORD_CONFLICT)")
         && !output.contains("godot")
         && !output.contains(relative_path)
-        && !output.contains("private-plugin-marker")
+        && !output.contains("private-module-marker")
         && !output.contains(&installed_digest)
         && !output.contains(&changed_digest);
 

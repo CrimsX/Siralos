@@ -8,8 +8,8 @@
 //!
 //! The ADR 0033 differential harness is **not** part of this crate: it
 //! lives in the excluded `harness/` workspace, which is also the only
-//! component that depends on the external Godot plugin crate. This crate
-//! has no feature flags and no external domain dependency, so a bare
+//! component that depends on the external Godot module crate. This crate
+//! has no feature flags and no external module dependency, so a bare
 //! `git clone` builds the product without a sibling checkout.
 
 pub mod configuration;

@@ -18,13 +18,13 @@ use crate::workspace::fs::{
     BoundedFileRead, MUTATION_TEMP_PREFIX, read_complete_file_bounded,
 };
 use siralos_core::composition::lock::{
-    LockPluginIdentity, WorkspaceLock, create_workspace_lock,
+    LockModuleIdentity, WorkspaceLock, create_workspace_lock,
 };
 
 /// Maximum `siralos.lock` size in bytes.
 pub const MAX_SIRALOS_LOCK_BYTES: usize = 64 * 1024;
 
-/// Plugin-count bound mirrored from the core lock model so untrusted
+/// Module-count bound mirrored from the core lock model so untrusted
 /// arrays are rejected before their entries are cloned or traversed.
 const MAX_LOCK_PLUGIN_ENTRIES: usize = 16;
 /// Identity-field bounds mirrored from the core lock model so invalid
@@ -150,7 +150,7 @@ pub fn load_workspace_lock(
         .ok_or_else(|| failure("siralos.lock must be a table."))?;
     for key in root_table.keys() {
         if key != "lockDigest"
-            && key != "plugins"
+            && key != "modules"
             && key != "profileDigest"
             && key != "schemaVersion"
         {
@@ -178,46 +178,46 @@ pub fn load_workspace_lock(
             ));
         }
     };
-    let mut plugins = Vec::new();
-    if let Some(entries) = value.get("plugins") {
+    let mut modules = Vec::new();
+    if let Some(entries) = value.get("modules") {
         let Some(list) = entries.as_array() else {
             return Err(failure(
-                "The lock plugins entry must be an array.".to_owned(),
+                "The lock modules entry must be an array.".to_owned(),
             ));
         };
         if list.len() > MAX_LOCK_PLUGIN_ENTRIES {
             return Err(failure(format!(
-                "siralos.lock exceeds the {MAX_LOCK_PLUGIN_ENTRIES}-plugin bound."
+                "siralos.lock exceeds the {MAX_LOCK_PLUGIN_ENTRIES}-module bound."
             )));
         }
         for entry in list {
             let Some(table) = entry.as_table() else {
                 return Err(failure(
-                    "Each lock plugin entry must be a table.".to_owned(),
+                    "Each lock module entry must be a table.".to_owned(),
                 ));
             };
             for key in table.keys() {
                 if !matches!(key.as_str(), "id" | "path" | "digest") {
                     return Err(failure(
-                        "A lock plugin entry contains an unknown field."
+                        "A lock module entry contains an unknown field."
                             .to_owned(),
                     ));
                 }
             }
             let id =
                 table.get("id").and_then(toml::Value::as_str).ok_or_else(
-                    || failure("A lock plugin entry requires an id."),
+                    || failure("A lock module entry requires an id."),
                 )?;
             let path =
                 table.get("path").and_then(toml::Value::as_str).ok_or_else(
-                    || failure("A lock plugin entry requires a path."),
+                    || failure("A lock module entry requires a path."),
                 )?;
             let digest =
                 table.get("digest").and_then(toml::Value::as_str).ok_or_else(
-                    || failure("A lock plugin entry requires a digest."),
+                    || failure("A lock module entry requires a digest."),
                 )?;
             validate_lock_identity_fields(id, path, digest)?;
-            plugins.push(LockPluginIdentity {
+            modules.push(LockModuleIdentity {
                 id: id.to_owned(),
                 path: path.to_owned(),
                 digest: digest.to_owned(),
@@ -226,7 +226,7 @@ pub fn load_workspace_lock(
     }
     let recomputed = create_workspace_lock(
         profile_digest.as_deref(),
-        &plugins,
+        &modules,
     )
     .map_err(|_| {
         failure("siralos.lock contains invalid identity data".to_owned())
@@ -261,15 +261,15 @@ pub fn write_workspace_lock(
     root: &Path,
     lock: &WorkspaceLock,
 ) -> Result<(), LockFailure> {
-    if lock.plugins.len() > MAX_LOCK_PLUGIN_ENTRIES {
+    if lock.modules.len() > MAX_LOCK_PLUGIN_ENTRIES {
         return Err(failure(format!(
-            "siralos.lock exceeds the {MAX_LOCK_PLUGIN_ENTRIES}-plugin bound."
+            "siralos.lock exceeds the {MAX_LOCK_PLUGIN_ENTRIES}-module bound."
         )));
     }
     if let Some(profile_digest) = lock.profile_digest.as_deref() {
         validate_lock_profile_digest(profile_digest)?;
     }
-    for identity in &lock.plugins {
+    for identity in &lock.modules {
         validate_lock_identity_fields(
             &identity.id,
             &identity.path,
@@ -277,7 +277,7 @@ pub fn write_workspace_lock(
         )?;
     }
     let recomputed =
-        create_workspace_lock(lock.profile_digest.as_deref(), &lock.plugins)
+        create_workspace_lock(lock.profile_digest.as_deref(), &lock.modules)
             .map_err(|_| {
             failure("siralos.lock contains invalid identity data".to_owned())
         })?;
@@ -300,9 +300,9 @@ pub fn write_workspace_lock(
             toml::Value::String(profile_digest.clone()),
         );
     }
-    if !lock.plugins.is_empty() {
+    if !lock.modules.is_empty() {
         let entries = lock
-            .plugins
+            .modules
             .iter()
             .map(|identity| {
                 let mut table = toml::map::Map::new();
@@ -321,7 +321,7 @@ pub fn write_workspace_lock(
                 toml::Value::Table(table)
             })
             .collect();
-        document.insert("plugins".to_owned(), toml::Value::Array(entries));
+        document.insert("modules".to_owned(), toml::Value::Array(entries));
     }
     let serialized =
         toml::to_string(&toml::Value::Table(document)).map_err(|_| {
@@ -386,7 +386,7 @@ mod lockfile_tests {
         write_workspace_lock,
     };
     use siralos_core::composition::lock::{
-        LockPluginIdentity, WorkspaceLock, create_workspace_lock,
+        LockModuleIdentity, WorkspaceLock, create_workspace_lock,
     };
 
     fn workspace() -> std::path::PathBuf {
@@ -403,7 +403,7 @@ mod lockfile_tests {
     fn sample_lock() -> WorkspaceLock {
         create_workspace_lock(
             Some(&"a".repeat(64)),
-            &[LockPluginIdentity {
+            &[LockModuleIdentity {
                 id: "guest".to_owned(),
                 path: "guest.wasm".to_owned(),
                 digest: "b".repeat(64),
@@ -449,11 +449,11 @@ mod lockfile_tests {
     }
 
     #[test]
-    fn lock_at_plugin_count_bound_roundtrips() {
+    fn lock_at_module_count_bound_roundtrips() {
         let root = workspace();
         let identities = (0..MAX_LOCK_PLUGIN_ENTRIES)
-            .map(|index| LockPluginIdentity {
-                id: format!("plugin{index}"),
+            .map(|index| LockModuleIdentity {
+                id: format!("module{index}"),
                 path: format!("plugins/plugin{index}.wasm"),
                 digest: "a".repeat(64),
             })
@@ -469,17 +469,17 @@ mod lockfile_tests {
     }
 
     #[test]
-    fn load_rejects_plugin_count_over_limit_before_iterating_entries() {
+    fn load_rejects_module_count_over_limit_before_iterating_entries() {
         let root = workspace();
         let mut entries = vec!["false".to_owned()];
         entries.extend((0..MAX_LOCK_PLUGIN_ENTRIES).map(|index| {
             format!(
-                "{{ id = \"plugin{index}\", path = \"plugins/plugin{index}.wasm\", digest = \"{}\" }}",
+                "{{ id = \"module{index}\", path = \"plugins/plugin{index}.wasm\", digest = \"{}\" }}",
                 "a".repeat(64),
             )
         }));
         let text = format!(
-            "lockDigest = \"{}\"\nplugins = [{}]\n",
+            "lockDigest = \"{}\"\nmodules = [{}]\n",
             "0".repeat(64),
             entries.join(","),
         );
@@ -487,18 +487,18 @@ mod lockfile_tests {
 
         let error = load_workspace_lock(&root).expect_err("refused");
 
-        assert_eq!(error.message, "siralos.lock exceeds the 16-plugin bound.",);
+        assert_eq!(error.message, "siralos.lock exceeds the 16-module bound.",);
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
-    fn write_rejects_plugin_count_over_limit_before_iterating_entries() {
+    fn write_rejects_module_count_over_limit_before_iterating_entries() {
         let root = workspace();
         let lock = WorkspaceLock {
             profile_digest: None,
-            plugins: (0..=MAX_LOCK_PLUGIN_ENTRIES)
-                .map(|index| LockPluginIdentity {
-                    id: format!("plugin{index}"),
+            modules: (0..=MAX_LOCK_PLUGIN_ENTRIES)
+                .map(|index| LockModuleIdentity {
+                    id: format!("module{index}"),
                     path: format!("plugins/plugin{index}.wasm"),
                     digest: "a".repeat(64),
                 })
@@ -508,7 +508,7 @@ mod lockfile_tests {
 
         let error = write_workspace_lock(&root, &lock).expect_err("refused");
 
-        assert_eq!(error.message, "siralos.lock exceeds the 16-plugin bound.",);
+        assert_eq!(error.message, "siralos.lock exceeds the 16-module bound.",);
         assert!(!root.join("siralos.lock").exists());
         let _ = std::fs::remove_dir_all(root);
     }
@@ -519,29 +519,29 @@ mod lockfile_tests {
         let good_digest = "a".repeat(64);
         let cases = [
             format!(
-                "lockDigest = \"{}\"\nprofileDigest = \"nothex\"\nplugins = []\n",
+                "lockDigest = \"{}\"\nprofileDigest = \"nothex\"\nmodules = []\n",
                 "0".repeat(64),
             ),
             format!(
-                "lockDigest = \"{}\"\nplugins = [{{ id = \"{}\", path = \"plugin.wasm\", digest = \"{good_digest}\" }}]\n",
+                "lockDigest = \"{}\"\nmodules = [{{ id = \"{}\", path = \"module.wasm\", digest = \"{good_digest}\" }}]\n",
                 "0".repeat(64),
                 "i".repeat(65),
             ),
             format!(
-                "lockDigest = \"{}\"\nplugins = [{{ id = \"\\u0007\", path = \"plugin.wasm\", digest = \"{good_digest}\" }}]\n",
+                "lockDigest = \"{}\"\nmodules = [{{ id = \"\\u0007\", path = \"module.wasm\", digest = \"{good_digest}\" }}]\n",
                 "0".repeat(64),
             ),
             format!(
-                "lockDigest = \"{}\"\nplugins = [{{ id = \"guest\", path = \"{}\", digest = \"{good_digest}\" }}]\n",
+                "lockDigest = \"{}\"\nmodules = [{{ id = \"guest\", path = \"{}\", digest = \"{good_digest}\" }}]\n",
                 "0".repeat(64),
                 "p".repeat(257),
             ),
             format!(
-                "lockDigest = \"{}\"\nplugins = [{{ id = \"guest\", path = \"../outside.wasm\", digest = \"{good_digest}\" }}]\n",
+                "lockDigest = \"{}\"\nmodules = [{{ id = \"guest\", path = \"../outside.wasm\", digest = \"{good_digest}\" }}]\n",
                 "0".repeat(64),
             ),
             format!(
-                "lockDigest = \"{}\"\nplugins = [{{ id = \"guest\", path = \"plugin.wasm\", digest = \"{}\" }}]\n",
+                "lockDigest = \"{}\"\nmodules = [{{ id = \"guest\", path = \"module.wasm\", digest = \"{}\" }}]\n",
                 "0".repeat(64),
                 "d".repeat(65),
             ),
@@ -565,30 +565,30 @@ mod lockfile_tests {
         let locks = [
             WorkspaceLock {
                 profile_digest: Some("nothex".to_owned()),
-                plugins: Vec::new(),
+                modules: Vec::new(),
                 lock_digest: "0".repeat(64),
             },
             WorkspaceLock {
                 profile_digest: None,
-                plugins: vec![LockPluginIdentity {
+                modules: vec![LockModuleIdentity {
                     id: "i".repeat(65),
-                    path: "plugin.wasm".to_owned(),
+                    path: "module.wasm".to_owned(),
                     digest: good_digest.clone(),
                 }],
                 lock_digest: "0".repeat(64),
             },
             WorkspaceLock {
                 profile_digest: None,
-                plugins: vec![LockPluginIdentity {
+                modules: vec![LockModuleIdentity {
                     id: "guest\u{0007}".to_owned(),
-                    path: "plugin.wasm".to_owned(),
+                    path: "module.wasm".to_owned(),
                     digest: good_digest.clone(),
                 }],
                 lock_digest: "0".repeat(64),
             },
             WorkspaceLock {
                 profile_digest: None,
-                plugins: vec![LockPluginIdentity {
+                modules: vec![LockModuleIdentity {
                     id: "guest".to_owned(),
                     path: "p".repeat(257),
                     digest: good_digest.clone(),
@@ -597,7 +597,7 @@ mod lockfile_tests {
             },
             WorkspaceLock {
                 profile_digest: None,
-                plugins: vec![LockPluginIdentity {
+                modules: vec![LockModuleIdentity {
                     id: "guest".to_owned(),
                     path: "../outside.wasm".to_owned(),
                     digest: good_digest.clone(),
@@ -606,9 +606,9 @@ mod lockfile_tests {
             },
             WorkspaceLock {
                 profile_digest: None,
-                plugins: vec![LockPluginIdentity {
+                modules: vec![LockModuleIdentity {
                     id: "guest".to_owned(),
-                    path: "plugin.wasm".to_owned(),
+                    path: "module.wasm".to_owned(),
                     digest: "d".repeat(65),
                 }],
                 lock_digest: "0".repeat(64),
@@ -637,7 +637,7 @@ mod lockfile_tests {
             )
         };
         let text = format!(
-            "lockDigest = \"{}\"\nplugins = [{},{}]\n",
+            "lockDigest = \"{}\"\nmodules = [{},{}]\n",
             "0".repeat(64),
             entry("plugins/first.wasm"),
             entry("plugins/private/second.wasm"),

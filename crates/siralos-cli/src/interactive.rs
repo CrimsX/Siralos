@@ -12,11 +12,11 @@ use std::path::Path;
 
 use std::collections::{BTreeMap, VecDeque};
 
-use siralos_adapters::domain::{
-    DomainHost, DomainHostBounds, PluginManifest, PluginRecord, load_manifest,
-    load_plugin_records, verify_component,
-};
 use siralos_adapters::lockfile::{LockVerification, verify_workspace_lock};
+use siralos_adapters::module::{
+    ModuleHost, ModuleHostBounds, ModuleManifest, ModuleRecord, load_manifest,
+    load_module_records, verify_component,
+};
 use siralos_adapters::profile_config::{
     WorkspaceProfileLoad, WorkspaceProfileSnapshot,
     WorkspaceProfileWriteToken, load_workspace_profile_snapshot,
@@ -43,19 +43,19 @@ use siralos_adapters::workspace::root::{
     WorkspaceRootError, resolve_workspace_root,
 };
 use siralos_core::composition::lock::{
-    LockPluginIdentity, create_workspace_lock,
+    LockModuleIdentity, create_workspace_lock,
 };
 use siralos_core::composition::{
     DeclaredProfile, EffectiveRunPolicy, LockVerificationDecision,
     SkillCatalogState, StoredLockDigest, compose_effective_policy,
     compose_skill_consumption, create_effective_policy_evidence,
     decide_context_control, decide_lock_verification,
-    decide_plugin_activation, declare_profile,
+    decide_module_activation, declare_profile,
 };
 use siralos_core::context::ContextPolicy;
 use siralos_core::determinism::RetainingReplayRecorder;
-use siralos_core::domain::capability::HostAuthority;
-use siralos_core::domain::lifecycle::{
+use siralos_core::module::capability::HostAuthority;
+use siralos_core::module::lifecycle::{
     ActivationRequest, LifecycleState, RuntimeCheckResult,
 };
 use siralos_core::projection::{
@@ -79,8 +79,8 @@ use crate::configuration::{
     load_user_configuration,
 };
 use crate::output::{
-    format_context_audit, format_context_status, format_domains,
-    format_plugin_added, format_tool_projection, format_tools,
+    format_context_audit, format_context_status, format_module_added,
+    format_modules, format_tool_projection, format_tools,
 };
 use crate::tui::TuiState;
 // `EventSource` is imported for its `cancel`: the relay cancels through the
@@ -99,7 +99,7 @@ mod commands;
 mod config;
 mod display;
 mod model;
-mod plugins;
+mod modules;
 mod profile;
 mod session;
 mod stdio;
@@ -154,10 +154,10 @@ pub use model::InteractiveError;
 pub use model::InteractiveOptions;
 use model::SIRALOS_SYSTEM_INSTRUCTIONS;
 use model::SessionProvider;
-use plugins::render_activate;
-use plugins::render_add_plugin;
-use plugins::render_domains;
-use plugins::render_enable;
+use modules::render_activate_module;
+use modules::render_add_module;
+use modules::render_enable_module;
+use modules::render_modules;
 use profile::apply_model_switch;
 pub use profile::persist_switched_model;
 pub use profile::persist_switched_model_at;

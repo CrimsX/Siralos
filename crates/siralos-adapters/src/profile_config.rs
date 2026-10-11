@@ -10,7 +10,7 @@
 //! filesystem, network, or process access happens here — callers hand in
 //! the document bytes they already hold.
 
-use crate::domain::manifest::{
+use crate::module::manifest::{
     MAX_SIRALOS_TOML_BYTES, SIRALOS_TOML_FILE_NAME,
 };
 use crate::workspace::fs::{BoundedFileRead, read_complete_file_bounded};
@@ -88,15 +88,15 @@ fn profile_file_identity(
 
 /// Maximum complete profile-document size in UTF-8 bytes.
 pub const MAX_PROFILE_DOCUMENT_BYTES: usize =
-    crate::domain::manifest::MAX_SIRALOS_TOML_BYTES;
+    crate::module::manifest::MAX_SIRALOS_TOML_BYTES;
 /// Maximum number of skill names selected by one profile.
 pub const MAX_PROFILE_SKILL_ENTRIES: usize = 128;
 /// Maximum UTF-8 bytes in one selected skill name.
 pub const MAX_PROFILE_SKILL_NAME_BYTES: usize = 128;
-/// Maximum number of selected plugin ids in one profile.
-pub const MAX_PROFILE_PLUGIN_ENTRIES: usize = 16;
-/// Maximum bytes in one selected plugin id.
-pub const MAX_PROFILE_PLUGIN_ID_BYTES: usize = 64;
+/// Maximum number of selected module ids in one profile.
+pub const MAX_PROFILE_MODULE_ENTRIES: usize = 16;
+/// Maximum bytes in one selected module id.
+pub const MAX_PROFILE_MODULE_ID_BYTES: usize = 64;
 
 /// A typed profile-document parse failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -353,7 +353,7 @@ pub fn load_workspace_profile_write_token(
 }
 
 /// Load the workspace profile from `<root>/siralos.toml`. The workspace
-/// record file is shared with `[plugins]` (decision 38/39), so this
+/// record file is shared with `[modules]` (decision 38/39), so this
 /// reader validates only the `[profile]` subtree and treats a missing
 /// file or missing `[profile]` table as [`WorkspaceProfileLoad::Absent`].
 /// The file is lstat-verified as a regular file (symlinks and special
@@ -705,7 +705,7 @@ pub fn parse_profile_value(
     for key in profile_table.keys() {
         if key != "name"
             && key != "permissions"
-            && key != "plugins"
+            && key != "modules"
             && key != "context"
             && key != "skills"
             && key != "provider"
@@ -766,17 +766,17 @@ pub fn parse_profile_value(
             });
         }
     }
-    let mut plugins: Option<Vec<String>> = None;
-    if let Some(selection) = profile.get("plugins") {
+    let mut modules: Option<Vec<String>> = None;
+    if let Some(selection) = profile.get("modules") {
         let Some(list) = selection.as_array() else {
             return Err(error(
-                "The [profile.plugins] entry must be an array.",
+                "The [profile.modules] entry must be an array.",
             ));
         };
         let mut ids = Vec::new();
-        if list.len() > MAX_PROFILE_PLUGIN_ENTRIES {
+        if list.len() > MAX_PROFILE_MODULE_ENTRIES {
             return Err(error(
-                "The [profile.plugins] selection exceeds its entry bound."
+                "The [profile.modules] selection exceeds its entry bound."
                     .to_owned(),
             ));
         }
@@ -784,22 +784,22 @@ pub fn parse_profile_value(
         for id in list {
             let Some(text) = id.as_str() else {
                 return Err(error(
-                    "Each profile plugin id must be a string.".to_owned(),
+                    "Each profile module id must be a string.".to_owned(),
                 ));
             };
             if text.is_empty()
-                || text.len() > MAX_PROFILE_PLUGIN_ID_BYTES
+                || text.len() > MAX_PROFILE_MODULE_ID_BYTES
                 || text.chars().any(char::is_control)
                 || !seen.insert(text)
             {
                 return Err(error(
-                    "Each profile plugin id must be a unique printable name."
+                    "Each profile module id must be a unique printable name."
                         .to_owned(),
                 ));
             }
             ids.push(text.to_owned());
         }
-        plugins = Some(ids);
+        modules = Some(ids);
     }
     let mut context: Option<ContextPolicy> = None;
     if let Some(control) = profile.get("context") {
@@ -973,7 +973,7 @@ pub fn parse_profile_value(
     Ok(ProfileRecord {
         name: name.to_owned(),
         overlay,
-        plugins,
+        modules,
         context,
         skills,
         provider,
@@ -1157,7 +1157,7 @@ mod tests {
         let root = workspace();
         std::fs::write(
             root.join("siralos.toml"),
-            "\n[profile]\nname = \"dev\"\n\n[profile.permissions]\n\"tool.workspace.read\" = \"ask\"\n\n[plugins]\n\n[plugins.guest]\npath = \"guest.wasm\"\ndigest = \"aa\"\n",
+            "\n[profile]\nname = \"dev\"\n\n[profile.permissions]\n\"tool.workspace.read\" = \"ask\"\n\n[modules]\n\n[modules.guest]\npath = \"guest.wasm\"\ndigest = \"aa\"\n",
         )
         .expect("write record");
         let load = super::load_workspace_profile(&root);
@@ -1169,24 +1169,24 @@ mod tests {
     }
 
     #[test]
-    fn profile_plugins_parse_and_validate() {
+    fn profile_modules_parse_and_validate() {
         let document = r#"
 [profile]
 name = "dev"
-plugins = ["guest", "alpha"]
+modules = ["guest", "alpha"]
 
 [profile.permissions]
 "tool.workspace.read" = "ask"
 "#;
         let record = parse_profile_document(document).expect("parsed");
         assert_eq!(
-            record.plugins,
+            record.modules,
             Some(vec!["guest".to_owned(), "alpha".to_owned()])
         );
         let duplicate = r#"
 [profile]
 name = "dev"
-plugins = ["guest", "guest"]
+modules = ["guest", "guest"]
 "#;
         let error = parse_profile_document(duplicate)
             .expect_err("dup refused at parse");
@@ -1198,7 +1198,7 @@ plugins = ["guest", "guest"]
         let malformed = r#"
 [profile]
 name = "dev"
-plugins = [7]
+modules = [7]
 "#;
         let error = parse_profile_document(malformed).expect_err("type");
         assert!(error.message.contains("must be a string"));

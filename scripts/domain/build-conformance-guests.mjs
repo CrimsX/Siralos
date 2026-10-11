@@ -45,7 +45,7 @@ run(
   ],
   ROOT,
 );
-copyWasm("guest", "siralos_domain_conformance_guest.wasm", "conformance-domain.component.wasm");
+copyWasm("guest", "siralos_domain_conformance_guest.wasm", "conformance-module.component.wasm");
 run(
   [
     "build",
@@ -61,6 +61,6 @@ run(
 copyWasm(
   "guest-incompatible",
   "siralos_domain_conformance_guest_incompatible.wasm",
-  "incompatible-domain.component.wasm",
+  "incompatible-module.component.wasm",
 );
 console.log("domain conformance fixtures refreshed");

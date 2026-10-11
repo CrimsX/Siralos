@@ -19,7 +19,7 @@ use std::fmt;
 
 pub mod lock;
 
-pub use lock::{LockPluginIdentity, WorkspaceLock, create_workspace_lock};
+pub use lock::{LockModuleIdentity, WorkspaceLock, create_workspace_lock};
 
 use crate::context::{
     ContextControlOutcome, ContextPolicy, evaluate_context_policy,
@@ -44,10 +44,10 @@ pub const MAX_PROFILE_OVERLAY_ENTRIES: usize = 16;
 pub(crate) const MAX_PROFILE_SKILL_ENTRIES: usize = 128;
 /// Maximum UTF-8 bytes in one selected skill name.
 pub(crate) const MAX_PROFILE_SKILL_NAME_BYTES: usize = 128;
-/// Maximum number of plugin ids in one profile selection.
-pub(crate) const MAX_PROFILE_PLUGIN_ENTRIES: usize = 16;
-/// Maximum profile plugin id length in UTF-8 bytes.
-pub(crate) const MAX_PROFILE_PLUGIN_ID_BYTES: usize = 64;
+/// Maximum number of module ids in one profile selection.
+pub(crate) const MAX_PROFILE_MODULE_ENTRIES: usize = 16;
+/// Maximum profile module id length in UTF-8 bytes.
+pub(crate) const MAX_PROFILE_MODULE_ID_BYTES: usize = 64;
 /// Maximum provider id length in UTF-8 bytes.
 pub(crate) const MAX_PROFILE_PROVIDER_BYTES: usize = 64;
 /// Maximum model id length in UTF-8 bytes.
@@ -270,9 +270,9 @@ pub struct ProfileRecord {
     pub name: String,
     /// Permission overlay entries (bounded count, unique capabilities).
     pub overlay: Vec<ProfileOverlayEntry>,
-    /// Optional plugin-selection filter: the profile may only narrow
-    /// which Host-enabled plugins a session activates (Stage 5.5).
-    pub plugins: Option<Vec<String>>,
+    /// Optional module-selection filter: the profile may only narrow
+    /// which Host-enabled modules a session activates (Stage 5.5).
+    pub modules: Option<Vec<String>>,
     /// Optional context control: the profile may only narrow what the
     /// session claims about content — Live/Pinned/Frozen visibility
     /// (Stage 5.8).
@@ -329,7 +329,7 @@ impl fmt::Debug for ProfileRecord {
             .debug_struct("ProfileRecord")
             .field("name", &"[PROJECTED]")
             .field("overlay_count", &self.overlay.len())
-            .field("plugin_count", &self.plugins.as_ref().map(Vec::len))
+            .field("module_count", &self.modules.as_ref().map(Vec::len))
             .field("context_configured", &self.context.is_some())
             .field("skill_count", &self.skills.as_ref().map(Vec::len))
             .field("provider", &self.provider.as_ref().map(|_| "[PROJECTED]"))
@@ -428,7 +428,7 @@ impl ProfileRecord {
             }
             seen.insert(entry.capability.as_str(), ());
         }
-        validate_plugin_selection(&self.plugins)?;
+        validate_module_selection(&self.modules)?;
         validate_skill_selection(&self.skills)?;
         validate_provider_field(&self.provider)?;
         validate_model_field(&self.model)?;
@@ -595,12 +595,12 @@ fn validate_model_display_name_field(
     Ok(())
 }
 
-/// The result of applying a profile's plugin selection to the
+/// The result of applying a profile's module selection to the
 /// Host-enabled set (Stage 5.5): `activated = enabled ∩ selected`. The
 /// intersection can only shrink the enabled set, so a profile can never
 /// broaden activation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PluginSelection {
+pub struct ModuleSelection {
     /// Sorted ids that may activate.
     pub activated: Vec<String>,
     /// True when the profile declared no selection (nothing filtered).
@@ -609,16 +609,16 @@ pub struct PluginSelection {
     pub unknown: Vec<String>,
 }
 
-impl PluginSelection {
+impl ModuleSelection {
     /// Typed disposition: `unfiltered` or `narrowed`.
     pub fn disposition(&self) -> &'static str {
         if self.unfiltered { "unfiltered" } else { "narrowed" }
     }
 }
 
-/// Digest-bound evidence for one plugin-selection resolution.
+/// Digest-bound evidence for one module-selection resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PluginSelectionEvidence {
+pub struct ModuleSelectionEvidence {
     /// The sorted activated ids.
     pub activated: Vec<String>,
     /// Typed disposition (`unfiltered` or `narrowed`).
@@ -629,15 +629,15 @@ pub struct PluginSelectionEvidence {
     pub unknown: Vec<String>,
 }
 
-/// Create digest-bound evidence for a plugin selection over the single
+/// Create digest-bound evidence for a module selection over the single
 /// artifact-digest primitive.
 ///
 /// # Errors
 ///
 /// Returns [`ProfileValidationError`] when the digest primitive fails.
-pub fn create_plugin_selection_evidence(
-    selection: &PluginSelection,
-) -> Result<PluginSelectionEvidence, ProfileValidationError> {
+pub fn create_module_selection_evidence(
+    selection: &ModuleSelection,
+) -> Result<ModuleSelectionEvidence, ProfileValidationError> {
     let activated: Vec<CanonicalValue> = selection
         .activated
         .iter()
@@ -657,12 +657,12 @@ pub fn create_plugin_selection_evidence(
         ("unknown".to_owned(), CanonicalValue::Array(unknown)),
     ]));
     let selection_digest =
-        compute_artifact_digest("PluginSelectionEvidence", 1, &payload)
+        compute_artifact_digest("ModuleSelectionEvidence", 1, &payload)
             .map_err(|error| ProfileValidationError {
                 message: error.message,
             })?
             .value;
-    Ok(PluginSelectionEvidence {
+    Ok(ModuleSelectionEvidence {
         activated: selection.activated.clone(),
         disposition: selection.disposition().to_owned(),
         selection_digest,
@@ -670,12 +670,12 @@ pub fn create_plugin_selection_evidence(
     })
 }
 
-/// Deterministic report-safe rendering of plugin-selection evidence.
-pub fn render_plugin_selection_evidence(
-    evidence: &PluginSelectionEvidence,
+/// Deterministic report-safe rendering of module-selection evidence.
+pub fn render_module_selection_evidence(
+    evidence: &ModuleSelectionEvidence,
 ) -> String {
     let base = format!(
-        "{} plugins={}",
+        "{} modules={}",
         evidence.disposition,
         evidence.activated.len()
     );
@@ -685,16 +685,16 @@ pub fn render_plugin_selection_evidence(
         format!("{base} unknown={}", evidence.unknown.len())
     }
 }
-/// Apply a profile's plugin selection to the Host-enabled set.
+/// Apply a profile's module selection to the Host-enabled set.
 /// `selected` is the profile's declared list (`None` = unfiltered).
-pub fn select_profile_plugins(
+pub fn select_profile_modules(
     enabled: &[String],
     selected: Option<&[String]>,
-) -> PluginSelection {
+) -> ModuleSelection {
     let Some(selected) = selected else {
         let mut activated: Vec<String> = enabled.to_vec();
         activated.sort();
-        return PluginSelection {
+        return ModuleSelection {
             activated,
             unfiltered: true,
             unknown: Vec::new(),
@@ -710,41 +710,41 @@ pub fn select_profile_plugins(
         .difference(&enabled_set)
         .map(|id| (*id).clone())
         .collect::<Vec<String>>();
-    PluginSelection { activated, unfiltered: false, unknown }
+    ModuleSelection { activated, unfiltered: false, unknown }
 }
-/// Validate the optional plugin-selection list: bounded count and id
+/// Validate the optional module-selection list: bounded count and id
 /// length, non-empty ids, no duplicates.
-fn validate_plugin_selection(
-    plugins: &Option<Vec<String>>,
+fn validate_module_selection(
+    modules: &Option<Vec<String>>,
 ) -> Result<(), ProfileValidationError> {
-    let Some(plugins) = plugins else {
+    let Some(modules) = modules else {
         return Ok(());
     };
-    if plugins.len() > MAX_PROFILE_PLUGIN_ENTRIES {
+    if modules.len() > MAX_PROFILE_MODULE_ENTRIES {
         return Err(ProfileValidationError {
             message: format!(
-                "The profile exceeds the {MAX_PROFILE_PLUGIN_ENTRIES}-plugin bound."
+                "The profile exceeds the {MAX_PROFILE_MODULE_ENTRIES}-module bound."
             ),
         });
     }
     let mut seen = BTreeMap::new();
-    for id in plugins {
-        if id.is_empty() || id.len() > MAX_PROFILE_PLUGIN_ID_BYTES {
+    for id in modules {
+        if id.is_empty() || id.len() > MAX_PROFILE_MODULE_ID_BYTES {
             return Err(ProfileValidationError {
                 message: format!(
-                    "A profile plugin id must be 1..={MAX_PROFILE_PLUGIN_ID_BYTES} bytes."
+                    "A profile module id must be 1..={MAX_PROFILE_MODULE_ID_BYTES} bytes."
                 ),
             });
         }
         if id.chars().any(char::is_control) {
             return Err(ProfileValidationError {
-                message: "A profile plugin id must not contain NUL."
+                message: "A profile module id must not contain NUL."
                     .to_owned(),
             });
         }
         if seen.contains_key(id.as_str()) {
             return Err(ProfileValidationError {
-                message: "The profile selects a plugin more than once."
+                message: "The profile selects a module more than once."
                     .to_owned(),
             });
         }
@@ -791,7 +791,7 @@ fn validate_skill_selection(
 /// The typed outcome of one per-id activation attempt through the
 /// Stage 5.7 gate (Host authority first, then the profile filter).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PluginActivationOutcome {
+pub enum ModuleActivationOutcome {
     /// The id may activate.
     Activated,
     /// Host-enabled, but outside the applied profile selection.
@@ -800,7 +800,7 @@ pub enum PluginActivationOutcome {
     RefusedNotEnabled,
 }
 
-impl PluginActivationOutcome {
+impl ModuleActivationOutcome {
     /// Typed decision string used by evidence and rendering.
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -811,46 +811,46 @@ impl PluginActivationOutcome {
     }
 }
 
-/// The result of gating one requested plugin id.
+/// The result of gating one requested module id.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PluginActivationDecision {
+pub struct ModuleActivationDecision {
     /// The typed outcome.
-    pub outcome: PluginActivationOutcome,
+    pub outcome: ModuleActivationOutcome,
     /// Truthful, report-safe refusal reason; `None` when activated.
     pub reason: Option<String>,
 }
 
-/// Gate one requested plugin id: Host authority first (a profile can
+/// Gate one requested module id: Host authority first (a profile can
 /// never enable - decision 39), then the frozen Stage 5.5 profile
 /// filter (activated = enabled ∩ selected).
 #[must_use]
-pub fn decide_plugin_activation(
+pub fn decide_module_activation(
     enabled: &[String],
     selected: Option<&[String]>,
     requested: &str,
-) -> PluginActivationDecision {
+) -> ModuleActivationDecision {
     if !enabled.iter().any(|id| id == requested) {
-        return PluginActivationDecision {
-            outcome: PluginActivationOutcome::RefusedNotEnabled,
+        return ModuleActivationDecision {
+            outcome: ModuleActivationOutcome::RefusedNotEnabled,
             reason: Some(format!(
                 "the Host has not enabled {requested:?}; a profile can never enable"
             )),
         };
     }
     let Some(selected) = selected else {
-        return PluginActivationDecision {
-            outcome: PluginActivationOutcome::Activated,
+        return ModuleActivationDecision {
+            outcome: ModuleActivationOutcome::Activated,
             reason: None,
         };
     };
     if selected.iter().any(|id| id == requested) {
-        PluginActivationDecision {
-            outcome: PluginActivationOutcome::Activated,
+        ModuleActivationDecision {
+            outcome: ModuleActivationOutcome::Activated,
             reason: None,
         }
     } else {
-        PluginActivationDecision {
-            outcome: PluginActivationOutcome::RefusedFiltered,
+        ModuleActivationDecision {
+            outcome: ModuleActivationOutcome::RefusedFiltered,
             reason: Some(format!(
                 "the workspace profile does not select {requested:?}; it stays inactive"
             )),
@@ -860,7 +860,7 @@ pub fn decide_plugin_activation(
 
 /// Digest-bound evidence for one activation-gate decision.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PluginActivationEvidence {
+pub struct ModuleActivationEvidence {
     /// The typed decision string.
     pub decision: String,
     /// The bound decision digest.
@@ -876,10 +876,10 @@ pub struct PluginActivationEvidence {
 /// # Errors
 ///
 /// Returns [`ProfileValidationError`] when the digest primitive fails.
-pub fn create_plugin_activation_evidence(
-    decision: &PluginActivationDecision,
+pub fn create_module_activation_evidence(
+    decision: &ModuleActivationDecision,
     selection_present: bool,
-) -> Result<PluginActivationEvidence, ProfileValidationError> {
+) -> Result<ModuleActivationEvidence, ProfileValidationError> {
     let payload = CanonicalValue::Object(BTreeMap::from([
         (
             "decision".to_owned(),
@@ -901,12 +901,12 @@ pub fn create_plugin_activation_evidence(
         ),
     ]));
     let activation_digest =
-        compute_artifact_digest("PluginActivationEvidence", 1, &payload)
+        compute_artifact_digest("ModuleActivationEvidence", 1, &payload)
             .map_err(|error| ProfileValidationError {
                 message: error.message,
             })?
             .value;
-    Ok(PluginActivationEvidence {
+    Ok(ModuleActivationEvidence {
         decision: decision.outcome.as_str().to_owned(),
         activation_digest,
         reason: decision.reason.clone(),
@@ -920,8 +920,8 @@ pub fn create_plugin_activation_evidence(
 
 /// Deterministic report-safe rendering of activation-gate evidence.
 #[must_use]
-pub fn render_plugin_activation_evidence(
-    evidence: &PluginActivationEvidence,
+pub fn render_module_activation_evidence(
+    evidence: &ModuleActivationEvidence,
     requested: &str,
 ) -> String {
     let base = format!("{} {requested}", evidence.decision);
@@ -1809,7 +1809,7 @@ mod tests {
                 entry("tool.workspace.read", PermissionRule::Ask),
                 entry("tool.workspace.search", PermissionRule::Deny),
             ],
-            plugins: None,
+            modules: None,
             context: None,
             skills: None,
             provider: None,
@@ -1844,7 +1844,7 @@ mod tests {
                 entry("tool.workspace.read", PermissionRule::Allow),
                 entry("ungranted.capability", PermissionRule::Ask),
             ],
-            plugins: None,
+            modules: None,
             context: None,
             skills: None,
             provider: None,
@@ -1873,7 +1873,7 @@ mod tests {
         let record = ProfileRecord {
             name: "same".to_owned(),
             overlay: vec![entry("tool.workspace.search", PermissionRule::Ask)],
-            plugins: None,
+            modules: None,
             context: None,
             skills: None,
             provider: None,
@@ -1899,7 +1899,7 @@ mod tests {
         let record = ProfileRecord {
             name: "a".repeat(MAX_PROFILE_NAME_BYTES + 1),
             overlay: Vec::new(),
-            plugins: None,
+            modules: None,
             context: None,
             skills: None,
             provider: None,
@@ -1921,7 +1921,7 @@ mod tests {
                 entry("tool.workspace.read", PermissionRule::Deny),
                 entry("tool.workspace.read", PermissionRule::Ask),
             ],
-            plugins: None,
+            modules: None,
             context: None,
             skills: None,
             provider: None,
@@ -1949,7 +1949,7 @@ mod tests {
                         })
                 })
                 .collect(),
-            plugins: None,
+            modules: None,
             context: None,
             skills: None,
             provider: None,
@@ -1975,7 +1975,7 @@ mod tests {
             ProfileRecord {
                 name: "dev".to_owned(),
                 overlay: Vec::new(),
-                plugins: None,
+                modules: None,
                 context: None,
                 skills: None,
                 provider: None,
@@ -2057,7 +2057,7 @@ mod tests {
                 entry("tool.workspace.read", PermissionRule::Ask),
                 entry("tool.workspace.search", PermissionRule::Deny),
             ],
-            plugins: None,
+            modules: None,
             context: None,
             skills: None,
             provider: None,
@@ -2150,7 +2150,7 @@ mod tests {
 
     #[test]
     fn lock_resolution_is_deterministic_and_sorted() {
-        let mk = |id: &str, digest: &str| super::lock::LockPluginIdentity {
+        let mk = |id: &str, digest: &str| super::lock::LockModuleIdentity {
             id: id.to_owned(),
             path: format!("{id}.wasm"),
             digest: digest.to_owned(),
@@ -2169,12 +2169,12 @@ mod tests {
         )
         .expect("lock");
         assert_eq!(first.lock_digest, second.lock_digest);
-        assert_eq!(first.plugins[0].id, "alpha");
-        assert_eq!(first.plugins[1].id, "zeta");
+        assert_eq!(first.modules[0].id, "alpha");
+        assert_eq!(first.modules[1].id, "zeta");
         assert_eq!(first.profile_digest.as_deref(), Some(profile.as_str()));
         let absent =
             super::lock::create_workspace_lock(None, &[]).expect("lock");
-        assert_eq!(absent.plugins.len(), 0);
+        assert_eq!(absent.modules.len(), 0);
         assert!(absent.profile_digest.is_none());
         assert_ne!(absent.lock_digest, first.lock_digest);
     }
@@ -2188,12 +2188,12 @@ mod tests {
         let error = super::lock::create_workspace_lock(
             None,
             &[
-                super::lock::LockPluginIdentity {
+                super::lock::LockModuleIdentity {
                     id: "dup".to_owned(),
                     path: "a.wasm".to_owned(),
                     digest: good.clone(),
                 },
-                super::lock::LockPluginIdentity {
+                super::lock::LockModuleIdentity {
                     id: "dup".to_owned(),
                     path: "b.wasm".to_owned(),
                     digest: good.clone(),
@@ -2204,7 +2204,7 @@ mod tests {
         assert!(error.message.contains("more than once"));
         let error = super::lock::create_workspace_lock(
             None,
-            &[super::lock::LockPluginIdentity {
+            &[super::lock::LockModuleIdentity {
                 id: String::new(),
                 path: "a.wasm".to_owned(),
                 digest: good,
@@ -2215,48 +2215,48 @@ mod tests {
     }
 
     #[test]
-    fn plugin_selection_intersects_and_reports_unknown() {
+    fn module_selection_intersects_and_reports_unknown() {
         let enabled =
             vec!["zeta".to_owned(), "alpha".to_owned(), "guest".to_owned()];
-        let selection = super::select_profile_plugins(
+        let selection = super::select_profile_modules(
             &enabled,
             Some(&["zeta".to_owned(), "ghost".to_owned()]),
         );
         assert_eq!(selection.disposition(), "narrowed");
         assert_eq!(selection.activated, vec!["zeta".to_owned()]);
         assert_eq!(selection.unknown, vec!["ghost".to_owned()]);
-        let unfiltered = super::select_profile_plugins(&enabled, None);
+        let unfiltered = super::select_profile_modules(&enabled, None);
         assert_eq!(unfiltered.disposition(), "unfiltered");
         assert_eq!(
             unfiltered.activated,
             vec!["alpha".to_owned(), "guest".to_owned(), "zeta".to_owned()]
         );
-        let empty = super::select_profile_plugins(&enabled, Some(&[]));
+        let empty = super::select_profile_modules(&enabled, Some(&[]));
         assert_eq!(empty.disposition(), "narrowed");
         assert!(empty.activated.is_empty());
-        let evidence = super::create_plugin_selection_evidence(&selection)
+        let evidence = super::create_module_selection_evidence(&selection)
             .expect("evidence");
         assert_eq!(evidence.activated.len(), 1);
         assert_eq!(evidence.unknown.len(), 1);
         assert_eq!(
-            super::render_plugin_selection_evidence(&evidence),
-            "narrowed plugins=1 unknown=1"
+            super::render_module_selection_evidence(&evidence),
+            "narrowed modules=1 unknown=1"
         );
         let unfiltered_evidence =
-            super::create_plugin_selection_evidence(&unfiltered)
+            super::create_module_selection_evidence(&unfiltered)
                 .expect("evidence");
         assert_eq!(
-            super::render_plugin_selection_evidence(&unfiltered_evidence),
-            "unfiltered plugins=3"
+            super::render_module_selection_evidence(&unfiltered_evidence),
+            "unfiltered modules=3"
         );
     }
 
     #[test]
-    fn profile_plugin_selection_validates_bounds_and_uniqueness() {
+    fn profile_module_selection_validates_bounds_and_uniqueness() {
         let record = super::ProfileRecord {
             name: "dev".to_owned(),
             overlay: Vec::new(),
-            plugins: Some(vec!["a".to_owned(), "a".to_owned()]),
+            modules: Some(vec!["a".to_owned(), "a".to_owned()]),
             context: None,
             skills: None,
             provider: None,
@@ -2274,7 +2274,7 @@ mod tests {
         let record = super::ProfileRecord {
             name: "dev".to_owned(),
             overlay: Vec::new(),
-            plugins: Some(vec![String::new()]),
+            modules: Some(vec![String::new()]),
             context: None,
             skills: None,
             provider: None,
@@ -2292,7 +2292,7 @@ mod tests {
         let record = super::ProfileRecord {
             name: "dev".to_owned(),
             overlay: Vec::new(),
-            plugins: Some(vec!["a".to_owned()]),
+            modules: Some(vec!["a".to_owned()]),
             context: None,
             skills: None,
             provider: None,
@@ -2540,56 +2540,56 @@ mod tests {
     #[test]
     fn activation_gate_precedence_and_filtering() {
         use super::{
-            PluginActivationOutcome, create_plugin_activation_evidence,
-            decide_plugin_activation, render_plugin_activation_evidence,
+            ModuleActivationOutcome, create_module_activation_evidence,
+            decide_module_activation, render_module_activation_evidence,
         };
         let enabled = vec!["zeta".to_owned(), "alpha".to_owned()];
         // Host authority first: un-enabled id refused even when selected.
-        let refused = decide_plugin_activation(
+        let refused = decide_module_activation(
             &enabled,
             Some(&["alpha".to_owned(), "ghost".to_owned()]),
             "ghost",
         );
         assert_eq!(
             refused.outcome,
-            PluginActivationOutcome::RefusedNotEnabled
+            ModuleActivationOutcome::RefusedNotEnabled
         );
         assert!(refused.reason.as_deref().unwrap().contains("never enable"));
         // Filtered: enabled but not selected.
-        let filtered = decide_plugin_activation(
+        let filtered = decide_module_activation(
             &enabled,
             Some(&["alpha".to_owned()]),
             "zeta",
         );
-        assert_eq!(filtered.outcome, PluginActivationOutcome::RefusedFiltered);
+        assert_eq!(filtered.outcome, ModuleActivationOutcome::RefusedFiltered);
         assert!(
             filtered.reason.as_deref().unwrap().contains("does not select")
         );
         // Narrowed allow.
-        let allowed = decide_plugin_activation(
+        let allowed = decide_module_activation(
             &enabled,
             Some(&["alpha".to_owned(), "zeta".to_owned()]),
             "alpha",
         );
-        assert_eq!(allowed.outcome, PluginActivationOutcome::Activated);
+        assert_eq!(allowed.outcome, ModuleActivationOutcome::Activated);
         assert!(allowed.reason.is_none());
         // Transparent without a selection.
-        let transparent = decide_plugin_activation(&enabled, None, "zeta");
-        assert_eq!(transparent.outcome, PluginActivationOutcome::Activated);
+        let transparent = decide_module_activation(&enabled, None, "zeta");
+        assert_eq!(transparent.outcome, ModuleActivationOutcome::Activated);
         // Digest-bound evidence and rendering.
-        let evidence = create_plugin_activation_evidence(&filtered, true)
+        let evidence = create_module_activation_evidence(&filtered, true)
             .expect("evidence");
         assert_eq!(evidence.decision, "refused-filtered");
         assert_eq!(evidence.selection, "present");
         assert_eq!(
-            render_plugin_activation_evidence(&evidence, "zeta"),
+            render_module_activation_evidence(&evidence, "zeta"),
             "refused-filtered zeta (the workspace profile does not select \"zeta\"; it stays inactive)"
         );
-        let absent = create_plugin_activation_evidence(&transparent, false)
+        let absent = create_module_activation_evidence(&transparent, false)
             .expect("evidence");
         assert_eq!(absent.selection, "absent");
         assert_eq!(
-            render_plugin_activation_evidence(&absent, "zeta"),
+            render_module_activation_evidence(&absent, "zeta"),
             "activated zeta"
         );
     }

@@ -76,14 +76,14 @@ pub enum WorkerCommand {
     /// credential, so it happens where they live (decision 168 R2): a secret
     /// never crosses to the frontend just so the frontend can fetch.
     ModelsFetch,
-    /// Install a plugin folder into the session's domain registry. These three
+    /// Install a module folder into the session's module registry. These three
     /// mutate the registry and activate hosts, so they belong with the session
     /// (decision 168 R4): the frontend cannot hold a registry it does not own.
-    DomainsAdd(String),
-    /// Enable an installed plugin.
-    DomainsEnable(String),
-    /// Activate an installed plugin through the profile's narrowing gate.
-    DomainsActivate(String),
+    ModulesAdd(String),
+    /// Enable an installed module.
+    ModulesEnable(String),
+    /// Activate an installed module through the profile's narrowing gate.
+    ModulesActivate(String),
     /// Stop: flush the recordings exactly once and exit the loop.
     Shutdown,
 }
@@ -361,12 +361,12 @@ pub trait WorkerSession {
         &mut self,
         cancellation: &CancelFlag,
     ) -> Result<Vec<String>, String>;
-    /// Install a plugin folder, returning the report the frontend shows.
-    fn domains_add(&mut self, folder: &str) -> Result<String, String>;
-    /// Enable an installed plugin.
-    fn domains_enable(&mut self, id: &str) -> Result<String, String>;
-    /// Activate an installed plugin through the profile's narrowing gate.
-    fn domains_activate(&mut self, id: &str) -> Result<String, String>;
+    /// Install a module folder, returning the report the frontend shows.
+    fn modules_add(&mut self, folder: &str) -> Result<String, String>;
+    /// Enable an installed module.
+    fn modules_enable(&mut self, id: &str) -> Result<String, String>;
+    /// Activate an installed module through the profile's narrowing gate.
+    fn modules_activate(&mut self, id: &str) -> Result<String, String>;
     /// The header the frontend shows (C2 step 3). The status segment is derived
     /// from the composition and its context metrics, so the frontend cannot
     /// build it once the session lives here.
@@ -754,8 +754,8 @@ fn run_worker_loop_with_stop<S: WorkerSession>(
                 // normally; do not carry that bit into the next prompt.
                 cancel.clear();
             }
-            WorkerCommand::DomainsAdd(value) => {
-                match session.domains_add(&value) {
+            WorkerCommand::ModulesAdd(value) => {
+                match session.modules_add(&value) {
                     Ok(report) => {
                         let _ = events.send(WorkerEvent::Report(report));
                     }
@@ -764,8 +764,8 @@ fn run_worker_loop_with_stop<S: WorkerSession>(
                     }
                 }
             }
-            WorkerCommand::DomainsEnable(value) => {
-                match session.domains_enable(&value) {
+            WorkerCommand::ModulesEnable(value) => {
+                match session.modules_enable(&value) {
                     Ok(report) => {
                         let _ = events.send(WorkerEvent::Report(report));
                     }
@@ -774,8 +774,8 @@ fn run_worker_loop_with_stop<S: WorkerSession>(
                     }
                 }
             }
-            WorkerCommand::DomainsActivate(value) => {
-                match session.domains_activate(&value) {
+            WorkerCommand::ModulesActivate(value) => {
+                match session.modules_activate(&value) {
                     Ok(report) => {
                         let _ = events.send(WorkerEvent::Report(report));
                     }
@@ -845,9 +845,9 @@ impl WorkerHandle {
         let string_len = match &command {
             WorkerCommand::Prompt(value)
             | WorkerCommand::SetModel(value)
-            | WorkerCommand::DomainsAdd(value)
-            | WorkerCommand::DomainsEnable(value)
-            | WorkerCommand::DomainsActivate(value) => Some(value.len()),
+            | WorkerCommand::ModulesAdd(value)
+            | WorkerCommand::ModulesEnable(value)
+            | WorkerCommand::ModulesActivate(value) => Some(value.len()),
             WorkerCommand::Cancel
             | WorkerCommand::ContextReport
             | WorkerCommand::ToolsReport
@@ -1895,13 +1895,13 @@ mod loop_tests {
         ) -> Result<Vec<String>, String> {
             Ok(vec!["fake-model".to_owned()])
         }
-        fn domains_add(&mut self, folder: &str) -> Result<String, String> {
+        fn modules_add(&mut self, folder: &str) -> Result<String, String> {
             Ok(format!("added {folder}"))
         }
-        fn domains_enable(&mut self, id: &str) -> Result<String, String> {
+        fn modules_enable(&mut self, id: &str) -> Result<String, String> {
             Ok(format!("enabled {id}"))
         }
-        fn domains_activate(&mut self, id: &str) -> Result<String, String> {
+        fn modules_activate(&mut self, id: &str) -> Result<String, String> {
             Ok(format!("activated {id}"))
         }
         fn status(&self) -> SessionStatus {
@@ -1951,13 +1951,13 @@ mod loop_tests {
         events
     }
     #[test]
-    fn a_domain_command_reports_what_the_session_did() {
-        // Decision 168 R4: these mutate the session's domain registry, so the
+    fn a_module_command_reports_what_the_session_did() {
+        // Decision 168 R4: these mutate the session's module registry, so the
         // report is the session's too -- the loop only relays it.
         let mut session = FakeSession::default();
         let cancel = CancelFlag::new();
         let events = run(
-            vec![WorkerCommand::DomainsActivate("demo".to_owned())],
+            vec![WorkerCommand::ModulesActivate("demo".to_owned())],
             &mut session,
             &cancel,
         );
@@ -2567,13 +2567,13 @@ mod loop_tests {
         ) -> Result<Vec<String>, String> {
             Ok(Vec::new())
         }
-        fn domains_add(&mut self, _folder: &str) -> Result<String, String> {
+        fn modules_add(&mut self, _folder: &str) -> Result<String, String> {
             Ok(String::new())
         }
-        fn domains_enable(&mut self, _id: &str) -> Result<String, String> {
+        fn modules_enable(&mut self, _id: &str) -> Result<String, String> {
             Ok(String::new())
         }
-        fn domains_activate(&mut self, _id: &str) -> Result<String, String> {
+        fn modules_activate(&mut self, _id: &str) -> Result<String, String> {
             Ok(String::new())
         }
         fn status(&self) -> SessionStatus {

@@ -9,7 +9,7 @@ use super::{
     handle_tui_mouse, io, is_unknown_slash_command,
     load_workspace_profile_write_token, model_listing_diagnostic,
     model_listing_gate, open_model_picker_via_worker, parse_slash_command,
-    render_answer, render_domains, render_evolve_lines, render_model_line,
+    render_answer, render_evolve_lines, render_model_line, render_modules,
     render_provider_line_display, resolve_workspace_root,
     safe_alias_for_display, sanitize_for_display, slash_command_catalog,
     spawn_tui_worker, switch_model_via_worker, transient_status,
@@ -23,8 +23,8 @@ use super::{
 /// The session is NOT here any more (decision 167). An arm that needs it sends
 /// a [`WorkerCommand`] and relays the answer; an arm that only renders reads
 /// the cached `Ready` snapshot. The capability state the old signature carried
-/// — the tool definitions, the permission policy, the domain hosts and
-/// manifests, the plugin selection and the context control — went with it
+/// — the tool definitions, the permission policy, the module hosts and
+/// manifests, the module selection and the context control — went with it
 /// (decision 168 R4: capability is authority, and the frontend may not hold
 /// authority it cannot enforce). Returns `true` when the loop must exit.
 #[allow(clippy::too_many_arguments)]
@@ -69,19 +69,19 @@ pub(super) fn dispatch_tui_command(
             )?;
             render_answer(answer, sink)?;
         }
-        SlashCommand::Domains => {
+        SlashCommand::Modules => {
             // Display only, and the workspace root is frontend state (R1), so
             // this stays a local render.
             let rendered =
-                sanitize_for_display(&render_domains(workspace_root));
+                sanitize_for_display(&render_modules(workspace_root));
             let _ = sink.write_all(rendered.as_bytes());
         }
         SlashCommand::Exit => return Ok(true),
-        // The three domain arms MUTATE the session's domain registry and
+        // The three module arms MUTATE the session's module registry and
         // activate hosts, so the session does it (decision 168 R4). The worker
         // calls the very same `render_*` helpers, so neither the report nor the
         // side effect forks.
-        SlashCommand::DomainsAdd(folder) => {
+        SlashCommand::ModulesAdd(folder) => {
             let answer = ask_worker(
                 worker,
                 sink,
@@ -89,12 +89,12 @@ pub(super) fn dispatch_tui_command(
                 pane,
                 progress,
                 reasoning,
-                WorkerCommand::DomainsAdd(folder.unwrap_or("").to_owned()),
+                WorkerCommand::ModulesAdd(folder.unwrap_or("").to_owned()),
                 Until::Answer,
             )?;
             render_answer(answer, sink)?;
         }
-        SlashCommand::DomainsEnable(id) => {
+        SlashCommand::ModulesEnable(id) => {
             let answer = ask_worker(
                 worker,
                 sink,
@@ -102,12 +102,12 @@ pub(super) fn dispatch_tui_command(
                 pane,
                 progress,
                 reasoning,
-                WorkerCommand::DomainsEnable(id.unwrap_or("").to_owned()),
+                WorkerCommand::ModulesEnable(id.unwrap_or("").to_owned()),
                 Until::Answer,
             )?;
             render_answer(answer, sink)?;
         }
-        SlashCommand::DomainsActivate(id) => {
+        SlashCommand::ModulesActivate(id) => {
             let answer = ask_worker(
                 worker,
                 sink,
@@ -115,7 +115,7 @@ pub(super) fn dispatch_tui_command(
                 pane,
                 progress,
                 reasoning,
-                WorkerCommand::DomainsActivate(id.unwrap_or("").to_owned()),
+                WorkerCommand::ModulesActivate(id.unwrap_or("").to_owned()),
                 Until::Answer,
             )?;
             render_answer(answer, sink)?;

@@ -303,12 +303,12 @@ fn run_scenario(
                 "result": result,
             }))
         }
-        SUBJECT_DOMAIN_LIFECYCLE => {
+        SUBJECT_MODULE_LIFECYCLE => {
             let input = scenario
                 .input
                 .as_ref()
                 .expect("domain input was validated while loading the corpus");
-            let result = domain_lifecycle_record(input)?;
+            let result = module_lifecycle_record(input)?;
             Ok(json!({
                 "scenarioId": scenario.id,
                 "subject": scenario.subject,
@@ -316,12 +316,12 @@ fn run_scenario(
                 "result": result,
             }))
         }
-        SUBJECT_DOMAIN_CAPABILITY => {
+        SUBJECT_MODULE_CAPABILITY => {
             let input = scenario
                 .input
                 .as_ref()
                 .expect("domain input was validated while loading the corpus");
-            let result = domain_capability_record(input)?;
+            let result = module_capability_record(input)?;
             Ok(json!({
                 "scenarioId": scenario.id,
                 "subject": scenario.subject,
@@ -674,9 +674,9 @@ fn run_scenario(
         | SUBJECT_COMPOSITION_EFFECTIVE
         | SUBJECT_CONTEXT_CONTROLS
         | SUBJECT_COMPOSITION_LOCK
-        | SUBJECT_COMPOSITION_PLUGIN_SELECTION
+        | SUBJECT_COMPOSITION_MODULE_SELECTION
         | SUBJECT_COMPOSITION_SKILLS
-        | SUBJECT_COMPOSITION_PLUGIN_ACTIVATION
+        | SUBJECT_COMPOSITION_MODULE_ACTIVATION
         | SUBJECT_COMPOSITION_CONTEXT_CONTROL
         | SUBJECT_COMPOSITION_LOCK_VERIFY
         | SUBJECT_COMPOSITION_SKILL_CONSUMPTION
@@ -701,13 +701,13 @@ fn run_scenario(
                 }
                 SUBJECT_CONTEXT_CONTROLS => context_controls_record(input)?,
                 SUBJECT_COMPOSITION_LOCK => composition_lock_record(input)?,
-                SUBJECT_COMPOSITION_PLUGIN_SELECTION => {
+                SUBJECT_COMPOSITION_MODULE_SELECTION => {
                     composition_plugin_selection_record(input)?
                 }
                 SUBJECT_COMPOSITION_SKILLS => {
                     composition_skills_record(input)?
                 }
-                SUBJECT_COMPOSITION_PLUGIN_ACTIVATION => {
+                SUBJECT_COMPOSITION_MODULE_ACTIVATION => {
                     composition_plugin_activation_record(input)?
                 }
                 SUBJECT_COMPOSITION_CONTEXT_CONTROL => {

@@ -1,9 +1,9 @@
 //! Component Model / WIT conformance tests (Stage 3R R6, ADR 0034).
 //!
 //! These tests execute the REAL production boundary: the versioned WIT
-//! world (`siralos-adapters/wit/domain-abi.wit`), the exact checked-in
+//! world (`siralos-adapters/wit/module-abi.wit`), the exact checked-in
 //! synthetic conformance component bytes, and the production host
-//! (`siralos-adapters::domain`). No path here is mocked: the digest is
+//! (`siralos-adapters::module`). No path here is mocked: the digest is
 //! computed from the accepted component bytes, activation binds the
 //! exact identity, effects are host-mediated against the grant, traps
 //! stay contained, and fuel bounds pathological guests.
@@ -12,14 +12,14 @@
 //! when a fixture is rebuilt (tests/domain-conformance/README.md), the
 //! digest constants below must be updated in the same change.
 
-use siralos_adapters::domain::{
-    DomainHost, DomainHostBounds, EffectRequest, MediatedAnswer, QueryOutcome,
+use siralos_adapters::module::{
+    EffectRequest, MediatedAnswer, ModuleHost, ModuleHostBounds, QueryOutcome,
 };
-use siralos_core::domain::capability::HostAuthority;
-use siralos_core::domain::failure::{DomainFailure, ResourceExceededKind};
-use siralos_core::domain::lifecycle::{ActivationRequest, RuntimeCheckResult};
-use siralos_core::domain::package::{DomainAbi, DomainPackage};
 use siralos_core::identity::sha256_hex;
+use siralos_core::module::capability::HostAuthority;
+use siralos_core::module::failure::{ModuleFailure, ResourceExceededKind};
+use siralos_core::module::lifecycle::{ActivationRequest, RuntimeCheckResult};
+use siralos_core::module::package::{ModuleAbi, ModulePackage};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -28,11 +28,11 @@ use std::time::{Duration, Instant};
 
 const ABI: &str = "siralos:domain-abi@1.0.0";
 
-/// Exact SHA-256 of `fixtures/conformance-domain.component.wasm`.
+/// Exact SHA-256 of `fixtures/conformance-module.component.wasm`.
 const CONFORMANCE_DIGEST: &str =
     "2958cbb7154830511f98fc4ee60ed5d6a9e591c13871c3e79a7ae47731643210";
 
-/// Exact SHA-256 of `fixtures/incompatible-domain.component.wasm`.
+/// Exact SHA-256 of `fixtures/incompatible-module.component.wasm`.
 const INCOMPATIBLE_DIGEST: &str =
     "0001c6c4fea47187120e70f1c4f32f2ff4f44d3d876c8f0c71d2e7be7c9b747b";
 
@@ -70,18 +70,18 @@ fn request(id: &str, digest: &str) -> ActivationRequest {
         .expect("request parses")
 }
 
-fn package(id: &str, digest: &str, abi: &str) -> DomainPackage {
-    DomainPackage::parse(id, digest, abi, &["workspace-read".to_owned()])
+fn package(id: &str, digest: &str, abi: &str) -> ModulePackage {
+    ModulePackage::parse(id, digest, abi, &["workspace-read".to_owned()])
         .expect("package parses")
 }
 
 fn make_host(
     component: &Path,
     root: &Path,
-    bounds: DomainHostBounds,
-) -> DomainHost {
-    DomainHost::new(
-        DomainAbi::parse(ABI).expect("abi parses"),
+    bounds: ModuleHostBounds,
+) -> ModuleHost {
+    ModuleHost::new(
+        ModuleAbi::parse(ABI).expect("abi parses"),
         authority(&["workspace-read"]),
         component.to_path_buf(),
         root.to_path_buf(),
@@ -89,19 +89,19 @@ fn make_host(
     )
 }
 
-fn default_bounds() -> DomainHostBounds {
-    DomainHostBounds::default()
+fn default_bounds() -> ModuleHostBounds {
+    ModuleHostBounds::default()
 }
 
 /// Install + enable + activate a fixture host end to end.
 fn activate_fixture(
-    host: &mut DomainHost,
+    host: &mut ModuleHost,
     digest: &str,
-) -> Result<(), DomainFailure> {
-    host.install(package("conformance-domain", digest, ABI))?;
+) -> Result<(), ModuleFailure> {
+    host.install(package("conformance-module", digest, ABI))?;
     host.enable()?;
     host.activate(
-        request("conformance-domain", digest),
+        request("conformance-module", digest),
         RuntimeCheckResult::Ready,
     )
     .map(|_| ())
@@ -109,8 +109,8 @@ fn activate_fixture(
 
 #[test]
 fn fixture_bytes_produce_the_bound_digests() {
-    let conformance = fixtures().join("conformance-domain.component.wasm");
-    let incompatible = fixtures().join("incompatible-domain.component.wasm");
+    let conformance = fixtures().join("conformance-module.component.wasm");
+    let incompatible = fixtures().join("incompatible-module.component.wasm");
     assert_eq!(
         sha256_hex(&fs::read(&conformance).expect("fixture bytes")),
         CONFORMANCE_DIGEST
@@ -125,7 +125,7 @@ fn fixture_bytes_produce_the_bound_digests() {
 fn component_loads_and_binds_only_when_abi_compatible() {
     let root = temp_dir("load");
     let mut host = make_host(
-        &fixtures().join("conformance-domain.component.wasm"),
+        &fixtures().join("conformance-module.component.wasm"),
         &root,
         default_bounds(),
     );
@@ -134,7 +134,7 @@ fn component_loads_and_binds_only_when_abi_compatible() {
     // the minimal wasm32-wasip2 std plumbing (cli/io/clocks). No
     // filesystem, network, process, or ambient WASI surface exists.
     let engine = wasmtime::Engine::default();
-    let bytes = fs::read(fixtures().join("conformance-domain.component.wasm"))
+    let bytes = fs::read(fixtures().join("conformance-module.component.wasm"))
         .unwrap();
     let component =
         wasmtime::component::Component::from_binary(&engine, &bytes).unwrap();
@@ -166,14 +166,14 @@ fn component_loads_and_binds_only_when_abi_compatible() {
 fn wrong_declared_digest_is_rejected_at_install() {
     let root = temp_dir("digest");
     let mut host = make_host(
-        &fixtures().join("conformance-domain.component.wasm"),
+        &fixtures().join("conformance-module.component.wasm"),
         &root,
         default_bounds(),
     );
     // The host computes the digest from the bytes; a lying descriptor
     // is rejected before any lifecycle change.
     let failure = host
-        .install(package("conformance-domain", &digest_hex(7), ABI))
+        .install(package("conformance-module", &digest_hex(7), ABI))
         .expect_err("digest mismatch rejects install");
     assert_eq!(failure.code(), "IDENTITY_MISMATCH");
     assert_eq!(host.state().as_str(), "absent");
@@ -190,7 +190,7 @@ fn component_byte_bound_is_enforced_before_install() {
     bounds.max_component_bytes = bytes.len() - 1;
     let mut host = make_host(&component, &root, bounds);
     let failure = host
-        .install(package("conformance-domain", &sha256_hex(bytes), ABI))
+        .install(package("conformance-module", &sha256_hex(bytes), ABI))
         .expect_err("oversized component is rejected before install");
     assert_eq!(failure.code(), "INVALID_INPUT");
     assert_eq!(host.state().as_str(), "absent");
@@ -200,29 +200,29 @@ fn component_byte_bound_is_enforced_before_install() {
 fn stale_bytes_fail_activation_before_semantic_work() {
     let root = temp_dir("stale");
     let mut host = make_host(
-        &fixtures().join("conformance-domain.component.wasm"),
+        &fixtures().join("conformance-module.component.wasm"),
         &root,
         default_bounds(),
     );
-    host.install(package("conformance-domain", CONFORMANCE_DIGEST, ABI))
+    host.install(package("conformance-module", CONFORMANCE_DIGEST, ABI))
         .expect("install");
     host.enable().expect("enable");
     // The bytes under the slot change after install (the slot file is
     // replaced with different component bytes); activation must
     // recompute the digest and refuse before any semantic work.
     let slot = root.join("slot.component.wasm");
-    fs::copy(fixtures().join("conformance-domain.component.wasm"), &slot)
+    fs::copy(fixtures().join("conformance-module.component.wasm"), &slot)
         .expect("copy slot bytes");
     let mut slot_host = make_host(&slot, &root, default_bounds());
     slot_host
-        .install(package("conformance-domain", CONFORMANCE_DIGEST, ABI))
+        .install(package("conformance-module", CONFORMANCE_DIGEST, ABI))
         .expect("install");
     slot_host.enable().expect("enable");
-    fs::copy(fixtures().join("incompatible-domain.component.wasm"), &slot)
+    fs::copy(fixtures().join("incompatible-module.component.wasm"), &slot)
         .expect("replace slot bytes");
     let failure = slot_host
         .activate(
-            request("conformance-domain", CONFORMANCE_DIGEST),
+            request("conformance-module", CONFORMANCE_DIGEST),
             RuntimeCheckResult::Ready,
         )
         .expect_err("stale bytes reject activation");
@@ -235,14 +235,14 @@ fn stale_bytes_fail_activation_before_semantic_work() {
 fn semantic_query_succeeds_when_correctly_bound() {
     let root = temp_dir("query");
     let mut host = make_host(
-        &fixtures().join("conformance-domain.component.wasm"),
+        &fixtures().join("conformance-module.component.wasm"),
         &root,
         default_bounds(),
     );
     let failure = host
         .activate(
             ActivationRequest::parse(
-                "conformance-domain",
+                "conformance-module",
                 CONFORMANCE_DIGEST,
                 ABI,
                 &["workspace-read".to_owned()],
@@ -255,7 +255,7 @@ fn semantic_query_succeeds_when_correctly_bound() {
     activate_fixture(&mut host, CONFORMANCE_DIGEST).expect("activation");
     match host.query("alpha beta gamma") {
         QueryOutcome::Ok { package_id, query, node_count, source_bytes } => {
-            assert_eq!(package_id, "conformance-domain");
+            assert_eq!(package_id, "conformance-module");
             assert_eq!(query, "alpha beta gamma");
             assert_eq!(node_count, 3);
             assert_eq!(source_bytes, 16);
@@ -270,7 +270,7 @@ fn mediated_permitted_capability_works_and_denied_stays_denied() {
     fs::write(root.join("notes.txt"), "fixture line one\nfixture line two\n")
         .expect("fixture write");
     let mut host = make_host(
-        &fixtures().join("conformance-domain.component.wasm"),
+        &fixtures().join("conformance-module.component.wasm"),
         &root,
         default_bounds(),
     );
@@ -307,7 +307,7 @@ fn mediated_permitted_capability_works_and_denied_stays_denied() {
 fn guest_trap_is_contained_and_host_state_stays_intact() {
     let root = temp_dir("trap");
     let mut host = make_host(
-        &fixtures().join("conformance-domain.component.wasm"),
+        &fixtures().join("conformance-module.component.wasm"),
         &root,
         default_bounds(),
     );
@@ -324,7 +324,7 @@ fn guest_trap_is_contained_and_host_state_stays_intact() {
     assert_eq!(host.state().as_str(), "enabled");
     assert!(host.active().is_none());
     host.activate(
-        request("conformance-domain", CONFORMANCE_DIGEST),
+        request("conformance-module", CONFORMANCE_DIGEST),
         RuntimeCheckResult::Ready,
     )
     .expect("reactivation after the fault");
@@ -340,7 +340,7 @@ fn pathological_guest_is_fuel_bounded_and_cannot_hang_the_make_host() {
     let mut bounds = default_bounds();
     bounds.fuel_per_call = 20_000;
     let mut host = make_host(
-        &fixtures().join("conformance-domain.component.wasm"),
+        &fixtures().join("conformance-module.component.wasm"),
         &root,
         bounds,
     );
@@ -370,12 +370,12 @@ fn malformed_component_fails_with_a_typed_error() {
         .expect("garbage write");
     let garbage_digest = sha256_hex(&fs::read(&malformed).unwrap());
     let mut host = make_host(&malformed, &root, default_bounds());
-    host.install(package("conformance-domain", &garbage_digest, ABI))
+    host.install(package("conformance-module", &garbage_digest, ABI))
         .expect("install accepts exact bytes");
     host.enable().expect("enable");
     let failure = host
         .activate(
-            request("conformance-domain", &garbage_digest),
+            request("conformance-module", &garbage_digest),
             RuntimeCheckResult::Ready,
         )
         .expect_err("malformed component fails activation");
@@ -386,19 +386,19 @@ fn malformed_component_fails_with_a_typed_error() {
 fn version_incompatible_component_fails_instantiation_explicitly() {
     let root = temp_dir("abi");
     let mut host = make_host(
-        &fixtures().join("incompatible-domain.component.wasm"),
+        &fixtures().join("incompatible-module.component.wasm"),
         &root,
         default_bounds(),
     );
     // The descriptor claims the supported ABI, but the bytes were
     // built against siralos:domain-abi@1.1.0: instantiation fails
     // explicitly and nothing runs.
-    host.install(package("conformance-domain", INCOMPATIBLE_DIGEST, ABI))
+    host.install(package("conformance-module", INCOMPATIBLE_DIGEST, ABI))
         .expect("install");
     host.enable().expect("enable");
     let failure = host
         .activate(
-            request("conformance-domain", INCOMPATIBLE_DIGEST),
+            request("conformance-module", INCOMPATIBLE_DIGEST),
             RuntimeCheckResult::Ready,
         )
         .expect_err("incompatible component fails activation");
@@ -412,7 +412,7 @@ fn version_incompatible_component_fails_instantiation_explicitly() {
 fn descriptor_abi_cannot_be_substituted_by_the_host_abi() {
     let root = temp_dir("descriptor-abi");
     let mut host = make_host(
-        &fixtures().join("conformance-domain.component.wasm"),
+        &fixtures().join("conformance-module.component.wasm"),
         &root,
         default_bounds(),
     );
@@ -420,7 +420,7 @@ fn descriptor_abi_cannot_be_substituted_by_the_host_abi() {
     // export the supported 1.0.0 world. Install is digest-bound only
     // (no installation-time ABI gate), so the package installs.
     host.install(package(
-        "conformance-domain",
+        "conformance-module",
         CONFORMANCE_DIGEST,
         "siralos:domain-abi@1.1.0",
     ))
@@ -433,7 +433,7 @@ fn descriptor_abi_cannot_be_substituted_by_the_host_abi() {
     let failure = host
         .activate(
             ActivationRequest::parse(
-                "conformance-domain",
+                "conformance-module",
                 CONFORMANCE_DIGEST,
                 ABI,
                 &["workspace-read".to_owned()],
@@ -450,7 +450,7 @@ fn descriptor_abi_cannot_be_substituted_by_the_host_abi() {
     let failure = host
         .activate(
             ActivationRequest::parse(
-                "conformance-domain",
+                "conformance-module",
                 CONFORMANCE_DIGEST,
                 "siralos:domain-abi@1.1.0",
                 &["workspace-read".to_owned()],
@@ -470,7 +470,7 @@ fn bind_time_host_effects_use_the_final_grant_authority() {
     fs::write(root.join("notes.txt"), "fixture line one\nfixture line two\n")
         .expect("fixture write");
     let mut host = make_host(
-        &fixtures().join("conformance-domain.component.wasm"),
+        &fixtures().join("conformance-module.component.wasm"),
         &root,
         default_bounds(),
     );
@@ -481,7 +481,7 @@ fn bind_time_host_effects_use_the_final_grant_authority() {
     // authoritative commit. The provisional mediator must grant it
     // under the same immutable Host authority that authorizes the
     // final commit: bind succeeds, the activation commits, and the
-    // final ActiveDomain grant is exactly the authority used for the
+    // final ActiveModule grant is exactly the authority used for the
     // pre-commit effect.
     let active = host
         .activate(
@@ -511,7 +511,7 @@ fn bind_time_host_effects_use_the_final_grant_authority() {
 fn bind_time_effect_outside_the_grant_is_denied_and_activation_fails() {
     let root = temp_dir("exec-bind");
     let mut host = make_host(
-        &fixtures().join("conformance-domain.component.wasm"),
+        &fixtures().join("conformance-module.component.wasm"),
         &root,
         default_bounds(),
     );
@@ -546,7 +546,7 @@ fn input_bounds_are_enforced_before_the_call() {
     let mut bounds = default_bounds();
     bounds.max_query_bytes = 16;
     let mut host = make_host(
-        &fixtures().join("conformance-domain.component.wasm"),
+        &fixtures().join("conformance-module.component.wasm"),
         &root,
         bounds,
     );
@@ -559,7 +559,7 @@ fn input_bounds_are_enforced_before_the_call() {
     }
     // No active session refuses calls with the typed outcome.
     let mut fresh = make_host(
-        &fixtures().join("conformance-domain.component.wasm"),
+        &fixtures().join("conformance-module.component.wasm"),
         &root,
         default_bounds(),
     );
@@ -575,7 +575,7 @@ fn input_bounds_are_enforced_before_the_call() {
 fn cancellation_refuses_further_calls_with_a_typed_outcome() {
     let root = temp_dir("cancel");
     let mut host = make_host(
-        &fixtures().join("conformance-domain.component.wasm"),
+        &fixtures().join("conformance-module.component.wasm"),
         &root,
         default_bounds(),
     );
@@ -605,7 +605,7 @@ fn host_call_budget_is_enforced() {
     let mut bounds = default_bounds();
     bounds.effects.max_host_calls = 2;
     let mut host = make_host(
-        &fixtures().join("conformance-domain.component.wasm"),
+        &fixtures().join("conformance-module.component.wasm"),
         &root,
         bounds,
     );
@@ -619,7 +619,7 @@ fn host_call_budget_is_enforced() {
         .expect_err("budget exhaustion is a typed failure");
     assert!(matches!(
         failure,
-        DomainFailure::ResourceExceeded {
+        ModuleFailure::ResourceExceeded {
             kind: ResourceExceededKind::HostCalls,
         }
     ));
@@ -645,8 +645,8 @@ fn package_with_caps(
     id: &str,
     digest: &str,
     capabilities: &[&str],
-) -> DomainPackage {
-    DomainPackage::parse(
+) -> ModulePackage {
+    ModulePackage::parse(
         id,
         digest,
         ABI,
@@ -659,7 +659,7 @@ fn package_with_caps(
 fn bind_rejection_leaves_enabled_and_unpublished() {
     let root = temp_dir("bind-reject");
     let mut host = make_host(
-        &fixtures().join("conformance-domain.component.wasm"),
+        &fixtures().join("conformance-module.component.wasm"),
         &root,
         default_bounds(),
     );
@@ -696,7 +696,7 @@ fn bind_rejection_leaves_enabled_and_unpublished() {
 fn bind_trap_leaves_enabled_and_unpublished() {
     let root = temp_dir("bind-trap");
     let mut host = make_host(
-        &fixtures().join("conformance-domain.component.wasm"),
+        &fixtures().join("conformance-module.component.wasm"),
         &root,
         default_bounds(),
     );
@@ -730,7 +730,7 @@ fn bind_fuel_exhaustion_leaves_enabled_and_unpublished() {
     let mut bounds = default_bounds();
     bounds.fuel_per_call = 20_000;
     let mut host = make_host(
-        &fixtures().join("conformance-domain.component.wasm"),
+        &fixtures().join("conformance-module.component.wasm"),
         &root,
         bounds,
     );
@@ -762,14 +762,14 @@ fn bind_fuel_exhaustion_leaves_enabled_and_unpublished() {
 fn active_to_active_is_rejected_and_sessions_are_monotonic() {
     let root = temp_dir("active-active");
     let mut host = make_host(
-        &fixtures().join("conformance-domain.component.wasm"),
+        &fixtures().join("conformance-module.component.wasm"),
         &root,
         default_bounds(),
     );
     activate_fixture(&mut host, CONFORMANCE_DIGEST).expect("activation");
     let failure = host
         .activate(
-            request("conformance-domain", CONFORMANCE_DIGEST),
+            request("conformance-module", CONFORMANCE_DIGEST),
             RuntimeCheckResult::Ready,
         )
         .expect_err("active-to-active rejected");
@@ -779,7 +779,7 @@ fn active_to_active_is_rejected_and_sessions_are_monotonic() {
     host.deactivate().expect("deactivate");
     let next = host
         .activate(
-            request("conformance-domain", CONFORMANCE_DIGEST),
+            request("conformance-module", CONFORMANCE_DIGEST),
             RuntimeCheckResult::Ready,
         )
         .expect("reactivation");
@@ -790,14 +790,14 @@ fn active_to_active_is_rejected_and_sessions_are_monotonic() {
 fn package_declaration_bounds_activation_through_the_host() {
     let root = temp_dir("declaration");
     let mut host = make_host_with_authority(
-        &fixtures().join("conformance-domain.component.wasm"),
+        &fixtures().join("conformance-module.component.wasm"),
         &root,
         default_bounds(),
         &["workspace-read", "process-exec"],
     );
     // The installed package declares only workspace-read.
     host.install(package_with_caps(
-        "conformance-domain",
+        "conformance-module",
         CONFORMANCE_DIGEST,
         &["workspace-read"],
     ))
@@ -808,7 +808,7 @@ fn package_declaration_bounds_activation_through_the_host() {
     let failure = host
         .activate(
             request_with_caps(
-                "conformance-domain",
+                "conformance-module",
                 CONFORMANCE_DIGEST,
                 &["workspace-read", "process-exec"],
             ),
@@ -821,7 +821,7 @@ fn package_declaration_bounds_activation_through_the_host() {
     // The declared subset still activates.
     let active = host
         .activate(
-            request("conformance-domain", CONFORMANCE_DIGEST),
+            request("conformance-module", CONFORMANCE_DIGEST),
             RuntimeCheckResult::Ready,
         )
         .expect("declared subset activates");
@@ -834,11 +834,11 @@ fn package_declaration_bounds_activation_through_the_host() {
 fn semantic_output_aggregate_bound_is_enforced() {
     let root = temp_dir("output-bound");
     let mut bounds = default_bounds();
-    // package_id ("conformance-domain", 18 bytes) + query payload
+    // package_id ("conformance-module", 18 bytes) + query payload
     // must fit the aggregate semantic result bound.
     bounds.max_result_bytes = 82;
     let mut host = make_host(
-        &fixtures().join("conformance-domain.component.wasm"),
+        &fixtures().join("conformance-module.component.wasm"),
         &root,
         bounds,
     );
@@ -875,7 +875,7 @@ fn effect_answer_payload_cannot_bypass_the_host_visible_bound() {
     let mut bounds = default_bounds();
     bounds.effects.max_answer_bytes = 64;
     let mut host = make_host(
-        &fixtures().join("conformance-domain.component.wasm"),
+        &fixtures().join("conformance-module.component.wasm"),
         &root,
         bounds,
     );
@@ -885,19 +885,19 @@ fn effect_answer_payload_cannot_bypass_the_host_visible_bound() {
         .expect_err("oversized guest-forged answer is rejected");
     assert_eq!(failure.code(), "RESOURCE_EXCEEDED");
     // A guest that fabricated an answer it never received loses the session
-    // with it: the host does not keep mediating effects for a domain that has
+    // with it: the host does not keep mediating effects for a module that has
     // already proven it answers for itself.
     assert!(
         matches!(
             host.request_effect(EffectRequest::ProcessExec("x".to_owned())),
-            Err(DomainFailure::NotActive)
+            Err(ModuleFailure::NotActive)
         ),
         "a forged answer must not leave the session active"
     );
     // After a real re-activation, ordinary effect answers work again: the
     // forged answer cost the session, not the installation.
     host.activate(
-        request("conformance-domain", CONFORMANCE_DIGEST),
+        request("conformance-module", CONFORMANCE_DIGEST),
         RuntimeCheckResult::Ready,
     )
     .expect("re-activation");
@@ -913,14 +913,14 @@ fn oversized_effect_arguments_are_refused_before_wit_round_trip() {
     let mut bounds = default_bounds();
     bounds.effects.max_host_calls = 1;
     let mut host = make_host(
-        &fixtures().join("conformance-domain.component.wasm"),
+        &fixtures().join("conformance-module.component.wasm"),
         &root,
         bounds,
     );
     activate_fixture(&mut host, CONFORMANCE_DIGEST).expect("activation");
 
     let oversized_path =
-        "a".repeat(siralos_adapters::domain::MAX_EFFECT_PATH_BYTES + 1);
+        "a".repeat(siralos_adapters::module::MAX_EFFECT_PATH_BYTES + 1);
     let failure = host
         .request_effect(EffectRequest::WorkspaceRead((oversized_path, 1)))
         .expect_err(
@@ -950,7 +950,7 @@ fn oversized_effect_arguments_are_refused_before_wit_round_trip() {
     assert_eq!(failure.code(), "INVALID_INPUT");
 
     let oversized_command =
-        "x".repeat(siralos_adapters::domain::MAX_EFFECT_COMMAND_BYTES + 1);
+        "x".repeat(siralos_adapters::module::MAX_EFFECT_COMMAND_BYTES + 1);
     let failure = host
         .request_effect(EffectRequest::ProcessExec(oversized_command))
         .expect_err(
@@ -973,7 +973,7 @@ fn workspace_read_request_is_capped_at_the_host_bound() {
     let mut bounds = default_bounds();
     bounds.effects.max_workspace_read_bytes = 5;
     let mut host = make_host(
-        &fixtures().join("conformance-domain.component.wasm"),
+        &fixtures().join("conformance-module.component.wasm"),
         &root,
         bounds,
     );
@@ -993,7 +993,7 @@ fn host_call_budget_is_a_typed_host_observed_failure() {
     let mut bounds = default_bounds();
     bounds.effects.max_host_calls = 5;
     let mut host = make_host(
-        &fixtures().join("conformance-domain.component.wasm"),
+        &fixtures().join("conformance-module.component.wasm"),
         &root,
         bounds,
     );
@@ -1007,7 +1007,7 @@ fn host_call_budget_is_a_typed_host_observed_failure() {
         .expect_err("budget exhaustion is a typed failure");
     assert!(matches!(
         failure,
-        DomainFailure::ResourceExceeded {
+        ModuleFailure::ResourceExceeded {
             kind: ResourceExceededKind::HostCalls,
         }
     ));
@@ -1016,7 +1016,7 @@ fn host_call_budget_is_a_typed_host_observed_failure() {
         QueryOutcome::Failed(failure) => {
             assert!(matches!(
                 failure,
-                DomainFailure::ResourceExceeded {
+                ModuleFailure::ResourceExceeded {
                     kind: ResourceExceededKind::HostCalls,
                 }
             ));
@@ -1029,11 +1029,11 @@ fn host_call_budget_is_a_typed_host_observed_failure() {
 fn make_host_with_authority(
     component: &Path,
     root: &Path,
-    bounds: DomainHostBounds,
+    bounds: ModuleHostBounds,
     capabilities: &[&str],
-) -> DomainHost {
-    DomainHost::new(
-        DomainAbi::parse(ABI).expect("abi parses"),
+) -> ModuleHost {
+    ModuleHost::new(
+        ModuleAbi::parse(ABI).expect("abi parses"),
         authority(capabilities),
         component.to_path_buf(),
         root.to_path_buf(),
@@ -1044,7 +1044,7 @@ fn make_host_with_authority(
 fn activation_is_session_scoped_and_binds_exact_identity() {
     let root = temp_dir("session");
     let mut host = make_host(
-        &fixtures().join("conformance-domain.component.wasm"),
+        &fixtures().join("conformance-module.component.wasm"),
         &root,
         default_bounds(),
     );
@@ -1052,25 +1052,25 @@ fn activation_is_session_scoped_and_binds_exact_identity() {
     assert!(first.is_ok());
     let active = host.active().expect("active session");
     assert_eq!(active.session_id(), 1);
-    assert_eq!(active.binding().package_id().as_str(), "conformance-domain");
+    assert_eq!(active.binding().package_id().as_str(), "conformance-module");
     assert_eq!(active.binding().digest().as_str(), CONFORMANCE_DIGEST);
     assert_eq!(active.binding().abi().as_str(), ABI);
     // A second activation is refused while active.
     let second = host.activate(
-        request("conformance-domain", CONFORMANCE_DIGEST),
+        request("conformance-module", CONFORMANCE_DIGEST),
         RuntimeCheckResult::Ready,
     );
     assert_eq!(second.expect_err("active").code(), "ACTIVE");
     host.deactivate().expect("deactivate");
     let third = host.activate(
-        request("conformance-domain", CONFORMANCE_DIGEST),
+        request("conformance-module", CONFORMANCE_DIGEST),
         RuntimeCheckResult::Ready,
     );
     assert_eq!(third.expect("reactivation").session_id(), 2);
     // The package id must match the installed package exactly.
     host.deactivate().expect("deactivate");
     let wrong_id = host.activate(
-        request("other-domain", CONFORMANCE_DIGEST),
+        request("other-module", CONFORMANCE_DIGEST),
         RuntimeCheckResult::Ready,
     );
     assert_eq!(wrong_id.expect_err("wrong id").code(), "IDENTITY_MISMATCH");

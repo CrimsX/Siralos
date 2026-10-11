@@ -1,20 +1,20 @@
 //! The blocking stdio frontend loop and its slash-command dispatch.
 
 use super::{
-    BTreeMap, BufRead, ContextPolicy, DomainHost, HostCredential,
-    InteractiveError, InteractiveOptions, ModelListingGate, Path,
-    PermissionPolicy, PluginManifest, ReloadAuthorityEvidence,
-    SessionComposition, SessionProvider, SiralosApplication, SlashCommand,
-    WorkspaceProfileLoad, Write, apply_model_switch,
-    apply_provider_remove_confirmation_at, apply_reloaded_config,
-    approve_workspace_profile, compose_session, drain_events,
-    drive_context_demand, flush_record_replay, io, is_unknown_slash_command,
-    load_user_configuration, load_workspace_profile_snapshot,
-    model_listing_diagnostic, model_listing_gate, non_live_state_digest,
-    parse_slash_command, read_approval_via_input_queue,
-    reload_authority_is_revalidated, reload_report_from_load, render_activate,
-    render_add_plugin, render_context_segment, render_domains, render_enable,
-    render_evolve_lines, render_model_line, render_provider_line,
+    BTreeMap, BufRead, ContextPolicy, HostCredential, InteractiveError,
+    InteractiveOptions, ModelListingGate, ModuleHost, ModuleManifest, Path,
+    PermissionPolicy, ReloadAuthorityEvidence, SessionComposition,
+    SessionProvider, SiralosApplication, SlashCommand, WorkspaceProfileLoad,
+    Write, apply_model_switch, apply_provider_remove_confirmation_at,
+    apply_reloaded_config, approve_workspace_profile, compose_session,
+    drain_events, drive_context_demand, flush_record_replay, io,
+    is_unknown_slash_command, load_user_configuration,
+    load_workspace_profile_snapshot, model_listing_diagnostic,
+    model_listing_gate, non_live_state_digest, parse_slash_command,
+    read_approval_via_input_queue, reload_authority_is_revalidated,
+    reload_report_from_load, render_activate_module, render_add_module,
+    render_context_segment, render_enable_module, render_evolve_lines,
+    render_model_line, render_modules, render_provider_line,
     render_tools_segment, safe_alias_for_display, sanitize_for_display,
     slash_command_catalog,
 };
@@ -123,7 +123,7 @@ where
         live_provider,
         mut hosts,
         mut manifests,
-        profile_plugins,
+        profile_modules,
         context_control,
         context_system_enabled,
         mut context_session_holder,
@@ -199,7 +199,7 @@ where
                 &mut reader,
                 &mut hosts,
                 &mut manifests,
-                profile_plugins.as_deref(),
+                profile_modules.as_deref(),
                 context_control.as_ref(),
                 context_system_enabled,
                 &mut context_session_holder,
@@ -253,9 +253,9 @@ pub(super) fn dispatch_stdio_command<P, W, R>(
     application: &mut SiralosApplication<'_, P>,
     writer: &mut W,
     reader: &mut R,
-    hosts: &mut BTreeMap<String, DomainHost>,
-    manifests: &mut BTreeMap<String, PluginManifest>,
-    profile_plugins: Option<&[String]>,
+    hosts: &mut BTreeMap<String, ModuleHost>,
+    manifests: &mut BTreeMap<String, ModuleManifest>,
+    profile_modules: Option<&[String]>,
     context_control: Option<&ContextPolicy>,
     context_system_enabled: bool,
     context_session_holder: &mut Option<
@@ -298,16 +298,16 @@ where
                 .write_all(rendered.as_bytes())
                 .map_err(InteractiveError::Io)?;
         }
-        SlashCommand::Domains => {
+        SlashCommand::Modules => {
             let rendered =
-                sanitize_for_display(&render_domains(workspace_root));
+                sanitize_for_display(&render_modules(workspace_root));
             writer
                 .write_all(rendered.as_bytes())
                 .map_err(InteractiveError::Io)?;
         }
         SlashCommand::Exit => return Ok(true),
-        SlashCommand::DomainsAdd(folder) => {
-            let rendered = sanitize_for_display(&render_add_plugin(
+        SlashCommand::ModulesAdd(folder) => {
+            let rendered = sanitize_for_display(&render_add_module(
                 workspace_root,
                 folder.unwrap_or(""),
                 hosts,
@@ -317,25 +317,25 @@ where
                 .write_all(rendered.as_bytes())
                 .map_err(InteractiveError::Io)?;
         }
-        SlashCommand::DomainsEnable(id) => {
-            let rendered = sanitize_for_display(&render_enable(
+        SlashCommand::ModulesEnable(id) => {
+            let rendered = sanitize_for_display(&render_enable_module(
                 workspace_root,
                 hosts,
                 manifests,
                 id.unwrap_or(""),
-                profile_plugins,
+                profile_modules,
             ));
             writer
                 .write_all(rendered.as_bytes())
                 .map_err(InteractiveError::Io)?;
         }
-        SlashCommand::DomainsActivate(id) => {
-            let rendered = sanitize_for_display(&render_activate(
+        SlashCommand::ModulesActivate(id) => {
+            let rendered = sanitize_for_display(&render_activate_module(
                 workspace_root,
                 hosts,
                 manifests,
                 id.unwrap_or(""),
-                profile_plugins,
+                profile_modules,
             ));
             writer
                 .write_all(rendered.as_bytes())

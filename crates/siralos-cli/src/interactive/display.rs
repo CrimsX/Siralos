@@ -329,7 +329,7 @@ where
 {
     let mut out = format_tools(tool_definitions, policy);
     out.push_str(&format_tool_projection(application.last_projection()));
-    // Tool/plugin descriptions are external content. Keep the single output
+    // Tool/module descriptions are external content. Keep the single output
     // boundary even for the stdio `/tools` path.
     sanitize_for_display(&out)
 }

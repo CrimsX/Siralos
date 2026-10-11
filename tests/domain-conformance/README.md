@@ -9,7 +9,7 @@ product-specific semantics.
 
 - `guest/` — standalone Cargo crate building the conformance component
   (`siralos-domain-conformance-guest`) for `wasm32-wasip2` against the
-  production WIT (`crates/siralos-adapters/wit/domain-abi.wit`). The
+  production WIT (`crates/siralos-adapters/wit/module-abi.wit`). The
   guest exports `domain-api` (bind, query, request-effect) and imports
   `host-effects`; its `query` accepts deterministic markers:
   `trap` (guest fault), `loop` (unbounded execution), `denied`
@@ -45,13 +45,13 @@ cargo build --manifest-path tests/domain-conformance/guest/Cargo.toml
   --release --target wasm32-wasip2 --locked
 cp tests/domain-conformance/guest/target/wasm32-wasip2/release/\
   siralos_domain_conformance_guest.wasm \
-  tests/domain-conformance/fixtures/conformance-domain.component.wasm
+  tests/domain-conformance/fixtures/conformance-module.component.wasm
 
 cargo build --manifest-path tests/domain-conformance/guest-incompatible/Cargo.toml
   --release --target wasm32-wasip2 --locked
 cp tests/domain-conformance/guest-incompatible/target/wasm32-wasip2/release/\
   siralos_domain_conformance_guest_incompatible.wasm \
-  tests/domain-conformance/fixtures/incompatible-domain.component.wasm
+  tests/domain-conformance/fixtures/incompatible-module.component.wasm
 ```
 
 The build script prints the new SHA-256 digests; when the bytes change,

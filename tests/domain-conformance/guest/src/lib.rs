@@ -11,7 +11,7 @@
 //! the component imports exactly `host-effects` and nothing else.
 
 wit_bindgen::generate!({
-    path: "../../../crates/siralos-adapters/wit/domain-abi.wit",
+    path: "../../../crates/siralos-adapters/wit/module-abi.wit",
     world: "siralos-domain",
 });
 

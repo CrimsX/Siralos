@@ -26,8 +26,8 @@ pub(crate) const COMMAND_CATALOG_GROUP_WORKFLOW: &str = "workflow";
 pub(crate) const COMMAND_CATALOG_GROUP_GODOT: &str = "godot";
 /// The `knowledge` catalog group.
 pub(crate) const COMMAND_CATALOG_GROUP_KNOWLEDGE: &str = "knowledge";
-/// The `domains` catalog group.
-pub(crate) const COMMAND_CATALOG_GROUP_DOMAINS: &str = "domains";
+/// The `modules` catalog group.
+pub(crate) const COMMAND_CATALOG_GROUP_MODULES: &str = "modules";
 /// The `doctor` catalog group.
 pub(crate) const COMMAND_CATALOG_GROUP_DOCTOR: &str = "doctor";
 
@@ -270,24 +270,24 @@ pub const COMMAND_CATALOG: [CommandCatalogEntry; 51] = [
         group: COMMAND_CATALOG_GROUP_KNOWLEDGE,
     },
     CommandCatalogEntry {
-        id: "domains",
-        description: "Show installed domains and the Add Plugin affordance",
-        group: COMMAND_CATALOG_GROUP_DOMAINS,
+        id: "modules",
+        description: "Show installed modules and the Add Module affordance",
+        group: COMMAND_CATALOG_GROUP_MODULES,
     },
     CommandCatalogEntry {
-        id: "domains-add",
-        description: "Install a domain plugin from a folder containing domain-manifest.toml",
-        group: COMMAND_CATALOG_GROUP_DOMAINS,
+        id: "modules-add",
+        description: "Install a module from a folder containing module-manifest.toml",
+        group: COMMAND_CATALOG_GROUP_MODULES,
     },
     CommandCatalogEntry {
-        id: "domains-enable",
-        description: "Enable an installed domain plugin (Host-gated, no capability grant)",
-        group: COMMAND_CATALOG_GROUP_DOMAINS,
+        id: "modules-enable",
+        description: "Enable an installed module (Host-gated, no capability grant)",
+        group: COMMAND_CATALOG_GROUP_MODULES,
     },
     CommandCatalogEntry {
-        id: "domains-activate",
-        description: "Activate an enabled domain plugin (Host-gated, capability grant checked)",
-        group: COMMAND_CATALOG_GROUP_DOMAINS,
+        id: "modules-activate",
+        description: "Activate an enabled module (Host-gated, capability grant checked)",
+        group: COMMAND_CATALOG_GROUP_MODULES,
     },
     CommandCatalogEntry {
         id: "doctor",

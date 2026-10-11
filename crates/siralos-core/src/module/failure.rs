@@ -1,4 +1,4 @@
-//! Typed domain failure outcomes (Stage 3R R6).
+//! Typed module failure outcomes (Stage 3R R6).
 //!
 //! The Host observes failures as typed, stable-coded outcomes so future
 //! bounded recovery (R11) can branch on semantics instead of string
@@ -6,7 +6,7 @@
 //! reject an activation, and capability denial never triggers automatic
 //! permission escalation.
 
-use crate::domain::capability::CapabilityId;
+use crate::module::capability::CapabilityId;
 
 /// The resource class that was exceeded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,9 +36,9 @@ impl ResourceExceededKind {
     }
 }
 
-/// Typed Host-observed domain failure.
+/// Typed Host-observed module failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DomainFailure {
+pub enum ModuleFailure {
     /// No package is installed.
     NotInstalled,
     /// The installed package is not enabled.
@@ -49,7 +49,7 @@ pub enum DomainFailure {
     AlreadyEnabled,
     /// The package is already disabled.
     AlreadyDisabled,
-    /// The requested operation is impossible while the domain is active.
+    /// The requested operation is impossible while the module is active.
     Active,
     /// The requested operation needs an active session, and none exists.
     NotActive,
@@ -88,7 +88,7 @@ pub enum DomainFailure {
         /// Stable human-readable reason.
         reason: String,
     },
-    /// The domain produced output that violated its bound.
+    /// The module produced output that violated its bound.
     InvalidOutput {
         /// Stable human-readable reason.
         reason: String,
@@ -112,7 +112,7 @@ pub enum DomainFailure {
     },
 }
 
-impl DomainFailure {
+impl ModuleFailure {
     /// Stable machine-branchable failure code.
     pub fn code(&self) -> &'static str {
         match self {
@@ -139,50 +139,50 @@ impl DomainFailure {
 }
 
 /// Stable failure code of a typed failure (convenience accessor).
-pub fn failure_code(failure: &DomainFailure) -> &'static str {
+pub fn failure_code(failure: &ModuleFailure) -> &'static str {
     failure.code()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{DomainFailure, ResourceExceededKind};
-    use crate::domain::capability::CapabilityId;
+    use super::{ModuleFailure, ResourceExceededKind};
+    use crate::module::capability::CapabilityId;
 
     #[test]
     fn codes_are_stable_and_distinct() {
         let failures = [
-            DomainFailure::NotInstalled,
-            DomainFailure::Disabled,
-            DomainFailure::AlreadyInstalled,
-            DomainFailure::AlreadyEnabled,
-            DomainFailure::AlreadyDisabled,
-            DomainFailure::Active,
-            DomainFailure::NotActive,
-            DomainFailure::UnsupportedAbi {
+            ModuleFailure::NotInstalled,
+            ModuleFailure::Disabled,
+            ModuleFailure::AlreadyInstalled,
+            ModuleFailure::AlreadyEnabled,
+            ModuleFailure::AlreadyDisabled,
+            ModuleFailure::Active,
+            ModuleFailure::NotActive,
+            ModuleFailure::UnsupportedAbi {
                 expected: "siralos:domain-abi@1.0.0".to_owned(),
                 found: "siralos:domain-abi@1.1.0".to_owned(),
             },
-            DomainFailure::IdentityMismatch {
+            ModuleFailure::IdentityMismatch {
                 detail: "stale bytes".to_owned(),
             },
-            DomainFailure::CapabilityDenied {
+            ModuleFailure::CapabilityDenied {
                 missing: vec![CapabilityId::parse("process-exec").unwrap()],
             },
-            DomainFailure::UndeclaredCapability {
+            ModuleFailure::UndeclaredCapability {
                 missing: vec![CapabilityId::parse("process-exec").unwrap()],
             },
-            DomainFailure::ResourceExceeded {
+            ModuleFailure::ResourceExceeded {
                 kind: ResourceExceededKind::Fuel,
             },
-            DomainFailure::InvalidInput { reason: "bad".to_owned() },
-            DomainFailure::InvalidOutput { reason: "bad".to_owned() },
-            DomainFailure::GuestFault { detail: "trap".to_owned() },
-            DomainFailure::Cancelled,
-            DomainFailure::StaleActivation,
-            DomainFailure::Unavailable { reason: "no runtime".to_owned() },
+            ModuleFailure::InvalidInput { reason: "bad".to_owned() },
+            ModuleFailure::InvalidOutput { reason: "bad".to_owned() },
+            ModuleFailure::GuestFault { detail: "trap".to_owned() },
+            ModuleFailure::Cancelled,
+            ModuleFailure::StaleActivation,
+            ModuleFailure::Unavailable { reason: "no runtime".to_owned() },
         ];
         let mut codes: Vec<&str> =
-            failures.iter().map(DomainFailure::code).collect();
+            failures.iter().map(ModuleFailure::code).collect();
         codes.sort_unstable();
         codes.dedup();
         assert_eq!(codes.len(), failures.len());

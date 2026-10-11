@@ -12,16 +12,16 @@ pub(super) enum SlashCommand<'a> {
     Context,
     /// `/tools` — no arguments.
     Tools,
-    /// `/domains` — no arguments.
-    Domains,
+    /// `/modules` — no arguments.
+    Modules,
     /// `/exit` — no arguments.
     Exit,
-    /// `/domains-add` with optional folder argument (`None` = bare command).
-    DomainsAdd(Option<&'a str>),
-    /// `/domains-enable` with optional plugin id (`None` = bare command).
-    DomainsEnable(Option<&'a str>),
-    /// `/domains-activate` with optional plugin id (`None` = bare command).
-    DomainsActivate(Option<&'a str>),
+    /// `/modules-add` with optional folder argument (`None` = bare command).
+    ModulesAdd(Option<&'a str>),
+    /// `/modules-enable` with optional module id (`None` = bare command).
+    ModulesEnable(Option<&'a str>),
+    /// `/modules-activate` with optional module id (`None` = bare command).
+    ModulesActivate(Option<&'a str>),
     /// `/provider` — display-only (U7).
     Provider,
     /// `/provider remove` — remove the configured provider (confirmed).
@@ -52,10 +52,10 @@ pub fn slash_command_catalog() -> Vec<(&'static str, &'static str)> {
     vec![
         ("/context", "Show context projection"),
         ("/tools", "List available tools"),
-        ("/domains", "List installed domains"),
-        ("/domains-add", "Add a domain plugin"),
-        ("/domains-enable", "Enable a domain plugin"),
-        ("/domains-activate", "Activate a domain plugin"),
+        ("/modules", "List installed modules"),
+        ("/modules-add", "Add a module"),
+        ("/modules-enable", "Enable a module"),
+        ("/modules-activate", "Activate a module"),
         ("/provider", "Show applied provider"),
         ("/provider remove", "Remove configured provider"),
         ("/model", "Show applied model"),
@@ -76,7 +76,7 @@ pub(super) fn render_evolve_lines() -> String {
     out.push_str(
         "  workflow — baseline → candidate → evaluation → comparison\n",
     );
-    out.push_str("  proposal — skill/plugin/host proposals\n");
+    out.push_str("  proposal — skill/module/host proposals\n");
     out.push_str("  packaging — release stabilization\n");
     out.push_str("Execution is host-gated (escalation Profile->Host per Stage 6 design).\n");
     out
@@ -87,12 +87,12 @@ pub(super) fn render_evolve_lines() -> String {
 ///
 /// Empty input is the caller's no-op (both loops skip it before parsing);
 /// this function maps every other line, including the bare/prefixed
-/// `/domains-*` pairs, to exactly one variant.
+/// `/modules-*` pairs, to exactly one variant.
 pub(super) fn parse_slash_command(input: &str) -> SlashCommand<'_> {
     match input {
         "/context" => SlashCommand::Context,
         "/tools" => SlashCommand::Tools,
-        "/domains" => SlashCommand::Domains,
+        "/modules" => SlashCommand::Modules,
         "/provider" => SlashCommand::Provider,
         "/provider remove" => SlashCommand::ProviderRemove,
         "/mouse" => SlashCommand::Mouse,
@@ -102,18 +102,18 @@ pub(super) fn parse_slash_command(input: &str) -> SlashCommand<'_> {
         "/evolve" => SlashCommand::Evolve,
         "/exit" => SlashCommand::Exit,
         _ => {
-            if input == "/domains-add" {
-                SlashCommand::DomainsAdd(None)
-            } else if let Some(folder) = input.strip_prefix("/domains-add ") {
-                SlashCommand::DomainsAdd(Some(folder))
-            } else if input == "/domains-enable" {
-                SlashCommand::DomainsEnable(None)
-            } else if let Some(id) = input.strip_prefix("/domains-enable ") {
-                SlashCommand::DomainsEnable(Some(id))
-            } else if input == "/domains-activate" {
-                SlashCommand::DomainsActivate(None)
-            } else if let Some(id) = input.strip_prefix("/domains-activate ") {
-                SlashCommand::DomainsActivate(Some(id))
+            if input == "/modules-add" {
+                SlashCommand::ModulesAdd(None)
+            } else if let Some(folder) = input.strip_prefix("/modules-add ") {
+                SlashCommand::ModulesAdd(Some(folder))
+            } else if input == "/modules-enable" {
+                SlashCommand::ModulesEnable(None)
+            } else if let Some(id) = input.strip_prefix("/modules-enable ") {
+                SlashCommand::ModulesEnable(Some(id))
+            } else if input == "/modules-activate" {
+                SlashCommand::ModulesActivate(None)
+            } else if let Some(id) = input.strip_prefix("/modules-activate ") {
+                SlashCommand::ModulesActivate(Some(id))
             } else if input.starts_with("/models") {
                 // `/models` takes no arguments: anything beyond the exact
                 // form stays an unknown command (honesty gate), exactly as

@@ -630,11 +630,11 @@ mod tests {
         fixture.assert_unchanged();
     }
     #[test]
-    fn core_capability_ids_are_opaque_future_optional_domain_data() {
-        // A future optional-domain identifier must enter the generic
-        // CapabilityId + policy path without teaching Core any domain
+    fn core_capability_ids_are_opaque_future_optional_module_data() {
+        // A future optional-module identifier must enter the generic
+        // CapabilityId + policy path without teaching Core any module
         // semantics. The adapter test intentionally uses the real
-        // optional-domain vocabulary: Core only validates and compares
+        // optional-module vocabulary: Core only validates and compares
         // the identifier.
         use siralos_core::tool::{
             CapabilityId, PermissionDecision, PermissionPolicy,

@@ -1915,9 +1915,9 @@ pub(in crate::harness) fn recovery_taxonomy_record(
     input: &Value,
 ) -> Result<Value, HarnessError> {
     use siralos_core::determinism::{RetryCategory, classify_retry};
-    use siralos_core::domain::capability::CapabilityId;
-    use siralos_core::domain::failure::{
-        DomainFailure, ResourceExceededKind, failure_code,
+    use siralos_core::module::capability::CapabilityId;
+    use siralos_core::module::failure::{
+        ModuleFailure, ResourceExceededKind, failure_code,
     };
     use siralos_core::runtime::budget::IncompleteRunRecord;
     use siralos_core::runtime::classify_incomplete_run;
@@ -1981,9 +1981,9 @@ pub(in crate::harness) fn recovery_taxonomy_record(
                             },
                         )?);
                     }
-                    DomainFailure::CapabilityDenied { missing }
+                    ModuleFailure::CapabilityDenied { missing }
                 }
-                "STALE_ACTIVATION" => DomainFailure::StaleActivation,
+                "STALE_ACTIVATION" => ModuleFailure::StaleActivation,
                 "RESOURCE_EXCEEDED" => {
                     let resource_kind = input
                         .get("resourceKind")
@@ -2001,16 +2001,16 @@ pub(in crate::harness) fn recovery_taxonomy_record(
                             )));
                         }
                     };
-                    DomainFailure::ResourceExceeded { kind }
+                    ModuleFailure::ResourceExceeded { kind }
                 }
-                "UNAVAILABLE" => DomainFailure::Unavailable {
+                "UNAVAILABLE" => ModuleFailure::Unavailable {
                     reason: input
                         .get("reason")
                         .and_then(Value::as_str)
                         .unwrap_or_default()
                         .to_owned(),
                 },
-                "CANCELLED" => DomainFailure::Cancelled,
+                "CANCELLED" => ModuleFailure::Cancelled,
                 other => {
                     return Err(HarnessError::corpus(format!(
                         "unknown domain-failure kind {other}"
@@ -2018,15 +2018,15 @@ pub(in crate::harness) fn recovery_taxonomy_record(
                 }
             };
             let mut record = json!({ "code": failure_code(&failure) });
-            if let DomainFailure::CapabilityDenied { missing } = &failure {
+            if let ModuleFailure::CapabilityDenied { missing } = &failure {
                 record["missing"] = json!(
                     missing.iter().map(|id| id.as_str()).collect::<Vec<_>>()
                 );
             }
-            if let DomainFailure::ResourceExceeded { kind } = &failure {
+            if let ModuleFailure::ResourceExceeded { kind } = &failure {
                 record["resourceKind"] = json!(kind.code());
             }
-            if let DomainFailure::Unavailable { reason } = &failure {
+            if let ModuleFailure::Unavailable { reason } = &failure {
                 record["reason"] = json!(reason);
             }
             Ok(record)

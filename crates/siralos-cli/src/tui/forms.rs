@@ -670,7 +670,7 @@ impl ProviderAddForm {
 // `context_pane_lines`). T4 (decision 108) settles the rest — FINAL LEDGER:
 // SHARED now: `interactive::compose_session` (the whole session-composition
 // block — config gate, workspace root, tools, host rules, profile
-// declare/compose, replay wiring, provider choice, plugin/context selection,
+// declare/compose, replay wiring, provider choice, module/context selection,
 // context-system build, registry, lock verification, skills segment,
 // projection config, application, hosts/manifests); `parse_slash_command`
 // (the slash-command vocabulary) + `render_context_segment` /

@@ -4,7 +4,7 @@
 //! and permission decisions are calculated by the existing core services;
 //! the formatter never creates authority or changes an approved surface.
 
-use siralos_adapters::domain::PluginRecord;
+use siralos_adapters::module::ModuleRecord;
 use siralos_core::projection::LastProjection;
 use siralos_core::tool::{
     PermissionDecision, PermissionPolicy, RegisteredToolInfo,
@@ -190,7 +190,7 @@ pub fn format_context_audit(
     out
 }
 
-fn safe_domain_label(value: &str) -> String {
+fn safe_module_label(value: &str) -> String {
     let lower = value.to_ascii_lowercase();
     if value.chars().any(char::is_control)
         || value.len() > 512
@@ -206,11 +206,11 @@ fn safe_domain_label(value: &str) -> String {
     }
 }
 
-/// Render the installed domains view (`/domains`): the deterministic
-/// empty state, or the recorded plugin list sorted by id.
-pub fn format_domains(records: &[PluginRecord]) -> String {
+/// Render the installed modules view (`/modules`): the deterministic
+/// empty state, or the recorded module list sorted by id.
+pub fn format_modules(records: &[ModuleRecord]) -> String {
     if records.is_empty() {
-        return "No domains installed.\n[Add Plugin] /domains-add <folder>\n"
+        return "No modules installed.\n[Add Module] /modules-add <folder>\n"
             .to_owned();
     }
     let lines = records
@@ -225,17 +225,17 @@ pub fn format_domains(records: &[PluginRecord]) -> String {
                 .collect::<String>();
             format!(
                 "  {} (digest {}, path {})",
-                safe_domain_label(&record.id),
+                safe_module_label(&record.id),
                 short_digest,
-                safe_domain_label(&record.path),
+                safe_module_label(&record.path),
             )
         })
         .collect::<Vec<_>>();
-    format!("Domains installed:\n{}\n", lines.join("\n"))
+    format!("Modules installed:\n{}\n", lines.join("\n"))
 }
 
-/// Render the outcome of one `/domains-add` flow.
-pub fn format_plugin_added(record: &PluginRecord) -> String {
+/// Render the outcome of one `/modules-add` flow.
+pub fn format_module_added(record: &ModuleRecord) -> String {
     let digest =
         record.digest.strip_prefix("sha256:").unwrap_or(&record.digest);
     format!("Installed {} (digest sha256:{digest}).\n", record.id)

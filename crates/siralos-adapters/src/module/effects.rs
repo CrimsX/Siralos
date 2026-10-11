@@ -1,14 +1,14 @@
 //! Host-mediated effect boundary (Stage 3R R6).
 //!
-//! Every effect a domain component requests crosses this adapter. The
+//! Every effect a module component requests crosses this adapter. The
 //! host validates the request, checks the active capability grant,
-//! applies its bounds, and returns the typed answer; the domain
+//! applies its bounds, and returns the typed answer; the module
 //! receives only the result. The workspace read reuses the production
 //! containment-safe bounded reader; process/runtime execution is
 //! denied by policy. A denial is typed and never escalates.
 
-use siralos_core::domain::capability::CapabilityGrant;
-use siralos_core::domain::failure::{DomainFailure, ResourceExceededKind};
+use siralos_core::module::capability::CapabilityGrant;
+use siralos_core::module::failure::{ModuleFailure, ResourceExceededKind};
 
 use crate::workspace::read::{ReadInput, ReadMode, read_file};
 use crate::workspace::resolve::resolve_workspace_path;
@@ -56,39 +56,39 @@ pub fn clamped_mediation_bounds(
 /// crossing the component boundary. The workspace read's requested byte
 /// count is capped separately by [`EffectMediationBounds`].
 pub(crate) fn validate_effect_request(
-    request: &crate::domain::host::EffectRequest,
-) -> Result<(), DomainFailure> {
+    request: &crate::module::host::EffectRequest,
+) -> Result<(), ModuleFailure> {
     match request {
-        crate::domain::host::EffectRequest::WorkspaceRead((
+        crate::module::host::EffectRequest::WorkspaceRead((
             path,
             max_bytes,
         )) => {
             if path.len() > MAX_EFFECT_PATH_BYTES {
-                return Err(DomainFailure::InvalidInput {
+                return Err(ModuleFailure::InvalidInput {
                     reason:
                         "effect workspace path exceeds the host byte bound"
                             .to_owned(),
                 });
             }
             if path.is_empty() || *max_bytes == 0 {
-                return Err(DomainFailure::InvalidInput {
+                return Err(ModuleFailure::InvalidInput {
                     reason: "invalid workspace-read request".to_owned(),
                 });
             }
             if siralos_core::workspace::path::validate_relative_path(path)
                 .is_err()
             {
-                return Err(DomainFailure::InvalidInput {
+                return Err(ModuleFailure::InvalidInput {
                     reason: "invalid workspace-read path".to_owned(),
                 });
             }
         }
-        crate::domain::host::EffectRequest::ProcessExec(command) => {
+        crate::module::host::EffectRequest::ProcessExec(command) => {
             if command.len() > MAX_EFFECT_COMMAND_BYTES
                 || command.as_bytes().contains(&0)
                 || command.trim().is_empty()
             {
-                return Err(DomainFailure::InvalidInput {
+                return Err(ModuleFailure::InvalidInput {
                     reason: "invalid process-exec request".to_owned(),
                 });
             }
@@ -177,12 +177,12 @@ impl EffectMediator {
     }
 
     /// Mediate one effect request: capability check, bounds, and the
-    /// production workspace read where granted. The domain receives
+    /// production workspace read where granted. The module receives
     /// only the typed answer; the Host observes the typed outcome,
     /// including resource exhaustion.
     pub fn mediate(
         &mut self,
-        request: &crate::domain::host::EffectRequest,
+        request: &crate::module::host::EffectRequest,
     ) -> EffectMediation {
         if self.cancelled {
             return EffectMediation::Answer(MediatedAnswer::Cancelled);
@@ -202,12 +202,12 @@ impl EffectMediator {
             ));
         }
         match request {
-            crate::domain::host::EffectRequest::WorkspaceRead((
+            crate::module::host::EffectRequest::WorkspaceRead((
                 path,
                 max_bytes,
             )) => {
                 let capability =
-                    match siralos_core::domain::capability::CapabilityId::parse(
+                    match siralos_core::module::capability::CapabilityId::parse(
                         CAPABILITY_WORKSPACE_READ,
                     ) {
                         Ok(capability) => capability,
@@ -303,14 +303,14 @@ impl EffectMediator {
                     )),
                 }
             }
-            crate::domain::host::EffectRequest::ProcessExec(_command) => {
+            crate::module::host::EffectRequest::ProcessExec(_command) => {
                 // Process/runtime execution: the capability check runs
                 // exactly like any other effect, and even a granted
                 // process-exec cannot execute because no production
                 // launcher exists in R6. The denial is typed and never
                 // escalates.
                 let capability =
-                    match siralos_core::domain::capability::CapabilityId::parse(
+                    match siralos_core::module::capability::CapabilityId::parse(
                         CAPABILITY_PROCESS_EXEC,
                     ) {
                         Ok(capability) => capability,
@@ -344,8 +344,8 @@ mod tests {
         MAX_MEDIATED_HOST_CALLS, MAX_MEDIATED_WORKSPACE_READ_BYTES,
         MediatedAnswer,
     };
-    use siralos_core::domain::capability::HostAuthority;
-    use siralos_core::domain::failure::ResourceExceededKind;
+    use siralos_core::module::capability::HostAuthority;
+    use siralos_core::module::failure::ResourceExceededKind;
 
     #[test]
     fn process_exec_is_denied_by_policy() {
@@ -353,17 +353,17 @@ mod tests {
             HostAuthority::parse(&[CAPABILITY_WORKSPACE_READ.to_owned()])
                 .unwrap();
         let request =
-            siralos_core::domain::capability::CapabilityRequest::parse(&[
+            siralos_core::module::capability::CapabilityRequest::parse(&[
                 CAPABILITY_WORKSPACE_READ.to_owned(),
             ])
             .unwrap();
-        let grant = match siralos_core::domain::capability::decide_grant(
+        let grant = match siralos_core::module::capability::decide_grant(
             &request, &authority,
         ) {
-            siralos_core::domain::capability::GrantDecision::Granted(
+            siralos_core::module::capability::GrantDecision::Granted(
                 grant,
             ) => grant,
-            siralos_core::domain::capability::GrantDecision::Denied {
+            siralos_core::module::capability::GrantDecision::Denied {
                 ..
             } => {
                 panic!("fixture grant must succeed");
@@ -379,7 +379,7 @@ mod tests {
             },
         );
         let answer = mediator.mediate(
-            &crate::domain::host::EffectRequest::ProcessExec(
+            &crate::module::host::EffectRequest::ProcessExec(
                 "whoami".to_owned(),
             ),
         );
@@ -395,17 +395,17 @@ mod tests {
             HostAuthority::parse(&[CAPABILITY_WORKSPACE_READ.to_owned()])
                 .unwrap();
         let request =
-            siralos_core::domain::capability::CapabilityRequest::parse(&[
+            siralos_core::module::capability::CapabilityRequest::parse(&[
                 CAPABILITY_WORKSPACE_READ.to_owned(),
             ])
             .unwrap();
-        let grant = match siralos_core::domain::capability::decide_grant(
+        let grant = match siralos_core::module::capability::decide_grant(
             &request, &authority,
         ) {
-            siralos_core::domain::capability::GrantDecision::Granted(
+            siralos_core::module::capability::GrantDecision::Granted(
                 grant,
             ) => grant,
-            siralos_core::domain::capability::GrantDecision::Denied {
+            siralos_core::module::capability::GrantDecision::Denied {
                 ..
             } => {
                 panic!("fixture grant must succeed");
@@ -422,14 +422,14 @@ mod tests {
         );
         for _ in 0..2 {
             let answer = mediator.mediate(
-                &crate::domain::host::EffectRequest::ProcessExec(
+                &crate::module::host::EffectRequest::ProcessExec(
                     "x".to_owned(),
                 ),
             );
             assert!(matches!(answer, EffectMediation::Answer(_)));
         }
         let exhausted = mediator.mediate(
-            &crate::domain::host::EffectRequest::ProcessExec("x".to_owned()),
+            &crate::module::host::EffectRequest::ProcessExec("x".to_owned()),
         );
         // Host-call exhaustion is a typed Host-observed resource
         // failure, never a prose string.
@@ -445,17 +445,17 @@ mod tests {
             HostAuthority::parse(&[CAPABILITY_WORKSPACE_READ.to_owned()])
                 .unwrap();
         let request =
-            siralos_core::domain::capability::CapabilityRequest::parse(&[
+            siralos_core::module::capability::CapabilityRequest::parse(&[
                 CAPABILITY_WORKSPACE_READ.to_owned(),
             ])
             .unwrap();
-        let grant = match siralos_core::domain::capability::decide_grant(
+        let grant = match siralos_core::module::capability::decide_grant(
             &request, &authority,
         ) {
-            siralos_core::domain::capability::GrantDecision::Granted(
+            siralos_core::module::capability::GrantDecision::Granted(
                 grant,
             ) => grant,
-            siralos_core::domain::capability::GrantDecision::Denied {
+            siralos_core::module::capability::GrantDecision::Denied {
                 ..
             } => {
                 panic!("fixture grant must succeed");
@@ -473,13 +473,13 @@ mod tests {
         let oversized = "x".repeat(MAX_EFFECT_COMMAND_BYTES + 1);
         assert!(matches!(
             mediator.mediate(
-                &crate::domain::host::EffectRequest::ProcessExec(oversized)
+                &crate::module::host::EffectRequest::ProcessExec(oversized)
             ),
             EffectMediation::Answer(MediatedAnswer::Error(_))
         ));
         assert!(matches!(
             mediator.mediate(
-                &crate::domain::host::EffectRequest::ProcessExec(
+                &crate::module::host::EffectRequest::ProcessExec(
                     "x".to_owned()
                 )
             ),
@@ -491,15 +491,15 @@ mod tests {
     fn cancelled_mediation_returns_cancelled() {
         let authority = HostAuthority::parse(&[]).unwrap();
         let request =
-            siralos_core::domain::capability::CapabilityRequest::parse(&[])
+            siralos_core::module::capability::CapabilityRequest::parse(&[])
                 .unwrap();
-        let grant = match siralos_core::domain::capability::decide_grant(
+        let grant = match siralos_core::module::capability::decide_grant(
             &request, &authority,
         ) {
-            siralos_core::domain::capability::GrantDecision::Granted(
+            siralos_core::module::capability::GrantDecision::Granted(
                 grant,
             ) => grant,
-            siralos_core::domain::capability::GrantDecision::Denied {
+            siralos_core::module::capability::GrantDecision::Denied {
                 ..
             } => {
                 panic!("empty grant must succeed");
@@ -516,7 +516,7 @@ mod tests {
         );
         mediator.cancel();
         let answer = mediator.mediate(
-            &crate::domain::host::EffectRequest::ProcessExec("x".to_owned()),
+            &crate::module::host::EffectRequest::ProcessExec("x".to_owned()),
         );
         assert_eq!(answer, EffectMediation::Answer(MediatedAnswer::Cancelled));
     }
@@ -525,15 +525,15 @@ mod tests {
     fn public_constructor_clamps_unbounded_bounds() {
         let authority = HostAuthority::parse(&[]).unwrap();
         let request =
-            siralos_core::domain::capability::CapabilityRequest::parse(&[])
+            siralos_core::module::capability::CapabilityRequest::parse(&[])
                 .unwrap();
-        let grant = match siralos_core::domain::capability::decide_grant(
+        let grant = match siralos_core::module::capability::decide_grant(
             &request, &authority,
         ) {
-            siralos_core::domain::capability::GrantDecision::Granted(
+            siralos_core::module::capability::GrantDecision::Granted(
                 grant,
             ) => grant,
-            siralos_core::domain::capability::GrantDecision::Denied {
+            siralos_core::module::capability::GrantDecision::Denied {
                 ..
             } => {
                 panic!("empty grant must succeed");

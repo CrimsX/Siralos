@@ -50,8 +50,8 @@ const SUBJECT_GIT_INSPECTION: &str = "git-inspection";
 const SUBJECT_LANGUAGE_DIAGNOSTICS: &str = "language-diagnostics";
 const SUBJECT_LANGUAGE_STRUCTURE: &str = "language-structure";
 const SUBJECT_LANGUAGE_DEFINITION: &str = "language-definition";
-const SUBJECT_DOMAIN_LIFECYCLE: &str = "domain-lifecycle";
-const SUBJECT_DOMAIN_CAPABILITY: &str = "domain-capability";
+const SUBJECT_MODULE_LIFECYCLE: &str = "domain-lifecycle";
+const SUBJECT_MODULE_CAPABILITY: &str = "domain-capability";
 const SUBJECT_PROVIDER_TURN: &str = "provider-turn";
 const SUBJECT_TOOL_LOOP: &str = "tool-loop";
 const SUBJECT_CONTEXT_PROJECTION: &str = "context-projection";
@@ -99,10 +99,10 @@ const SUBJECT_COMPOSITION_PROFILE: &str = "composition-profile";
 const SUBJECT_COMPOSITION_EFFECTIVE: &str = "composition-effective";
 const SUBJECT_CONTEXT_CONTROLS: &str = "context-controls";
 const SUBJECT_COMPOSITION_LOCK: &str = "composition-lock";
-const SUBJECT_COMPOSITION_PLUGIN_SELECTION: &str =
+const SUBJECT_COMPOSITION_MODULE_SELECTION: &str =
     "composition-plugin-selection";
 const SUBJECT_COMPOSITION_SKILLS: &str = "composition-skills";
-const SUBJECT_COMPOSITION_PLUGIN_ACTIVATION: &str =
+const SUBJECT_COMPOSITION_MODULE_ACTIVATION: &str =
     "composition-plugin-activation";
 const SUBJECT_COMPOSITION_CONTEXT_CONTROL: &str =
     "composition-context-control";
@@ -134,7 +134,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 82;
+const CORPUS_VERSION: u64 = 83;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_DOMAIN_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -374,17 +374,6 @@ use siralos_core::workspace::revision::{
 use siralos_core::workspace::is_protected_behavioral_config_path;
 
 use siralos_adapters::language::uri::map_uri_to_workspace_relative;
-use siralos_core::domain::capability::{
-    CapabilityRequest, GrantDecision, HostAuthority, decide_grant,
-};
-use siralos_core::domain::failure::DomainFailure;
-use siralos_core::domain::lifecycle::{
-    ActivationRequest, DomainLifecycle, RuntimeCheckResult,
-    classify_workspace_file, workspace_domain_scan,
-};
-use siralos_core::domain::package::{
-    DomainAbi, DomainPackage, PackageDigest, verify_package_digest,
-};
 use siralos_core::language::definition::{
     DefinitionLimits, RawDefinitionEntry, normalize_definition_locations,
 };
@@ -398,6 +387,17 @@ use siralos_core::language::structure::{
     StructuralDeclaration, StructuralDocument, StructuralIssue,
     StructuralKind, StructureOptions, StructureStatus, SummaryOptions,
     build_structural_summary, normalize_structural_document,
+};
+use siralos_core::module::capability::{
+    CapabilityRequest, GrantDecision, HostAuthority, decide_grant,
+};
+use siralos_core::module::failure::ModuleFailure;
+use siralos_core::module::lifecycle::{
+    ActivationRequest, ModuleLifecycle, RuntimeCheckResult,
+    classify_workspace_file, workspace_module_scan,
+};
+use siralos_core::module::package::{
+    ModuleAbi, ModulePackage, PackageDigest, verify_package_digest,
 };
 use std::path::PathBuf;
 

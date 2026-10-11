@@ -562,10 +562,10 @@ pub(super) fn reload_authority_is_revalidated(
         return false;
     };
     let profile_path = workspace_root
-        .join(siralos_adapters::domain::manifest::SIRALOS_TOML_FILE_NAME);
+        .join(siralos_adapters::module::manifest::SIRALOS_TOML_FILE_NAME);
     let current_bytes: Option<Vec<u8>> = match read_profile_bytes_bounded(
         &profile_path,
-        siralos_adapters::domain::manifest::MAX_SIRALOS_TOML_BYTES,
+        siralos_adapters::module::manifest::MAX_SIRALOS_TOML_BYTES,
     ) {
         Ok(bytes) => Some(bytes),
         Err(reason) if reason == "profile target is absent" => None,
@@ -589,7 +589,7 @@ pub(super) fn reload_authority_is_revalidated(
     // before accepting the live route.
     let final_bytes: Option<Vec<u8>> = match read_profile_bytes_bounded(
         &profile_path,
-        siralos_adapters::domain::manifest::MAX_SIRALOS_TOML_BYTES,
+        siralos_adapters::module::manifest::MAX_SIRALOS_TOML_BYTES,
     ) {
         Ok(bytes) => Some(bytes),
         Err(reason) if reason == "profile target is absent" => None,
@@ -700,9 +700,9 @@ pub(super) fn non_live_state_digest(
         WorkspaceProfileLoad::Absent => Some("absent".to_owned()),
         WorkspaceProfileLoad::Record(record) => {
             let payload = format!(
-                "overlay={:?};plugins={:?};context={:?};skills={:?};record_replay={};replay={};context_system_enabled={}",
+                "overlay={:?};modules={:?};context={:?};skills={:?};record_replay={};replay={};context_system_enabled={}",
                 record.overlay,
-                record.plugins,
+                record.modules,
                 record.context,
                 record.skills,
                 record.record_replay,

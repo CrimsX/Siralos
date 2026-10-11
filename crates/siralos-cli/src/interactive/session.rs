@@ -5,9 +5,9 @@
 use super::{
     ApplicationProjectionConfig, BTreeMap, ConfigurationError,
     ContextCapacity, ContextPolicy, ConversationItem,
-    DEFAULT_REVIEW_PROVIDER_ID, DomainHost, FlushError, FlushOutcome,
-    HostCredential, HostProvider, InteractiveError, InteractiveOptions,
-    PermissionPolicy, PluginManifest, ProjectionService, Rc,
+    DEFAULT_REVIEW_PROVIDER_ID, FlushError, FlushOutcome, HostCredential,
+    HostProvider, InteractiveError, InteractiveOptions, ModuleHost,
+    ModuleManifest, PermissionPolicy, ProjectionService, Rc,
     RecordedReplayProvider, ReplayStoreLoadError, RetainingReplayRecorder,
     SIRALOS_SYSTEM_INSTRUCTIONS, SegmentInput, SessionProvider,
     SiralosApplication, Stability, ToolLoopEvent, ToolRegistry,
@@ -17,8 +17,8 @@ use super::{
     effective_profile_protocol, load_replay_store, load_user_configuration,
     load_workspace_profile_snapshot, non_live_state_digest,
     redacted_credential_display, reload_authority_is_revalidated,
-    reload_report_from_load, render_activate, render_add_plugin,
-    render_context_segment, render_enable, render_tools_segment,
+    reload_report_from_load, render_activate_module, render_add_module,
+    render_context_segment, render_enable_module, render_tools_segment,
     resolve_workspace_root, safe_alias_for_display, safe_profile_diagnostic,
     safe_report_text, session_host_rules, verify_session_lock,
     write_replay_store,
@@ -90,12 +90,12 @@ pub(crate) struct SessionComposition<'a> {
     /// provider request uses the new id without re-composing
     /// provider/endpoint/credential.
     pub(super) live_provider: &'a SessionProvider,
-    /// Installed domain hosts by plugin id.
-    pub(super) hosts: BTreeMap<String, DomainHost>,
-    /// Loaded plugin manifests by plugin id.
-    pub(super) manifests: BTreeMap<String, PluginManifest>,
-    /// Applied profile's plugin selection, if any.
-    pub(super) profile_plugins: Option<Vec<String>>,
+    /// Installed module hosts by module id.
+    pub(super) hosts: BTreeMap<String, ModuleHost>,
+    /// Loaded module manifests by module id.
+    pub(super) manifests: BTreeMap<String, ModuleManifest>,
+    /// Applied profile's module selection, if any.
+    pub(super) profile_modules: Option<Vec<String>>,
     /// Applied profile's context control, if any.
     pub(super) context_control: Option<ContextPolicy>,
     /// Whether the context subsystem is enabled for this session.
@@ -134,7 +134,7 @@ pub(crate) struct SessionComposition<'a> {
     /// Protocol string the session's provider was built with (snapshot of
     /// `applied_protocol.as_str()` at composition; `/reload` diffs this).
     pub(super) applied_protocol_str: String,
-    /// Digest of applied non-route profile state (overlay/plugins/context/
+    /// Digest of applied non-route profile state (overlay/modules/context/
     /// skills/replay flags/context-system). Reload compares this before
     /// deciding whether live authority must be revoked.
     pub(super) applied_non_live_digest: Option<String>,
@@ -283,7 +283,7 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
         self.live_provider.fetch_models_cancellable(cancellation.flag())
     }
 
-    fn domains_add(&mut self, folder: &str) -> Result<String, String> {
+    fn modules_add(&mut self, folder: &str) -> Result<String, String> {
         if self.authority_revoked {
             return Err(
                 "session authority was revoked by profile reload; restart required"
@@ -293,7 +293,7 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
         // The registry and the hosts live here, so the mutation does too
         // (decision 168 R4). The render helpers are the SAME functions the
         // dispatcher called, so the reports and side effects do not fork.
-        Ok(render_add_plugin(
+        Ok(render_add_module(
             &self.workspace_root,
             folder,
             &mut self.hosts,
@@ -301,35 +301,35 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
         ))
     }
 
-    fn domains_enable(&mut self, id: &str) -> Result<String, String> {
+    fn modules_enable(&mut self, id: &str) -> Result<String, String> {
         if self.authority_revoked {
             return Err(
                 "session authority was revoked by profile reload; restart required"
                     .to_owned(),
             );
         }
-        Ok(render_enable(
+        Ok(render_enable_module(
             &self.workspace_root,
             &mut self.hosts,
             &mut self.manifests,
             id,
-            self.profile_plugins.as_deref(),
+            self.profile_modules.as_deref(),
         ))
     }
 
-    fn domains_activate(&mut self, id: &str) -> Result<String, String> {
+    fn modules_activate(&mut self, id: &str) -> Result<String, String> {
         if self.authority_revoked {
             return Err(
                 "session authority was revoked by profile reload; restart required"
                     .to_owned(),
             );
         }
-        Ok(render_activate(
+        Ok(render_activate_module(
             &self.workspace_root,
             &mut self.hosts,
             &mut self.manifests,
             id,
-            self.profile_plugins.as_deref(),
+            self.profile_modules.as_deref(),
         ))
     }
 
@@ -616,7 +616,7 @@ fn accumulate_usage(total: &mut Option<u64>, value: Option<u64>) {
 ///
 /// This is the verbatim T1 composition block both loops duplicated:
 /// configuration gate, workspace root, workspace tools, host rules,
-/// profile declare/compose, replay wiring, provider choice, plugin/context
+/// profile declare/compose, replay wiring, provider choice, module/context
 /// selection, context-system build, registry, lock verification, skills
 /// segment, projection config, application, hosts/manifests. The ONLY
 /// per-frontend residual is the terminal I/O each loop owns after this
@@ -909,14 +909,14 @@ pub(crate) fn compose_session(
         };
         live_host_provider = Some(raw);
     }
-    // Stage 5.7 (decision 53): the applied profile's plugin selection
-    // narrows /domains-activate. Only an actually-applied profile
+    // Stage 5.7 (decision 53): the applied profile's module selection
+    // narrows /modules-activate. Only an actually-applied profile
     // contributes a selection; invalid or refused profiles contribute
     // none (5.2 semantics), and the Host can never be broadened.
-    let profile_plugins: Option<Vec<String>> =
+    let profile_modules: Option<Vec<String>> =
         if effective.applied_profile.is_some() {
             match &loaded_profile {
-                WorkspaceProfileLoad::Record(record) => record.plugins.clone(),
+                WorkspaceProfileLoad::Record(record) => record.modules.clone(),
                 _ => None,
             }
         } else {
@@ -1046,7 +1046,7 @@ pub(crate) fn compose_session(
         live_provider: session_provider,
         hosts: BTreeMap::new(),
         manifests: BTreeMap::new(),
-        profile_plugins,
+        profile_modules,
         context_control,
         context_system_enabled,
         context_session_holder,

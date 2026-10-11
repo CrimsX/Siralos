@@ -12,7 +12,7 @@
 //! `supported: false` success; for GDScript files this adapter reports
 //! the typed unsupported disposition. The generic structural
 //! representation and advisory summary formatter are verified in R5
-//! (siralos-core::language); the GDScript scanner itself is Godot-domain
+//! (siralos-core::language); the GDScript scanner itself is Godot-module
 //! language intelligence (R8/R9) and lives in the external
 //! `siralos-godot` repository, so this adapter stays typed-unsupported.
 
@@ -184,7 +184,7 @@ pub enum ReadOutcome {
     },
     /// Explicit typed unsupported disposition for language modes: the
     /// reference returns `supported: false` success for non-GDScript
-    /// files, and GDScript structural/summary extraction is Godot-domain
+    /// files, and GDScript structural/summary extraction is Godot-module
     /// language intelligence (R8/R9); extraction itself is not ported
     /// at R5.
     Unsupported {
@@ -320,7 +320,7 @@ pub fn read_file(
                 mode,
                 revision,
                 supported: true,
-                reason: "GDScript structural/summary extraction is Godot-domain language intelligence (R8/R9) and is not ported in R5.".to_owned(),
+                reason: "GDScript structural/summary extraction is Godot-module language intelligence (R8/R9) and is not ported in R5.".to_owned(),
             };
         }
         ReadMode::Exact => {}
