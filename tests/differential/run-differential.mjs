@@ -16,6 +16,7 @@ import {
   validateExpectationRecords,
 } from "./shared/evidence.mjs";
 import { canonicalRecordDocument, parseCanonicalRecordDocument } from "./shared/protocol.mjs";
+import { parseRetirementsDocument, verifyRetirementEntries } from "./shared/retirements.mjs";
 import { RUNNER_PROCESS_LIMITS, superviseRunner } from "./shared/runner-process.mjs";
 import { collectSourceIdentity, runCompare, validateRecord } from "./compare.mjs";
 
@@ -130,9 +131,9 @@ function loadExpectations(path, outDir, scenarios) {
   }
 }
 
-function loadPinnedEvidenceForRun(path, outDir, scenarios) {
+function loadPinnedEvidenceForRun(path, outDir, scenarios, retiredIds = new Set()) {
   try {
-    return loadPinnedEvidence(path, scenarios);
+    return loadPinnedEvidence(path, scenarios, retiredIds);
   } catch (error) {
     const code = error instanceof EvidenceIntegrityError ? error.code : "PINNED_EVIDENCE_FAILURE";
     const detail =
@@ -383,6 +384,75 @@ function loadSupersessions(path, outDir, scenarios, oracleRecords, corpusVersion
   return { byId, documentSha256, entriesSha256 };
 }
 
+/**
+ * Load and validate the digest-bound retired-subjects list.
+ *
+ * A retirement ends execution and matching for one pinned scenario id
+ * whose file left the corpus: the frozen record stays byte-identical in
+ * the pinned oracle, and this list — reason, decision, both digests, and
+ * its own self-digest — is the only thing that may excuse its absence.
+ * It mirrors the supersession list with one inverted membership rule: a
+ * retired id must be present in the PINNED ORACLE and ABSENT from the
+ * current corpus. A scenario that still exists is a supersession case;
+ * a bare subject name is not a scenario id; every refusal below is a
+ * hard stop (exit 2), so a retirement can never half-apply.
+ *
+ * Two phases, because the pinned-evidence loader needs the retired ids
+ * before it can exempt them from the corpus cross-check while the digest
+ * verification needs the oracle records only the loader returns:
+ * loadRetirements runs the structural phase here; the caller completes
+ * verification once the oracle records are loaded.
+ */
+function loadRetirements(path, outDir, corpusVersion) {
+  let parsed;
+  try {
+    const text = readBoundedUtf8File(
+      resolve(path),
+      CONTRACT_LIMITS.recordsBytes,
+      "retirements evidence",
+    );
+    parsed = parseRetirementsDocument(text, corpusVersion);
+  } catch (error) {
+    const code = typeof error?.code === "string" ? error.code : "RETIREMENTS_READ_FAILURE";
+    writeFailure(outDir, {
+      schemaVersion: 1,
+      parityHeld: false,
+      runnerFailure: {
+        implementation: "reference",
+        scenarioId: "<retirements>",
+        outcome: "HARNESS_ERROR",
+        category: "PINNED_ORACLE_FAILURE",
+        code,
+        message: String(error instanceof Error ? error.message : error),
+        retirementsSha256: null,
+      },
+    });
+    const refusal = new Error(String(error instanceof Error ? error.message : error));
+    refusal.exitCode = 2;
+    throw refusal;
+  }
+  return parsed;
+}
+
+function refuseRetirement(outDir, parsed, code, scenarioId, message) {
+  writeFailure(outDir, {
+    schemaVersion: 1,
+    parityHeld: false,
+    runnerFailure: {
+      implementation: "reference",
+      scenarioId,
+      outcome: "HARNESS_ERROR",
+      category: "PINNED_ORACLE_FAILURE",
+      code,
+      message,
+      retirementsSha256: parsed.documentSha256,
+    },
+  });
+  const refusal = new Error(message);
+  refusal.exitCode = 2;
+  throw refusal;
+}
+
 /** Execute candidate runner; oracle is either live (historical replay) or pinned. */
 export async function runDifferential({
   corpusDir,
@@ -391,6 +461,7 @@ export async function runDifferential({
   pinnedOracle,
   expectationsPath,
   supersessionsPath,
+  retirementsPath,
 }) {
   const absoluteRoot = resolve(root);
   const absoluteCorpus = resolve(corpusDir);
@@ -427,14 +498,47 @@ export async function runDifferential({
   let frozenOracleRecords = [];
   let expectationRecords = [];
   let supersessions = { byId: new Map() };
+  let retirements = { entries: [], retiredIds: new Set() };
+  let retiredDisclosure = null;
+  let retirementsSha256 = null;
+  let retirementsEntriesSha256 = null;
 
   if (pinnedOracle !== undefined) {
+    // Structural retirement parse first: the pinned-evidence loader needs
+    // the retired ids before it can exempt them from the corpus
+    // cross-check. Digest verification completes once the oracle records
+    // are loaded below.
+    if (retirementsPath !== undefined && existsSync(resolve(retirementsPath))) {
+      retirements = loadRetirements(retirementsPath, absoluteOut, manifest.corpusVersion);
+      retirementsSha256 = retirements.documentSha256;
+      retirementsEntriesSha256 = retirements.entriesSha256;
+    }
     // Verify the complete historical bundle before launching a candidate build.
     // This keeps a changed oracle, manifest, freeze audit, or candidate from
     // being silently treated as a current-source result.
-    pinnedEvidence = loadPinnedEvidenceForRun(pinnedOracle, absoluteOut, scenarios);
+    pinnedEvidence = loadPinnedEvidenceForRun(
+      pinnedOracle,
+      absoluteOut,
+      scenarios,
+      retirements.retiredIds,
+    );
     frozenOracleRecords = pinnedEvidence.oracleRecords;
     const pinnedIds = new Set(frozenOracleRecords.map((record) => record.scenarioId));
+    try {
+      retirements.verified = verifyRetirementEntries(retirements.entries, {
+        scenarios,
+        oracleRecords: frozenOracleRecords,
+      });
+    } catch (error) {
+      const code = typeof error?.code === "string" ? error.code : "RETIREMENTS_READ_FAILURE";
+      refuseRetirement(
+        absoluteOut,
+        retirements,
+        code,
+        "<retirements>",
+        String(error instanceof Error ? error.message : error),
+      );
+    }
     if (expectationsPath !== undefined) {
       const loadedExpectations = loadExpectations(expectationsPath, absoluteOut, scenarios);
       expectationRecords = loadedExpectations.records;
@@ -453,13 +557,14 @@ export async function runDifferential({
       supersessionsEntriesSha256 = supersessions.entriesSha256;
     }
     const supersededIds = new Set(supersessions.byId.keys());
+    const retiredIds = retirements.retiredIds;
     const overlapping = [...pinnedIds].filter((id) => expectationIds.has(id));
     const uncovered = scenarios.filter(
       (scenario) => !pinnedIds.has(scenario.id) && !expectationIds.has(scenario.id),
     );
     const currentIds = new Set(scenarios.map((scenario) => scenario.id));
     const orphanFrozen = pinnedEvidence.scenarioIds.filter(
-      (id) => !currentIds.has(id) && !supersededIds.has(id),
+      (id) => !currentIds.has(id) && !supersededIds.has(id) && !retiredIds.has(id),
     );
     if (overlapping.length > 0 || uncovered.length > 0 || orphanFrozen.length > 0) {
       const failure = {
@@ -472,7 +577,7 @@ export async function runDifferential({
           overlapping.length > 0
             ? `post-freeze expectations overlap the pinned freeze in ${overlapping.length} scenario(s)`
             : orphanFrozen.length > 0
-              ? `pinned freeze contains ${orphanFrozen.length} scenario(s) absent from the current corpus without a supersession`
+              ? `pinned freeze contains ${orphanFrozen.length} scenario(s) absent from the current corpus without a supersession or retirement`
               : `${uncovered.length} current scenario(s) lack both a pinned record and a post-freeze expectation (freeze v32 vs current v${manifest.corpusVersion})`,
       };
       writeFailure(absoluteOut, {
@@ -551,6 +656,22 @@ export async function runDifferential({
           entriesSha256: supersessions.entriesSha256,
         }),
       );
+      // Retired scenarios never enter the reference set: their files left
+      // the corpus, so there is nothing to run and nothing to compare.
+      // The audit still prints every retirement — id, version, decision,
+      // reason, and both bound digests — so the absence is never silent.
+      retiredDisclosure = [...(retirements.verified?.values() ?? [])].map(({ entry }) => ({
+        scenarioId: entry.scenarioId,
+        retiredIn: entry.retiredIn,
+        decision: entry.decision,
+        reason: entry.reason,
+        oracleRecordSha256: entry.oracleRecordSha256,
+        candidateRecordSha256: entry.candidateRecordSha256,
+        // Each printed retirement is self-contained: it names the exact
+        // list document it came from and that document's own entry digest.
+        retirementsSha256: retirements.documentSha256,
+        entriesSha256: retirements.entriesSha256,
+      }));
       oracleRecords = scenarios.map((scenario) => {
         const record = recordsById.get(scenario.id);
         if (record === undefined) {
@@ -645,6 +766,9 @@ export async function runDifferential({
       supersededDisclosure,
       supersessionsSha256,
       supersessionsEntriesSha256,
+      retiredDisclosure,
+      retirementsSha256,
+      retirementsEntriesSha256,
       pinnedEvidence: pinnedEvidence?.provenance ?? null,
     });
     writeFileSync(auditPath, `${canonicalizeJson(audit)}\n`, "utf8");
@@ -666,9 +790,10 @@ async function main() {
   const pinnedOracle = optionValue(process.argv, "--pinned-oracle");
   const expectationsArg = optionValue(process.argv, "--expectations");
   const supersessionsArg = optionValue(process.argv, "--supersessions");
+  const retirementsArg = optionValue(process.argv, "--retirements");
   if (corpusDir === undefined || root === undefined || outDir === undefined) {
     console.error(
-      "usage: run-differential.mjs --corpus <dir> --root <repo> --out-dir <directory> [--pinned-oracle <file>] [--expectations <file>] [--supersessions <file>]",
+      "usage: run-differential.mjs --corpus <dir> --root <repo> --out-dir <directory> [--pinned-oracle <file>] [--expectations <file>] [--supersessions <file>] [--retirements <file>]",
     );
     process.exit(2);
   }
@@ -702,6 +827,16 @@ async function main() {
       effectiveSupersessions = defaultSupersessions;
     }
   }
+  let effectiveRetirements = retirementsArg;
+  if (effectiveRetirements === undefined) {
+    const defaultRetirements = resolve(
+      root,
+      "tests/differential/evidence/post-freeze/retirements.json",
+    );
+    if (existsSync(defaultRetirements)) {
+      effectiveRetirements = defaultRetirements;
+    }
+  }
   try {
     const audit = await runDifferential({
       corpusDir,
@@ -710,6 +845,7 @@ async function main() {
       pinnedOracle: effectivePinned,
       expectationsPath: effectiveExpectations,
       supersessionsPath: effectiveSupersessions,
+      retirementsPath: effectiveRetirements,
     });
     console.log(
       `Differential audit: parity held (${audit.matchedRequiredScenarios}/${audit.requiredApplicableScenarios} applicable required scenarios; ${audit.skipped.length} explicit platform skips; ${audit.informationalDeviations.length} accepted informational deviations).`,
@@ -717,6 +853,13 @@ async function main() {
     if (audit.superseded.length > 0) {
       console.log(
         `(superseded reference records: ${audit.superseded.length} — ${audit.superseded
+          .map((entry) => `${entry.scenarioId} [${entry.decision}]`)
+          .join(", ")})`,
+      );
+    }
+    if (audit.retired.length > 0) {
+      console.log(
+        `(retired reference records: ${audit.retired.length} — ${audit.retired
           .map((entry) => `${entry.scenarioId} [${entry.decision}]`)
           .join(", ")})`,
       );

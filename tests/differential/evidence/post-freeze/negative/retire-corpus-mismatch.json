@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "corpusVersion": 82,
+  "entriesSha256": "92818f6622c73692324e53f127cf8895037596b0e4fa4cc4e5ea2bdbb3d82bb6",
+  "retirements": [
+    {
+      "scenarioId": "godot-discovery.path-scan-no-candidates",
+      "reason": "negative-evidence fixture",
+      "retiredIn": 83,
+      "decision": "negative-evidence fixture",
+      "oracleRecordSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "candidateRecordSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ]
+}

@@ -263,6 +263,9 @@ export function runCompare({
   supersededDisclosure = null,
   supersessionsSha256 = null,
   supersessionsEntriesSha256 = null,
+  retiredDisclosure = null,
+  retirementsSha256 = null,
+  retirementsEntriesSha256 = null,
   pinnedEvidence = null,
 }) {
   if (platform !== "windows" && platform !== "posix") {
@@ -415,6 +418,23 @@ export function runCompare({
             entriesSha256: supersessionsEntriesSha256,
           },
     superseded: supersededDisclosure ?? [],
+    // Digest-bound retirements end execution and matching for pinned ids
+    // whose files left the corpus. The audit prints every retirement —
+    // the id, the version, the decision, the reason, and both bound
+    // digests — so an absence can never be silent, and a reader can
+    // re-derive each digest from the frozen evidence and git history.
+    retirementCoverage:
+      retiredDisclosure === null
+        ? null
+        : {
+            scenarios: retiredDisclosure.map((entry) => entry.scenarioId).sort(),
+            count: retiredDisclosure.length,
+            // The digest of the list document itself, and of its entries array,
+            // so the audit names exactly which bytes authorised each retirement.
+            recordsSha256: retirementsSha256,
+            entriesSha256: retirementsEntriesSha256,
+          },
+    retired: retiredDisclosure ?? [],
     perSubject: perSubjectCoverage(scenarios, statuses),
     scenarios: statuses,
     parity: parity.sort(),

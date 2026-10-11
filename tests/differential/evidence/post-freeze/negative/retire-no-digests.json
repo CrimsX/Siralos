@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "corpusVersion": 83,
+  "entriesSha256": "3e644c21b56692975a21dfa986ae3b84917ca85d8042dc49cbe333cc05ce65f4",
+  "retirements": [
+    {
+      "scenarioId": "godot-discovery.path-scan-no-candidates",
+      "reason": "negative-evidence fixture",
+      "retiredIn": 83,
+      "decision": "negative-evidence fixture"
+    }
+  ]
+}

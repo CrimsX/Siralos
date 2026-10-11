@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "corpusVersion": 83,
+  "entriesSha256": "89318122a531a31795c9d0d3748b5a6e72ba9959358ca258b84d422e934da55d",
+  "retirements": [
+    {
+      "scenarioId": "does.not.exist",
+      "reason": "negative-evidence fixture",
+      "retiredIn": 83,
+      "decision": "negative-evidence fixture",
+      "oracleRecordSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "candidateRecordSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ]
+}

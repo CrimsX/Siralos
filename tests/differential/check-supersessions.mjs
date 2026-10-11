@@ -25,6 +25,7 @@ import {
   validateRawRecordSet,
 } from "./shared/evidence.mjs";
 import { parseCanonicalRecordDocument } from "./shared/protocol.mjs";
+import { parseRetirementsDocument } from "./shared/retirements.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -38,6 +39,17 @@ const CASES = [
   ["malformed.json", "SUPERSESSIONS_MALFORMED"],
   ["corpus-mismatch.json", "SUPERSESSIONS_CORPUS_MISMATCH"],
   ["self-digest.json", "SUPERSESSIONS_SELF_DIGEST_MISMATCH"],
+];
+
+/** Each broken retirements list and the refusal code it must provoke. */
+const RETIRE_CASES = [
+  ["retire-present.json", "RETIREMENTS_STILL_PRESENT"],
+  ["retire-no-digests.json", "RETIREMENTS_MALFORMED"],
+  ["retire-self-digest.json", "RETIREMENTS_SELF_DIGEST_MISMATCH"],
+  ["retire-duplicate.json", "RETIREMENTS_DUPLICATE"],
+  ["retire-unknown.json", "RETIREMENTS_UNKNOWN_SCENARIO"],
+  ["retire-subject-as-id.json", "RETIREMENTS_UNKNOWN_SCENARIO"],
+  ["retire-corpus-mismatch.json", "RETIREMENTS_CORPUS_MISMATCH"],
 ];
 
 function optionValue(args, name) {
@@ -98,6 +110,57 @@ function main() {
   console.log(
     `Supersession guards held: ${CASES.length} adversarial lists each refused with their named code (exit 2).`,
   );
+  const retireFailures = [];
+  for (const [fixture, expectedCode] of RETIRE_CASES) {
+    const outDir = mkdtempSync(join(tmpdir(), "siralos-retirement-"));
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          join(HERE, "run-differential.mjs"),
+          "--corpus",
+          join(HERE, "corpus"),
+          "--root",
+          root,
+          "--out-dir",
+          outDir,
+          "--retirements",
+          join(HERE, "evidence", "post-freeze", "negative", fixture),
+        ],
+        { cwd: root, encoding: "utf8", timeout: 360_000 },
+      );
+      if (result.status !== 2) {
+        retireFailures.push(`${fixture}: expected exit 2, observed ${result.status}`);
+        continue;
+      }
+      let code;
+      try {
+        const failure = JSON.parse(readFileSync(join(outDir, "failure.json"), "utf8"));
+        code = failure.runnerFailure?.code;
+      } catch (error) {
+        retireFailures.push(`${fixture}: no readable failure record (${error.message})`);
+        continue;
+      }
+      if (code !== expectedCode) {
+        retireFailures.push(`${fixture}: expected ${expectedCode}, observed ${code}`);
+      }
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
+  }
+  if (retireFailures.length > 0) {
+    console.error("Retirement guard violations:");
+    for (const failure of retireFailures) {
+      console.error(`  - ${failure}`);
+    }
+    console.error(
+      `  ${retireFailures.length} of ${RETIRE_CASES.length} adversarial cases did not fail closed. The retirements list is not safe to use.`,
+    );
+    process.exit(1);
+  }
+  console.log(
+    `Retirement guards held: ${RETIRE_CASES.length} adversarial lists each refused with their named code (exit 2).`,
+  );
 }
 
 function expectEvidenceCode(label, operation, expectedCode) {
@@ -117,7 +180,20 @@ function runPureEvidenceChecks() {
   const failures = [];
   const evidenceDir = join(HERE, "evidence", "typescript-freeze-v32");
   const corpus = loadValidatedCorpus(join(HERE, "corpus"), "posix");
-  const pinned = loadPinnedEvidence(join(evidenceDir, "oracle.json"), corpus.scenarios);
+  const retirementsText = readFileSync(
+    join(HERE, "evidence", "post-freeze", "retirements.json"),
+    "utf8",
+  );
+  let retiredIds = new Set();
+  try {
+    const parsed = parseRetirementsDocument(retirementsText, corpus.manifest.corpusVersion);
+    retiredIds = parsed.retiredIds;
+  } catch (error) {
+    failures.push(
+      `checked-in retirements list is structurally invalid: ${error?.code ?? "unexpected-error"}`,
+    );
+  }
+  const pinned = loadPinnedEvidence(join(evidenceDir, "oracle.json"), corpus.scenarios, retiredIds);
   const requiredIds = pinned.scenarioIds;
   const pinnedRecords = pinned.oracleRecords;
   const provenanceKeys = [

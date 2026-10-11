@@ -283,7 +283,11 @@ export function validateFreezeDocument(document) {
  * Load and verify the complete historical evidence bundle beside a pinned
  * oracle. The returned provenance contains only digests, ids, and counts.
  */
-export function loadPinnedEvidence(pinnedOraclePath, currentScenarios = null) {
+export function loadPinnedEvidence(
+  pinnedOraclePath,
+  currentScenarios = null,
+  retiredIds = new Set(),
+) {
   const oraclePath = resolve(pinnedOraclePath);
   const directory = dirname(oraclePath);
   const freezePath = join(directory, "FREEZE.json");
@@ -327,7 +331,10 @@ export function loadPinnedEvidence(pinnedOraclePath, currentScenarios = null) {
   validateRawRecordSet(oracleRecords, "pinned oracle", { requiredIds, orderedIds: requiredIds });
   if (currentScenarios !== null) {
     const scenarioById = new Map(currentScenarios.map((scenario) => [scenario.id, scenario]));
-    validateRawRecordSet(oracleRecords, "pinned oracle", { scenarioById });
+    const presentOracleRecords = oracleRecords.filter(
+      (record) => !retiredIds.has(record.scenarioId),
+    );
+    validateRawRecordSet(presentOracleRecords, "pinned oracle", { scenarioById });
   }
 
   const oracleRecordsSha256 = sha256Hex(canonicalRecordDocument(oracleRecords));
