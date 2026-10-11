@@ -585,7 +585,7 @@ explicitly classified when strict replay requires them. Strict replay consumes
 recorded observations rather than silently calling live external systems
 again (H2).
 
-## 11. Godot module policy
+## 11. Godot domain policy
 
 Godot is currently the only Optional Module.
 
@@ -605,7 +605,7 @@ discovery, Godot context, Godot validation, or Godot runtime. The TypeScript
 reference's static Godot surfaces do not imply that the future Rust package is
 installed or enabled.
 
-## 12. Module host boundary
+## 12. Domain host boundary
 
 [ADR 0034](../adr/0034-godot-domain-host-boundary.md) accepts the WebAssembly
 Component Model with versioned WIT as the primary host/module boundary. A
