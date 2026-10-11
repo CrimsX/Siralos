@@ -50,7 +50,9 @@ const SUBJECT_GIT_INSPECTION: &str = "git-inspection";
 const SUBJECT_LANGUAGE_DIAGNOSTICS: &str = "language-diagnostics";
 const SUBJECT_LANGUAGE_STRUCTURE: &str = "language-structure";
 const SUBJECT_LANGUAGE_DEFINITION: &str = "language-definition";
+// Frozen identifier — pinned evidence; do not rename (ADR 0037 §8).
 const SUBJECT_MODULE_LIFECYCLE: &str = "domain-lifecycle";
+// Frozen identifier — pinned evidence; do not rename (ADR 0037 §8).
 const SUBJECT_MODULE_CAPABILITY: &str = "domain-capability";
 const SUBJECT_PROVIDER_TURN: &str = "provider-turn";
 const SUBJECT_TOOL_LOOP: &str = "tool-loop";
@@ -99,9 +101,11 @@ const SUBJECT_COMPOSITION_PROFILE: &str = "composition-profile";
 const SUBJECT_COMPOSITION_EFFECTIVE: &str = "composition-effective";
 const SUBJECT_CONTEXT_CONTROLS: &str = "context-controls";
 const SUBJECT_COMPOSITION_LOCK: &str = "composition-lock";
+// Frozen identifier — pinned evidence; do not rename (ADR 0037 §8).
 const SUBJECT_COMPOSITION_MODULE_SELECTION: &str =
     "composition-plugin-selection";
 const SUBJECT_COMPOSITION_SKILLS: &str = "composition-skills";
+// Frozen identifier — pinned evidence; do not rename (ADR 0037 §8).
 const SUBJECT_COMPOSITION_MODULE_ACTIVATION: &str =
     "composition-plugin-activation";
 const SUBJECT_COMPOSITION_CONTEXT_CONTROL: &str =

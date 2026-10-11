@@ -549,10 +549,10 @@ pub fn load_module_records(
             "siralos.toml syntax is invalid".to_owned(),
         )
     })?;
-    let Some(plugins_value) = value.get("modules") else {
+    let Some(modules_value) = value.get("modules") else {
         return Ok(Vec::new());
     };
-    let toml::Value::Table(modules) = plugins_value else {
+    let toml::Value::Table(modules) = modules_value else {
         return Err(ModuleManifestFailure::ManifestSyntax(
             "the [modules] entry must be a table".to_owned(),
         ));

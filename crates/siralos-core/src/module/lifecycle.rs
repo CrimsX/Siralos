@@ -54,7 +54,7 @@ impl LifecycleState {
 /// The result of the Host resource/runtime check at activation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeCheckResult {
-    /// The runtime can host the domain within its bounds.
+    /// The runtime can host the module within its bounds.
     Ready,
     /// A resource bound would be exceeded.
     ResourceExceeded(ResourceExceededKind),
@@ -612,7 +612,7 @@ impl ModuleLifecycle {
             }
             RuntimeCheckResult::Unavailable => {
                 return Err(ModuleFailure::Unavailable {
-                    reason: "domain runtime is unavailable".to_owned(),
+                    reason: "module runtime is unavailable".to_owned(),
                 });
             }
         }
@@ -710,7 +710,7 @@ impl ModuleLifecycle {
             }
             RuntimeCheckResult::Unavailable => {
                 return Err(ModuleFailure::Unavailable {
-                    reason: "domain runtime is unavailable".to_owned(),
+                    reason: "module runtime is unavailable".to_owned(),
                 });
             }
         }

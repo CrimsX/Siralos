@@ -100,7 +100,7 @@ impl CapabilityRequest {
 }
 
 /// The effective grant: the capability set the Host actually gives an
-/// active domain. Always equal to or narrower than Host authority.
+/// active module. Always equal to or narrower than Host authority.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapabilityGrant {
     ids: BTreeSet<CapabilityId>,

@@ -1,8 +1,8 @@
 //! Domain-neutral validated Tool-loop capability identifier.
 //!
-//! The R6 `siralos-core::domain::capability` vocabulary remains the
-//! Domain host-boundary vocabulary. The Tool Loop uses its own opaque
-//! identifier boundary so optional-domain tool capabilities can enter
+//! The R6 `crate::module::capability` vocabulary remains the
+//! Module host-boundary vocabulary. The Tool Loop uses its own opaque
+//! identifier boundary so optional-module tool capabilities can enter
 //! through the same generic path without teaching Core any domain
 //! semantics. A future identifier such as `future.domain` (including a
 //! real optional-domain identifier) is opaque data to this type; it is

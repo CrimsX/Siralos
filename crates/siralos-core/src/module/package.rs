@@ -135,7 +135,7 @@ fn valid_abi(value: &str) -> bool {
     name_ok && version_ok
 }
 
-/// A locally supplied, Host-accepted domain package descriptor.
+/// A locally supplied, Host-accepted module package descriptor.
 /// All fields are validated and detached; the digest is the exact
 /// digest of the bytes the Host accepted, computed by the Host.
 #[derive(Debug, Clone, PartialEq, Eq)]

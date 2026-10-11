@@ -449,6 +449,7 @@ pub(in crate::harness) fn composition_lock_record(
     };
     let profile_digest = input.get("profileDigest").and_then(Value::as_str);
     let mut modules = Vec::new();
+    // Frozen identifier — pinned corpus key; do not rename (ADR 0037 §8).
     if let Some(list) = input.get("plugins").and_then(Value::as_array) {
         for entry in list {
             let Some(table) = entry.as_object() else {
@@ -603,6 +604,7 @@ pub(in crate::harness) fn composition_lock_verify_record(
         modules
     };
     let profile_digest = input.get("profileDigest").and_then(Value::as_str);
+    // Frozen identifier — pinned corpus key; do not rename (ADR 0037 §8).
     let current_lock = create_workspace_lock(
         profile_digest,
         &build_identities(input.get("plugins")),

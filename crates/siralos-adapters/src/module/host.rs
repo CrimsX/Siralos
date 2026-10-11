@@ -38,6 +38,7 @@ use wasmtime_wasi::{
 
 wasmtime::component::bindgen!({
     path: "wit/module-abi.wit",
+    // Frozen identifier — pinned wire identity; do not rename (ADR 0037 §6).
     world: "siralos-domain",
 });
 

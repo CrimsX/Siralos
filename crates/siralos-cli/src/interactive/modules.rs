@@ -1,5 +1,5 @@
-//! Module/module command rendering and the host setup those commands
-//! require (source validation, rejection codes, activation gates).
+//! Module command rendering and the host setup those commands require
+//! (source validation, rejection codes, activation gates).
 
 use super::{
     ActivationRequest, BTreeMap, HostAuthority, LifecycleState, ModuleHost,
@@ -298,12 +298,12 @@ pub(super) fn render_activate_module(
     // manufacture an enabled module.
     let enabled_ids: Vec<String> = hosts
         .iter()
-        .filter_map(|(plugin_id, host)| {
+        .filter_map(|(module_id, host)| {
             matches!(
                 host.state(),
                 LifecycleState::Enabled | LifecycleState::Active
             )
-            .then_some(plugin_id.clone())
+            .then_some(module_id.clone())
         })
         .collect();
     let gate =
