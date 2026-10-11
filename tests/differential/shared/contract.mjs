@@ -10,7 +10,7 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { canonicalizeJson, sha256Hex } from "./canonical.mjs";
 
 export const CORPUS_SCHEMA_VERSION = 3;
-export const CORPUS_VERSION = 83;
+export const CORPUS_VERSION = 84;
 export const ALLOWED_SUBJECTS = new Set([
   "state-dir",
   "version-identity",
@@ -47,16 +47,6 @@ export const ALLOWED_SUBJECTS = new Set([
   "planning-runtime",
   "executor-brief",
   "capability-doctor",
-  "godot-scene-resolve",
-  "godot-discovery",
-  "godot-knowledge",
-  "godot-diagnostics",
-  "godot-lsp",
-  "godot-review-context",
-  "godot-mutation-prepare",
-  "godot-develop-plan",
-  "godot-runtime-launch",
-  "godot-runtime-evidence",
   "content-identity-artifact-digest",
   "content-identity-contract-digest",
   "content-identity-manifests",
@@ -125,7 +115,6 @@ export const CONTRACT_LIMITS = Object.freeze({
   r13ExternalKnowledgeInputBytes: 64 * 1024,
   r13PlanningBriefingInputBytes: 64 * 1024,
   cliSessionInputBytes: 64 * 1024,
-  godotInputBytes: 64 * 1024,
   runtimeInputBytes: 64 * 1024,
 });
 
@@ -1137,32 +1126,6 @@ function validateSubjectInputs(scenario, label) {
     }
     return;
   }
-  const GODOT_SUBJECTS = new Set([
-    "godot-scene-resolve",
-    "godot-discovery",
-    "godot-knowledge",
-    "godot-diagnostics",
-    "godot-lsp",
-    "godot-review-context",
-    "godot-mutation-prepare",
-    "godot-develop-plan",
-    "godot-runtime-launch",
-    "godot-runtime-evidence",
-  ]);
-  if (GODOT_SUBJECTS.has(scenario.subject)) {
-    if (platforms.size !== 1 || !platforms.has("*") || envKeys.size !== 0) {
-      throw new Error(
-        `${label} ${scenario.subject} inputs must use platforms ["*"] and an empty env`,
-      );
-    }
-    if (!Object.hasOwn(scenario, "input") || !isPlainRecord(scenario.input)) {
-      throw new Error(`${label}.input must be a plain object`);
-    }
-    if (byteLength(canonicalizeJson(scenario.input)) > CONTRACT_LIMITS.godotInputBytes) {
-      throw new Error(`${label}.input exceeds ${CONTRACT_LIMITS.godotInputBytes} UTF-8 bytes`);
-    }
-    return;
-  }
   const R10A_SUBJECTS = new Set([
     "content-identity-artifact-digest",
     "content-identity-contract-digest",
@@ -1296,16 +1259,6 @@ export function validateScenario(scenario, file) {
     "research-policy",
     "planning-runtime",
     "executor-brief",
-    "godot-scene-resolve",
-    "godot-discovery",
-    "godot-knowledge",
-    "godot-diagnostics",
-    "godot-lsp",
-    "godot-review-context",
-    "godot-mutation-prepare",
-    "godot-develop-plan",
-    "godot-runtime-launch",
-    "godot-runtime-evidence",
     "content-identity-artifact-digest",
     "content-identity-contract-digest",
     "content-identity-manifests",

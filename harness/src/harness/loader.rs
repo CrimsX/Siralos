@@ -198,16 +198,6 @@ pub(in crate::harness) fn validate_scenario(
             | SUBJECT_RESEARCH_POLICY
             | SUBJECT_PLANNING_RUNTIME
             | SUBJECT_EXECUTOR_BRIEF
-            | SUBJECT_GODOT_SCENE_RESOLVE
-            | SUBJECT_GODOT_DISCOVERY
-            | SUBJECT_GODOT_KNOWLEDGE
-            | SUBJECT_GODOT_DIAGNOSTICS
-            | SUBJECT_GODOT_LSP
-            | SUBJECT_GODOT_REVIEW_CONTEXT
-            | SUBJECT_GODOT_MUTATION_PREPARE
-            | SUBJECT_GODOT_DEVELOP_PLAN
-            | SUBJECT_GODOT_RUNTIME_LAUNCH
-            | SUBJECT_GODOT_RUNTIME_EVIDENCE
             | SUBJECT_CI_ARTIFACT_DIGEST
             | SUBJECT_CI_CONTRACT_DIGEST
             | SUBJECT_CI_MANIFESTS
@@ -570,15 +560,7 @@ pub(in crate::harness) fn validate_scenario(
                 )));
             }
         }
-        SUBJECT_GODOT_SCENE_RESOLVE
-        | SUBJECT_GODOT_DISCOVERY
-        | SUBJECT_GODOT_KNOWLEDGE
-        | SUBJECT_GODOT_DIAGNOSTICS
-        | SUBJECT_GODOT_LSP
-        | SUBJECT_GODOT_REVIEW_CONTEXT
-        | SUBJECT_GODOT_MUTATION_PREPARE
-        | SUBJECT_GODOT_DEVELOP_PLAN
-        | SUBJECT_CI_ARTIFACT_DIGEST
+        SUBJECT_CI_ARTIFACT_DIGEST
         | SUBJECT_CI_CONTRACT_DIGEST
         | SUBJECT_CI_MANIFESTS
         | SUBJECT_CI_DELTA
@@ -590,8 +572,6 @@ pub(in crate::harness) fn validate_scenario(
         | SUBJECT_RR_BUDGETS
         | SUBJECT_RR_LIFECYCLE
         | SUBJECT_RR_DOCTOR
-        | SUBJECT_GODOT_RUNTIME_LAUNCH
-        | SUBJECT_GODOT_RUNTIME_EVIDENCE
         | SUBJECT_RUNTIME_EXECUTION
         | SUBJECT_RUNTIME_EVIDENCE
         | SUBJECT_VISUAL_EVIDENCE
@@ -636,13 +616,13 @@ pub(in crate::harness) fn validate_scenario(
                     scenario.id
                 ))
             })?;
-            if serialized.len() > MAX_GODOT_INPUT_BYTES {
+            if serialized.len() > MAX_SHARED_INPUT_BYTES {
                 return Err(HarnessError::corpus(format!(
-                    "scenario {} input exceeds {MAX_GODOT_INPUT_BYTES} bytes",
+                    "scenario {} input exceeds {MAX_SHARED_INPUT_BYTES} bytes",
                     scenario.id
                 )));
             }
-            validate_godot_input(&scenario.subject, input)?;
+            validate_scenario_input(&scenario.subject, input)?;
         }
         SUBJECT_STATE_DIR => {
             if platforms.len() != 1 || platforms.contains("*") {

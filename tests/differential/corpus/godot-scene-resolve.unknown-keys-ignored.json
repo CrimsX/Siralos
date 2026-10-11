@@ -1,8 +1,0 @@
-{
-  "id": "godot-scene-resolve.unknown-keys-ignored",
-  "subject": "godot-scene-resolve",
-  "platforms": ["*"],
-  "parity": "required",
-  "env": {},
-  "input": { "content": "[gd_resource type=\"Resource\"]" }
-}

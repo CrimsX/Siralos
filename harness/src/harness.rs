@@ -67,18 +67,6 @@ const SUBJECT_REFERENCE_IDENTITY: &str = "reference-identity";
 const SUBJECT_RESEARCH_POLICY: &str = "research-policy";
 pub(crate) const SUBJECT_PLANNING_RUNTIME: &str = "planning-runtime";
 pub(crate) const SUBJECT_EXECUTOR_BRIEF: &str = "executor-brief";
-const SUBJECT_GODOT_SCENE_RESOLVE: &str = "godot-scene-resolve";
-const SUBJECT_GODOT_DISCOVERY: &str = "godot-discovery";
-const SUBJECT_GODOT_KNOWLEDGE: &str = "godot-knowledge";
-const SUBJECT_GODOT_DIAGNOSTICS: &str = "godot-diagnostics";
-const SUBJECT_GODOT_LSP: &str = "godot-lsp";
-const SUBJECT_GODOT_REVIEW_CONTEXT: &str = "godot-review-context";
-const SUBJECT_GODOT_MUTATION_PREPARE: &str = "godot-mutation-prepare";
-const SUBJECT_GODOT_DEVELOP_PLAN: &str = "godot-develop-plan";
-const SUBJECT_GODOT_RUNTIME_LAUNCH: &str = "godot-runtime-launch";
-const SUBJECT_GODOT_RUNTIME_EVIDENCE: &str = "godot-runtime-evidence";
-/// Fixed task id for review-context records (identical on both sides).
-const GODOT_REVIEW_CONTEXT_TASK_ID: &str = "differential-task";
 const SUBJECT_CI_ARTIFACT_DIGEST: &str = "content-identity-artifact-digest";
 const SUBJECT_CI_CONTRACT_DIGEST: &str = "content-identity-contract-digest";
 const SUBJECT_CI_MANIFESTS: &str = "content-identity-manifests";
@@ -138,7 +126,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 83;
+const CORPUS_VERSION: u64 = 84;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_MODULE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -148,7 +136,10 @@ const MAX_USER_CONFIG_INPUT_BYTES: usize = 64 * 1024;
 const MAX_R13_AUTHORITY_INPUT_BYTES: usize = 64 * 1024;
 const MAX_R13_GUIDANCE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_R13_EXTERNAL_KNOWLEDGE_INPUT_BYTES: usize = 64 * 1024;
-const MAX_GODOT_INPUT_BYTES: usize = 64 * 1024;
+/// Input bound for the subjects validated by the shared scenario-input
+/// shape gate (content-identity, determinism, readiness, runtime,
+/// composition, evolve, and recovery families).
+const MAX_SHARED_INPUT_BYTES: usize = 64 * 1024;
 const MAX_TASK_INPUT_BYTES: usize = 8 * 1024;
 const MAX_WORKSPACE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_CLI_SESSION_INPUT_BYTES: usize = 64 * 1024;
@@ -356,12 +347,6 @@ use siralos_core::task::runtime::{
     StepOpResult, TaskRuntime,
 };
 use siralos_core::tool::permission::PermissionRule;
-use siralos_godot::godot::scene::models::{
-    DictionaryEntry, GodotRawValue, GodotVariantValue,
-};
-use siralos_godot::godot::scene_mutation::{
-    MutationOperation, MutationProperty, SemanticExpectation,
-};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -420,14 +405,13 @@ pub use self::loader::fuzz_scenario_bytes;
 pub(in crate::harness) use self::loader::*;
 pub(in crate::harness) use self::subjects::composition::*;
 pub(in crate::harness) use self::subjects::context_session::*;
-pub(in crate::harness) use self::subjects::godot::*;
-pub(in crate::harness) use self::subjects::godot_records::*;
 pub(in crate::harness) use self::subjects::language_domain::*;
 pub(in crate::harness) use self::subjects::provider_config::*;
 pub(in crate::harness) use self::subjects::provider_turn::*;
 pub(in crate::harness) use self::subjects::r13_authority::*;
 pub(in crate::harness) use self::subjects::r13_reference::*;
 pub(in crate::harness) use self::subjects::runtime_records::*;
+pub(in crate::harness) use self::subjects::scenario_input::*;
 pub(in crate::harness) use self::subjects::task_contract::*;
 pub(crate) use self::subjects::task_contract::{
     scenario_clock, store_scenario_now,
@@ -436,7 +420,5 @@ pub(in crate::harness) use self::subjects::workspace_ops::*;
 
 #[cfg(test)]
 mod audit_remediation_harness_gate;
-#[cfg(test)]
-mod godot_tests;
 #[cfg(test)]
 mod tests;

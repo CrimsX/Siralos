@@ -242,7 +242,6 @@ export function runChecks(root) {
       "siralos-core",
       "siralos-adapters",
       "siralos-cli",
-      "siralos-godot",
       "serde",
       "serde_json",
       "sha2",

@@ -1,8 +1,0 @@
-{
-  "id": "godot-lsp.support-unavailable",
-  "subject": "godot-lsp",
-  "platforms": ["*"],
-  "parity": "required",
-  "env": {},
-  "input": { "op": "support" }
-}

@@ -1,8 +1,0 @@
-{
-  "id": "godot-scene-resolve.tres-precedence",
-  "subject": "godot-scene-resolve",
-  "platforms": ["*"],
-  "parity": "required",
-  "env": {},
-  "input": { "tres": "[gd_resource]", "tscn": "[gd_scene]" }
-}

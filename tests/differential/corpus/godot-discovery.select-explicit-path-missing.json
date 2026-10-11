@@ -1,8 +1,0 @@
-{
-  "id": "godot-discovery.select-explicit-path-missing",
-  "subject": "godot-discovery",
-  "platforms": ["*"],
-  "parity": "required",
-  "env": {},
-  "input": { "op": "select", "preference": { "path": "/no-such/Godot.exe" } }
-}

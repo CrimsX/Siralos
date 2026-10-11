@@ -6,10 +6,12 @@ rust-version = "1.85"
 publish = false
 description = "Differential behavioral harness for Siralos (ADR 0033) — dev-only, excluded from the product workspace"
 
-# This crate is intentionally NOT a workspace member. It is the only
-# component that depends on the external Godot plugin crate, and the
-# product workspace must stay buildable without it. The root workspace
-# `exclude`s this directory.
+# This crate is intentionally NOT a workspace member. It carries the
+# differential-harness feature and dev-only verify tooling, so the
+# product workspace stays lean. The root workspace `exclude`s this
+# directory. (It formerly depended on the external Godot module crate;
+# that coupling left with the siralos-godot decoupling, ADR 0037
+# option A, executed.)
 #
 # Because it is a separate workspace it has its own committed
 # `harness/Cargo.lock`. That lockfile must move in lockstep with the
@@ -43,7 +45,6 @@ todo = "deny"
 siralos-core = { path = "../crates/siralos-core" }
 siralos-adapters = { path = "../crates/siralos-adapters", features = ["differential-harness"] }
 siralos-cli = { path = "../crates/siralos-cli" }
-siralos-godot = { path = "../../siralos-godot" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"

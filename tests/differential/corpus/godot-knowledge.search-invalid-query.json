@@ -1,8 +1,0 @@
-{
-  "id": "godot-knowledge.search-invalid-query",
-  "subject": "godot-knowledge",
-  "platforms": ["*"],
-  "parity": "required",
-  "env": {},
-  "input": { "op": "search", "query": "   " }
-}

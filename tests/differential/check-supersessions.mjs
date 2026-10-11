@@ -50,6 +50,7 @@ const RETIRE_CASES = [
   ["retire-unknown.json", "RETIREMENTS_UNKNOWN_SCENARIO"],
   ["retire-subject-as-id.json", "RETIREMENTS_UNKNOWN_SCENARIO"],
   ["retire-corpus-mismatch.json", "RETIREMENTS_CORPUS_MISMATCH"],
+  ["retire-oracle-mismatch.json", "RETIREMENTS_ORACLE_MISMATCH"],
 ];
 
 function optionValue(args, name) {

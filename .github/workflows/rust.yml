@@ -26,21 +26,6 @@ env:
   CARGO_TERM_COLOR: always
   NODE_VERSION: 24.17.0
   NPM_VERSION: 11.13.0
-  # Pinned revision of the external Godot plugin. The differential harness
-  # (`harness/`) is the only component that depends on it, and it resolves it
-  # from `../siralos-godot`, so CI must check that revision out beside the
-  # repository before any differential step. The plugin is public, so this
-  # needs no token and no secret. W1.6 replaces this with a cargo git-rev pin
-  # (decision 62); until then this constant is the single source of the pin.
-  #
-  # This is the revision the local evidence was produced against: the plugin's
-  # HEAD, working tree clean. docs/AGENTS.md still record the older 1bf2ca3
-  # pin; 1bf2ca3 is an ancestor of this revision whose only difference is a
-  # formatting-only commit, so the two are behaviourally identical. The stale
-  # reference is owned by W1.6/W2.x and must be reconciled there — do not
-  # "correct" this constant to match the stale documents, because this is the
-  # revision the parity evidence actually ran against.
-  SIRALOS_GODOT_SHA: c8777b1bc5abc214e5092a489aef62ad1f0b9b41
 
 jobs:
   gate:
@@ -75,12 +60,11 @@ jobs:
           node -e "const { execFileSync } = require('node:child_process'); const expectedNode = 'v' + process.env.NODE_VERSION; if (process.version !== expectedNode) throw new Error('expected Node ' + expectedNode + ', got ' + process.version); const npm = execFileSync('npm', ['--version'], { encoding: 'utf8' }).trim(); if (npm !== process.env.NPM_VERSION) throw new Error('expected npm ' + process.env.NPM_VERSION + ', got ' + npm);"
 
       # The acceptance criterion for the workspace layout: a bare checkout
-      # with no Godot plugin beside it must RESOLVE. This runs before the
+      # must RESOLVE. This runs before the
       # cargo cache is restored so a warm cache cannot mask a broken resolve,
       # and `--no-deps` neither compiles nor touches the network.
-      - name: Resolve workspace from a clean clone (no Godot sibling)
+      - name: Resolve workspace from a clean clone
         run: |
-          test ! -e ../siralos-godot
           cargo metadata --no-deps --locked > /dev/null
 
       # Reconstructible cargo artifacts only: registry, git checkouts,
@@ -153,10 +137,10 @@ jobs:
           cargo run --locked --bin siralos -- --version
           cargo run --locked --bin siralos -- --help
 
-      # Core-without-Godot proof: siralos-core must build with no
-      # optional domain dependency (architecture ratchet re-checks the
+      # Core-without-modules proof: siralos-core must build with no
+      # optional module dependency (architecture ratchet re-checks the
       # forbidden-symbol boundary separately).
-      - name: Core-only check (no optional domain)
+      - name: Core-only check (no optional module)
         run: cargo check -p siralos-core --locked
 
       # Supply-chain gate (docs/development/SUPPLY_CHAIN.md): cargo-deny
@@ -173,19 +157,6 @@ jobs:
       - name: Dependency policy (cargo deny, harness workspace)
         run: cargo deny --manifest-path harness/Cargo.toml --locked check
 
-      # The differential harness builds the external plugin crate from
-      # `../siralos-godot`, so CI checks out the pinned revision beside the
-      # repository. Public repository: no token, no secret.
-      - name: Check out the pinned Godot plugin (differential dependency)
-        run: |
-          git clone --quiet https://github.com/CrimsX/siralos-godot ../siralos-godot
-          git -C ../siralos-godot checkout --quiet "${SIRALOS_GODOT_SHA}"
-
-      - name: Verify the plugin checkout is present
-        run: |
-          test -d ../siralos-godot
-          test -f ../siralos-godot/Cargo.toml
-
       # The migration's audit remediation gate (ADR 0033): pinned oracle vs
       # candidate canonical records; POSIX scenarios execute here. The corpus
       # version is echoed at run time rather than hardcoded in this label —
@@ -201,14 +172,14 @@ jobs:
         run: |
           node -e "const a=require('./tests/differential/out/audit.json'); if(!(a.applicableScenarios>0)) throw new Error('differential audit covered zero applicable scenarios'); if(!(a.requiredScenarios>0)) throw new Error('differential audit required zero scenarios'); if(a.parityHeld!==true) throw new Error('differential parity not held'); console.log('differential covered', a.applicableScenarios, 'applicable of', a.requiredScenarios, 'required scenarios');"
 
-      # Synthetic conformance-domain freshness (ADR 0034): the checked-in
+      # Synthetic conformance-module freshness (ADR 0034): the checked-in
       # component fixtures must be rebuildable from the pinned WIT and
       # guests exactly. A diff here means a PR changed the WIT/guests but
       # did not refresh fixture bytes/digests.
       - name: Install wasm32-wasip2 target
         run: rustup target add wasm32-wasip2
 
-      - name: Rebuild domain conformance fixtures
+      - name: Rebuild module conformance fixtures
         run: npm run build:domain-conformance
 
       - name: Verify conformance fixtures are current
@@ -295,19 +266,6 @@ jobs:
           cargo run --locked --bin siralos -- --version
           cargo run --locked --bin siralos -- --help
 
-      # The harness builds the external plugin crate from `../siralos-godot`.
-      - name: Check out the pinned Godot plugin (differential dependency)
-        shell: bash
-        run: |
-          git clone --quiet https://github.com/CrimsX/siralos-godot ../siralos-godot
-          git -C ../siralos-godot checkout --quiet "${SIRALOS_GODOT_SHA}"
-
-      - name: Verify the plugin checkout is present
-        shell: bash
-        run: |
-          test -d ../siralos-godot
-          test -f ../siralos-godot/Cargo.toml
-
       # The differential harness runs the platform's own state-dir
       # scenarios (Windows scenarios on windows-latest; POSIX scenarios
       # on macos-latest), exercising the home-resolution contract on
@@ -337,7 +295,7 @@ jobs:
           if-no-files-found: warn
         if: always()
 
-      - name: Core-only check (no optional domain)
+      - name: Core-only check (no optional module)
         run: cargo check -p siralos-core --locked
 
   msrv:

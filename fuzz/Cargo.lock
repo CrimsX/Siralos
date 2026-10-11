@@ -2390,15 +2390,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "siralos-godot"
-version = "0.0.0"
-dependencies = [
- "dirs",
- "serde_json",
- "siralos-core",
-]
-
-[[package]]
 name = "siralos-harness"
 version = "0.0.0"
 dependencies = [
@@ -2409,7 +2400,6 @@ dependencies = [
  "siralos-adapters",
  "siralos-cli",
  "siralos-core",
- "siralos-godot",
  "time",
  "toml",
 ]

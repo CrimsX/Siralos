@@ -1,8 +1,0 @@
-{
-  "id": "godot-scene-resolve.typed-resource-under-tscn",
-  "subject": "godot-scene-resolve",
-  "platforms": ["*"],
-  "parity": "required",
-  "env": {},
-  "input": { "tscn": "[gd_resource type=\"Resource\"]" }
-}

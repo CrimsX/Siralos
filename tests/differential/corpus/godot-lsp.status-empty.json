@@ -1,8 +1,0 @@
-{
-  "id": "godot-lsp.status-empty",
-  "subject": "godot-lsp",
-  "platforms": ["*"],
-  "parity": "required",
-  "env": {},
-  "input": { "op": "status" }
-}

@@ -1,8 +1,0 @@
-{
-  "id": "godot-knowledge.lookup-unavailable",
-  "subject": "godot-knowledge",
-  "platforms": ["*"],
-  "parity": "required",
-  "env": {},
-  "input": { "op": "lookup", "symbol": "class:Node" }
-}

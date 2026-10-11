@@ -178,13 +178,13 @@ pub(in crate::harness) fn security_permissions_record(
                 json!({ "profiles": profiles })
             }
             "approval-digest-binding" => {
-                let base = siralos_godot::godot::digest::sha256_hex_str(
+                let base = siralos_core::identity::sha256_hex_str(
                     &command_digest_json(600_000),
                 );
-                let same = siralos_godot::godot::digest::sha256_hex_str(
+                let same = siralos_core::identity::sha256_hex_str(
                     &command_digest_json(600_000),
                 );
-                let changed = siralos_godot::godot::digest::sha256_hex_str(
+                let changed = siralos_core::identity::sha256_hex_str(
                     &command_digest_json(601_000),
                 );
                 json!({
@@ -448,8 +448,8 @@ pub(in crate::harness) fn capability_doctor_record(
                 })
             }
             "config-schema-stability" => {
-                let recomputed = siralos_godot::godot::digest::sha256_hex_str(
-                    &siralos_godot::godot::digest::canonicalize_json(
+                let recomputed = siralos_core::identity::sha256_hex_str(
+                    &siralos_core::identity::canonicalize_json(
                         &config_schema_summary(),
                     ),
                 );

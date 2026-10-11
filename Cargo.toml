@@ -8,9 +8,8 @@ members = [
 # Excluded from the product workspace:
 #   fuzz    — nightly-only; must never enter the stable quality gate
 #             (docs/development/SUPPLY_CHAIN.md toolchain policy).
-#   harness — dev-only differential harness (ADR 0033). It is the only
-#             component that depends on the external Godot plugin crate,
-#             so excluding it keeps a bare `git clone` buildable.
+#   harness — dev-only differential harness (ADR 0033). Excluding it keeps
+#             a bare `git clone` buildable without dev-only dependencies.
 # Exclusion is the only Cargo boundary at which a manifest stops being
 # read — an optional dependency would still be resolved.
 exclude = ["fuzz", "harness"]

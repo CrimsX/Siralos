@@ -23,13 +23,6 @@ env:
   NIGHTLY_TOOLCHAIN: nightly-2026-07-15
   CARGO_FUZZ_VERSION: 0.13.2
   CARGO_LLVM_COV_VERSION: 0.8.7
-  # Pinned revision of the external Godot plugin. The fuzz target
-  # `corpus_scenario` depends on the differential harness (`harness/`),
-  # which resolves the plugin from `../siralos-godot`, so this job must
-  # check that revision out beside the repository before building the
-  # fuzz targets. Same pin as the Rust gate (`rust.yml`); the plugin is
-  # public, so this needs no token and no secret.
-  SIRALOS_GODOT_SHA: c8777b1bc5abc214e5092a489aef62ad1f0b9b41
 
 jobs:
   adversarial:
@@ -58,19 +51,6 @@ jobs:
 
       # Bounded smoke runs; minimized crashes (if any) are added to the
       # repository as deterministic regression tests by a follow-up.
-      # The fuzz target `corpus_scenario` builds the differential
-      # harness, which resolves the external plugin crate from
-      # `../siralos-godot`. Public repository: no token, no secret.
-      - name: Check out the pinned Godot plugin (fuzz dependency)
-        run: |
-          git clone --quiet https://github.com/CrimsX/siralos-godot ../siralos-godot
-          git -C ../siralos-godot checkout --quiet "${SIRALOS_GODOT_SHA}"
-
-      - name: Verify the plugin checkout is present
-        run: |
-          test -d ../siralos-godot
-          test -f ../siralos-godot/Cargo.toml
-
       - name: Build fuzz targets
         run: cargo +"$NIGHTLY_TOOLCHAIN" fuzz build -s none
 

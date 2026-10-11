@@ -617,15 +617,7 @@ fn run_scenario(
                 "result": result,
             }))
         }
-        SUBJECT_GODOT_SCENE_RESOLVE
-        | SUBJECT_GODOT_DISCOVERY
-        | SUBJECT_GODOT_KNOWLEDGE
-        | SUBJECT_GODOT_DIAGNOSTICS
-        | SUBJECT_GODOT_LSP
-        | SUBJECT_GODOT_REVIEW_CONTEXT
-        | SUBJECT_GODOT_MUTATION_PREPARE
-        | SUBJECT_GODOT_DEVELOP_PLAN
-        | SUBJECT_CI_ARTIFACT_DIGEST
+        SUBJECT_CI_ARTIFACT_DIGEST
         | SUBJECT_CI_CONTRACT_DIGEST
         | SUBJECT_CI_MANIFESTS
         | SUBJECT_CI_DELTA
@@ -633,8 +625,20 @@ fn run_scenario(
             let input = scenario
                 .input
                 .as_ref()
-                .expect("godot input was validated while loading the corpus");
-            let result = godot_record(&scenario.subject, input)?;
+                .expect("content identity input was validated while loading the corpus");
+            let result = match scenario.subject.as_str() {
+                SUBJECT_CI_ARTIFACT_DIGEST => {
+                    content_identity_artifact_digest_record(input)?
+                }
+                SUBJECT_CI_CONTRACT_DIGEST => {
+                    content_identity_contract_digest_record(input)?
+                }
+                SUBJECT_CI_MANIFESTS => {
+                    content_identity_manifests_record(input)?
+                }
+                SUBJECT_CI_DELTA => content_identity_delta_record(input)?,
+                _ => determinism_replay_record(input)?,
+            };
             Ok(
                 json!({"scenarioId": scenario.id, "subject": scenario.subject, "outcome": "COMPLETED", "result": result}),
             )
@@ -724,19 +728,6 @@ fn run_scenario(
                 SUBJECT_EVOLVE_PROPOSAL => evolve_proposal_record(input)?,
                 SUBJECT_EVOLVE_PACKAGING => evolve_packaging_record(input)?,
                 _ => runtime_evidence_record(input)?,
-            };
-            Ok(
-                json!({"scenarioId": scenario.id, "subject": scenario.subject, "outcome": "COMPLETED", "result": result}),
-            )
-        }
-        SUBJECT_GODOT_RUNTIME_LAUNCH | SUBJECT_GODOT_RUNTIME_EVIDENCE => {
-            let input = scenario.input.as_ref().expect(
-                "godot runtime input was validated while loading the corpus",
-            );
-            let result = if scenario.subject == SUBJECT_GODOT_RUNTIME_LAUNCH {
-                godot_runtime_launch_record(input)?
-            } else {
-                godot_runtime_evidence_record(input)?
             };
             Ok(
                 json!({"scenarioId": scenario.id, "subject": scenario.subject, "outcome": "COMPLETED", "result": result}),

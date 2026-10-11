@@ -761,7 +761,28 @@ export function validateOutcomeRecord(record, source, expectedScenario = undefin
   if (!isObject(record)) {
     throw new Error(`malformed ${label}: expected an object`);
   }
-  if (typeof record.subject !== "string" || !ALLOWED_SUBJECTS.has(record.subject)) {
+  // Retired subjects stay parseable here so the frozen oracle bundle —
+  // which keeps every retired record byte-identical — still loads. They
+  // can never execute: the corpus contract (ALLOWED_SUBJECTS) no longer
+  // admits them, and the retirement list binds each absence by digest.
+  // Keep both sets in step: removing a subject from ALLOWED_SUBJECTS
+  // without retiring it fails the orphan-frozen gate instead.
+  const RETIRED_SUBJECTS = new Set([
+    "godot-scene-resolve",
+    "godot-discovery",
+    "godot-knowledge",
+    "godot-diagnostics",
+    "godot-lsp",
+    "godot-review-context",
+    "godot-mutation-prepare",
+    "godot-develop-plan",
+    "godot-runtime-launch",
+    "godot-runtime-evidence",
+  ]);
+  if (
+    typeof record.subject !== "string" ||
+    (!ALLOWED_SUBJECTS.has(record.subject) && !RETIRED_SUBJECTS.has(record.subject))
+  ) {
     throw new Error(`malformed ${label}: unsupported subject`);
   }
   if (

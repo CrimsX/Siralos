@@ -1,8 +1,0 @@
-{
-  "id": "godot-diagnostics.status-untrusted",
-  "subject": "godot-diagnostics",
-  "platforms": ["*"],
-  "parity": "required",
-  "env": {},
-  "input": { "op": "status" }
-}
