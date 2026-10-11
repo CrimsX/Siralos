@@ -257,7 +257,7 @@ direction subject to evidence, not guaranteed commitments:
    unsafe effects truthfully unavailable.
 3. Godot-Native Development MVP - broad TypeScript reference established.
 4. Controlled Execution (Runtime and Visual QA) - complete.
-5. Composition (Profiles, Context controls, Skills, Plugins, Tools, Views,
+5. Composition (Profiles, Context controls, Skills, Modules, Tools, Views,
    optional Modules) - complete.
 6. Evolution & Stabilization (/evolve, evaluation, packaging, release) -
    complete.
@@ -335,7 +335,7 @@ State · Revision · Capability
 Tools · Effects · Evidence
             |
             v
-OPTIONAL PLUGINS
+OPTIONAL MODULES
 Tools · Views · Specialized intelligence
 ```
 
@@ -349,7 +349,7 @@ five-layer model (Foundation / Deterministic Runtime / Extensions /
 Orchestration / Experience) is superseded by this lean model.
 
 The Host stays small by moving sophistication upward into declarative
-configuration, Skills, and explicitly installed Plugins whenever doing so does
+configuration, Skills, and explicitly installed Modules whenever doing so does
 not weaken correctness, authority, determinism, or inspectability (ADR 0036
 core thesis). Canonical product primitives:
 
@@ -427,7 +427,7 @@ security contract.
 ### Deterministic Host guarantees are non-configurable
 
 The lean composition model does not weaken Siralos determinism. The following
-Host guarantees cannot be configured away by Profiles, Skills, Plugins, or
+Host guarantees cannot be configured away by Profiles, Skills, Modules, or
 project configuration:
 
 ```text
@@ -762,7 +762,7 @@ Wall-clock timing itself is not a deterministic computation boundary.
 
 ### Future Module resource bounds
 
-Plugins must never implicitly receive unbounded resources. The eventual
+Modules must never implicitly receive unbounded resources. The eventual
 Module Host should be able to bound memory, execution/work, host-call count,
 output size, open resources, and wall-clock lifetime. No Module runtime is
 designed or implemented in this goal.

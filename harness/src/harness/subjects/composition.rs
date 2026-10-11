@@ -448,25 +448,25 @@ pub(in crate::harness) fn composition_lock_record(
         LockModuleIdentity, create_workspace_lock,
     };
     let profile_digest = input.get("profileDigest").and_then(Value::as_str);
-    let mut plugins = Vec::new();
+    let mut modules = Vec::new();
     if let Some(list) = input.get("plugins").and_then(Value::as_array) {
         for entry in list {
             let Some(table) = entry.as_object() else {
                 return Err(HarnessError::corpus(
-                    "composition-lock requires plugin objects".to_owned(),
+                    "composition-lock requires module objects".to_owned(),
                 ));
             };
             let get = |key: &str| {
                 table.get(key).and_then(Value::as_str).unwrap_or("")
             };
-            plugins.push(LockModuleIdentity {
+            modules.push(LockModuleIdentity {
                 id: get("id").to_owned(),
                 path: get("path").to_owned(),
                 digest: get("digest").to_owned(),
             });
         }
     }
-    let lock = create_workspace_lock(profile_digest, &plugins)
+    let lock = create_workspace_lock(profile_digest, &modules)
         .map_err(|error| HarnessError::corpus(error.message))?;
     let stored = input.get("storedLockDigest").and_then(Value::as_str);
     let (disposition, rendered) = match stored {
@@ -527,7 +527,7 @@ pub(in crate::harness) fn composition_plugin_selection_record(
         None
     } else {
         Some(format!(
-            "selection names {} un-enabled plugin id(s); they stay inactive",
+            "selection names {} un-enabled module id(s); they stay inactive",
             selection.unknown.len()
         ))
     };
@@ -583,7 +583,7 @@ pub(in crate::harness) fn composition_lock_verify_record(
         decide_lock_verification, render_lock_verification_evidence,
     };
     let build_identities = |value: Option<&Value>| {
-        let mut plugins = Vec::new();
+        let mut modules = Vec::new();
         if let Some(list) = value.and_then(Value::as_array) {
             for entry in list {
                 let table = entry.as_object();
@@ -593,14 +593,14 @@ pub(in crate::harness) fn composition_lock_verify_record(
                         .and_then(Value::as_str)
                         .unwrap_or("")
                 };
-                plugins.push(LockModuleIdentity {
+                modules.push(LockModuleIdentity {
                     id: get("id").to_owned(),
                     path: get("path").to_owned(),
                     digest: get("digest").to_owned(),
                 });
             }
         }
-        plugins
+        modules
     };
     let profile_digest = input.get("profileDigest").and_then(Value::as_str);
     let current_lock = create_workspace_lock(

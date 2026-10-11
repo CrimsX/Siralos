@@ -853,7 +853,7 @@ mod tests {
             .expect("clock")
             .as_nanos();
         let path =
-            std::env::temp_dir().join(format!("siralos-plugin-tests-{nonce}"));
+            std::env::temp_dir().join(format!("siralos-module-tests-{nonce}"));
         create_dir_all(&path).expect("temp root");
         path
     }

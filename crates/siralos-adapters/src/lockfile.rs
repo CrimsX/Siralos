@@ -26,7 +26,7 @@ pub const MAX_SIRALOS_LOCK_BYTES: usize = 64 * 1024;
 
 /// Module-count bound mirrored from the core lock model so untrusted
 /// arrays are rejected before their entries are cloned or traversed.
-const MAX_LOCK_PLUGIN_ENTRIES: usize = 16;
+const MAX_LOCK_MODULE_ENTRIES: usize = 16;
 /// Identity-field bounds mirrored from the core lock model so invalid
 /// untrusted fields are refused before they are cloned.
 const MAX_LOCK_ID_BYTES: usize = 64;
@@ -185,9 +185,9 @@ pub fn load_workspace_lock(
                 "The lock modules entry must be an array.".to_owned(),
             ));
         };
-        if list.len() > MAX_LOCK_PLUGIN_ENTRIES {
+        if list.len() > MAX_LOCK_MODULE_ENTRIES {
             return Err(failure(format!(
-                "siralos.lock exceeds the {MAX_LOCK_PLUGIN_ENTRIES}-module bound."
+                "siralos.lock exceeds the {MAX_LOCK_MODULE_ENTRIES}-module bound."
             )));
         }
         for entry in list {
@@ -261,9 +261,9 @@ pub fn write_workspace_lock(
     root: &Path,
     lock: &WorkspaceLock,
 ) -> Result<(), LockFailure> {
-    if lock.modules.len() > MAX_LOCK_PLUGIN_ENTRIES {
+    if lock.modules.len() > MAX_LOCK_MODULE_ENTRIES {
         return Err(failure(format!(
-            "siralos.lock exceeds the {MAX_LOCK_PLUGIN_ENTRIES}-module bound."
+            "siralos.lock exceeds the {MAX_LOCK_MODULE_ENTRIES}-module bound."
         )));
     }
     if let Some(profile_digest) = lock.profile_digest.as_deref() {
@@ -382,7 +382,7 @@ pub fn verify_workspace_lock(
 mod lockfile_tests {
     use super::load_workspace_lock;
     use super::{
-        LockVerification, MAX_LOCK_PLUGIN_ENTRIES, verify_workspace_lock,
+        LockVerification, MAX_LOCK_MODULE_ENTRIES, verify_workspace_lock,
         write_workspace_lock,
     };
     use siralos_core::composition::lock::{
@@ -451,7 +451,7 @@ mod lockfile_tests {
     #[test]
     fn lock_at_module_count_bound_roundtrips() {
         let root = workspace();
-        let identities = (0..MAX_LOCK_PLUGIN_ENTRIES)
+        let identities = (0..MAX_LOCK_MODULE_ENTRIES)
             .map(|index| LockModuleIdentity {
                 id: format!("module{index}"),
                 path: format!("plugins/plugin{index}.wasm"),
@@ -472,7 +472,7 @@ mod lockfile_tests {
     fn load_rejects_module_count_over_limit_before_iterating_entries() {
         let root = workspace();
         let mut entries = vec!["false".to_owned()];
-        entries.extend((0..MAX_LOCK_PLUGIN_ENTRIES).map(|index| {
+        entries.extend((0..MAX_LOCK_MODULE_ENTRIES).map(|index| {
             format!(
                 "{{ id = \"module{index}\", path = \"plugins/plugin{index}.wasm\", digest = \"{}\" }}",
                 "a".repeat(64),
@@ -496,7 +496,7 @@ mod lockfile_tests {
         let root = workspace();
         let lock = WorkspaceLock {
             profile_digest: None,
-            modules: (0..=MAX_LOCK_PLUGIN_ENTRIES)
+            modules: (0..=MAX_LOCK_MODULE_ENTRIES)
                 .map(|index| LockModuleIdentity {
                     id: format!("module{index}"),
                     path: format!("plugins/plugin{index}.wasm"),

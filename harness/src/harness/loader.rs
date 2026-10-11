@@ -559,7 +559,7 @@ pub(in crate::harness) fn validate_scenario(
             } else if language_subject {
                 MAX_LANGUAGE_INPUT_BYTES
             } else if domain_subject {
-                MAX_DOMAIN_INPUT_BYTES
+                MAX_MODULE_INPUT_BYTES
             } else {
                 MAX_WORKSPACE_INPUT_BYTES
             };

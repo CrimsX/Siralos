@@ -185,7 +185,7 @@ not stylistic.
 
 Use newtypes when they materially protect identity, unit, authority,
 validation, range, or cross-domain confusion — for example `TaskId`,
-`RevisionId`, `ArtifactDigest`, `CapabilityId`, `DomainPackageId`,
+`RevisionId`, `ArtifactDigest`, `CapabilityId`, `ModulePackageId`,
 `RunId`. Do not wrap every primitive merely for stylistic consistency;
 every newtype must earn its existence by improving correctness or
 meaning.
