@@ -150,7 +150,7 @@ explicit absence of implicit acquisition — workspace contents are
 opaque to the lifecycle). `siralos-adapters::domain` owns the production
 Component Model / WIT boundary (ADR 0034): the versioned
 `siralos:domain-abi@1.0.0` world
-(`crates/siralos-adapters/wit/domain-abi.wit`), component
+(`crates/siralos-adapters/wit/module-abi.wit`), component
 loading/instantiation with the versioned export-identity check
 (unknown/incompatible ABI fails closed), exact-byte digest
 verification at install and activation (stale/wrong bytes rejected
@@ -612,7 +612,7 @@ Component Model with versioned WIT as the primary host/domain boundary. A
 versioned out-of-process IPC boundary is retained as fallback/reference
 evidence. R6 promotes the experiment to the minimum production boundary:
 the versioned world `siralos:domain-abi@1.0.0` lives in
-`crates/siralos-adapters/wit/domain-abi.wit` and is implemented by
+`crates/siralos-adapters/wit/module-abi.wit` and is implemented by
 `siralos-adapters::domain` on top of the domain-neutral lifecycle in
 `siralos-core::domain`; the deterministic synthetic conformance Domain
 (`tests/domain-conformance/`) proves the boundary on the real component

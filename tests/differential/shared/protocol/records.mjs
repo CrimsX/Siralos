@@ -571,7 +571,7 @@ function validateCompletedResult(record, label) {
       }
       if (
         typeof result.escalation !== "string" ||
-        !["profile", "context", "skill", "plugin", "host"].includes(result.escalation)
+        !["profile", "context", "skill", "module", "host"].includes(result.escalation)
       ) {
         throw new Error(`${label}.result.escalation is invalid`);
       }

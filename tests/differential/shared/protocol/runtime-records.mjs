@@ -716,7 +716,7 @@ function validateCompositionLockV42Result(result, label) {
     previousId = identity.id;
   }
   if (result.disposition === "resolved") {
-    if (!result.rendered.startsWith("resolved plugins=")) {
+    if (!result.rendered.startsWith("resolved modules=")) {
       throw new Error(`${label}.result resolved rendering is invalid`);
     }
   } else if (result.disposition === "current") {
@@ -984,16 +984,16 @@ function validateCompositionPluginSelectionV43Result(result, label) {
   if (result.disposition === "unfiltered") {
     if (
       result.reason !== null ||
-      result.rendered !== `unfiltered plugins=${result.activated.length}`
+      result.rendered !== `unfiltered modules=${result.activated.length}`
     ) {
       throw new Error(`${label}.result unfiltered outcome is invalid`);
     }
   } else {
-    if (!result.rendered.startsWith(`narrowed plugins=${result.activated.length}`)) {
+    if (!result.rendered.startsWith(`narrowed modules=${result.activated.length}`)) {
       throw new Error(`${label}.result narrowed rendering is invalid`);
     }
     if (result.reason === null) {
-      if (result.rendered !== `narrowed plugins=${result.activated.length}`) {
+      if (result.rendered !== `narrowed modules=${result.activated.length}`) {
         throw new Error(`${label}.result narrowed rendering is invalid`);
       }
     } else {

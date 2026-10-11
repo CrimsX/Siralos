@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "corpusVersion": 82,
-  "entriesSha256": "10c289433610f31192d980b23efc38d8d30e25806097287254111a80514e6d2a",
+  "corpusVersion": 83,
+  "entriesSha256": "0df9bd59f6c0c27fcd5d63948185b4dcd4919f3c73158d444f4aa7e3a5531485",
   "supersessions": [
     {
       "scenarioId": "user-config-matrix",
       "reason": "The frozen record echoes the rejected local-directory PATH VALUE. A configured path can be an absolute host path, so the candidate reports the failure class without the value.",
-      "supersededIn": 82,
+      "supersededIn": 83,
       "decision": "Diagnostics never echo configured path values, field names, or transport text; absolute host paths never reach report-safe output. Recorded 2026-09-23 during the security and lifecycle repair.",
       "oracleRecordSha256": "d88458bdd5519c6b9d8d7a550705804261dee150322ab9e86d47ac40829bb38c",
       "record": {
@@ -658,6 +658,772 @@
         },
         "scenarioId": "user-config-matrix",
         "subject": "user-config"
+      }
+    },
+    {
+      "scenarioId": "command-catalog-snapshot",
+      "reason": "The frozen record pins the /domains-* catalog entries, descriptions, group, and content-bound revision digest. The product vocabulary is now /modules-* (ADR 0037).",
+      "supersededIn": 83,
+      "decision": "Supersede the frozen command-catalog-snapshot record with the candidate-authored modules-vocabulary record. Recorded 2026-10-10 during the modules reconsolidation (ADR 0037).",
+      "oracleRecordSha256": "c7853d0899d356f9dc9cddf10752bb851465d7a2a79b676eb92949bbd5e34a37",
+      "record": {
+        "outcome": "COMPLETED",
+        "result": {
+          "cases": [
+            {
+              "entries": [
+                {
+                  "description": "Show this help",
+                  "group": "session",
+                  "id": "help"
+                },
+                {
+                  "description": "Show provider, session, and workspace status",
+                  "group": "session",
+                  "id": "status"
+                },
+                {
+                  "description": "Clear the terminal (conversation is kept)",
+                  "group": "session",
+                  "id": "clear"
+                },
+                {
+                  "description": "Close Siralos",
+                  "group": "session",
+                  "id": "exit"
+                },
+                {
+                  "description": "List the available tools",
+                  "group": "inspection",
+                  "id": "tools"
+                },
+                {
+                  "description": "Show the sandbox backend status",
+                  "group": "inspection",
+                  "id": "sandbox"
+                },
+                {
+                  "description": "Show capability rules",
+                  "group": "inspection",
+                  "id": "permissions"
+                },
+                {
+                  "description": "Show command runners and command status",
+                  "group": "inspection",
+                  "id": "commands"
+                },
+                {
+                  "description": "Show the projected context (stable/contextual/volatile, pressure)",
+                  "group": "inspection",
+                  "id": "context"
+                },
+                {
+                  "description": "Show discovered project instruction files with revisions",
+                  "group": "inspection",
+                  "id": "instructions"
+                },
+                {
+                  "description": "Show current project knowledge facts (/knowledge why: last retrieval trace)",
+                  "group": "inspection",
+                  "id": "knowledge"
+                },
+                {
+                  "description": "Show configured external references and their status",
+                  "group": "inspection",
+                  "id": "references"
+                },
+                {
+                  "description": "Show one reference's identity and availability",
+                  "group": "inspection",
+                  "id": "reference"
+                },
+                {
+                  "description": "Show research capability, sources, and recent evidence",
+                  "group": "inspection",
+                  "id": "research-status"
+                },
+                {
+                  "description": "Show the active development workflow's bounded status",
+                  "group": "inspection",
+                  "id": "development-status"
+                },
+                {
+                  "description": "Show the compiled executor brief for the current task (task goal, manifest/contract identity, touchpoints, invariants, acceptance ids)",
+                  "group": "inspection",
+                  "id": "brief"
+                },
+                {
+                  "description": "Show the current milestone manifest and its evidence-backed acceptance status",
+                  "group": "inspection",
+                  "id": "milestone"
+                },
+                {
+                  "description": "Show Git availability and repository status",
+                  "group": "workspace",
+                  "id": "git-status"
+                },
+                {
+                  "description": "Show a bounded Git diff (working, staged, or head)",
+                  "group": "workspace",
+                  "id": "diff"
+                },
+                {
+                  "description": "List recorded recovery checkpoints",
+                  "group": "workspace",
+                  "id": "checkpoints"
+                },
+                {
+                  "description": "Undo the latest Siralos mutation (or /undo <checkpoint-id>)",
+                  "group": "workspace",
+                  "id": "undo"
+                },
+                {
+                  "description": "Cancel the running command",
+                  "group": "workflow",
+                  "id": "cancel"
+                },
+                {
+                  "description": "Start a host-owned ad-hoc task (completion requires host verification)",
+                  "group": "workflow",
+                  "id": "task"
+                },
+                {
+                  "description": "Show the current task: phase, contract revision, criteria, steps, progress",
+                  "group": "workflow",
+                  "id": "task-status"
+                },
+                {
+                  "description": "Start one GDScript development workflow (host-controlled planning; one-time approval; each source change is approved separately; /develop --plan <request> forces full planning before execution)",
+                  "group": "workflow",
+                  "id": "develop"
+                },
+                {
+                  "description": "Plan-only mode: run read-only planning for a request and return a structured plan; no source is modified, no mutation approval is requested, and no execution follows",
+                  "group": "workflow",
+                  "id": "plan"
+                },
+                {
+                  "description": "Show the current or final development quality report",
+                  "group": "workflow",
+                  "id": "quality"
+                },
+                {
+                  "description": "Run a fresh read-only independent review of the current development change (no approval, no modifications)",
+                  "group": "workflow",
+                  "id": "review-change"
+                },
+                {
+                  "description": "Show the selected Godot installation and project compatibility",
+                  "group": "godot",
+                  "id": "godot"
+                },
+                {
+                  "description": "Show all discovered Godot installations and selection rationale",
+                  "group": "godot",
+                  "id": "godot-installations"
+                },
+                {
+                  "description": "Show the static Godot project profile",
+                  "group": "godot",
+                  "id": "godot-project"
+                },
+                {
+                  "description": "Run bounded Godot diagnostics",
+                  "group": "godot",
+                  "id": "godot-doctor"
+                },
+                {
+                  "description": "Prepare one recovery-mode Godot project probe (approval required; reports unavailable when the platform cannot bind execution)",
+                  "group": "godot",
+                  "id": "godot-probe"
+                },
+                {
+                  "description": "Show the recovery probe capability and last outcome",
+                  "group": "godot",
+                  "id": "godot-probe-status"
+                },
+                {
+                  "description": "Show the exact-engine API knowledge status",
+                  "group": "godot",
+                  "id": "godot-knowledge"
+                },
+                {
+                  "description": "Regenerate the exact-engine API knowledge profile (reports unavailable when the platform cannot bind execution)",
+                  "group": "godot",
+                  "id": "godot-knowledge-refresh"
+                },
+                {
+                  "description": "Search the exact engine's API documentation locally",
+                  "group": "godot",
+                  "id": "godot-api"
+                },
+                {
+                  "description": "Check one .gd script with --check-only (approval required)",
+                  "group": "godot",
+                  "id": "gdscript-check"
+                },
+                {
+                  "description": "Check the project's .gd scripts sequentially with --check-only (approval required)",
+                  "group": "godot",
+                  "id": "gdscript-diagnostics"
+                },
+                {
+                  "description": "Start (approval required) or show the Godot GDScript language session",
+                  "group": "godot",
+                  "id": "gdscript-lsp"
+                },
+                {
+                  "description": "Gracefully stop the language session (no approval needed)",
+                  "group": "godot",
+                  "id": "gdscript-lsp-stop"
+                },
+                {
+                  "description": "Hover information from the language session",
+                  "group": "godot",
+                  "id": "gdscript-hover"
+                },
+                {
+                  "description": "Completion candidates from the language session",
+                  "group": "godot",
+                  "id": "gdscript-complete"
+                },
+                {
+                  "description": "Definition locations from the language session",
+                  "group": "godot",
+                  "id": "gdscript-definition"
+                },
+                {
+                  "description": "Show the GDScript declaration structure of a workspace file",
+                  "group": "knowledge",
+                  "id": "read-structure"
+                },
+                {
+                  "description": "Show installed modules and the Add Module affordance",
+                  "group": "modules",
+                  "id": "modules"
+                },
+                {
+                  "description": "Install a module from a folder containing module-manifest.toml",
+                  "group": "modules",
+                  "id": "modules-add"
+                },
+                {
+                  "description": "Enable an installed module (Host-gated, no capability grant)",
+                  "group": "modules",
+                  "id": "modules-enable"
+                },
+                {
+                  "description": "Activate an enabled module (Host-gated, capability grant checked)",
+                  "group": "modules",
+                  "id": "modules-activate"
+                },
+                {
+                  "description": "Run read-only Siralos capability diagnostics (areas: runtime, configuration, providers, sandbox, workspace, godot, project, references, research, capabilities)",
+                  "group": "doctor",
+                  "id": "doctor"
+                },
+                {
+                  "description": "Show the installed Siralos runtime identity and self-reference revision",
+                  "group": "doctor",
+                  "id": "siralos"
+                }
+              ],
+              "revision": "5ff0f28e09311a0aa958becef9736ce93390f0128417e19c7576485f671539ee"
+            },
+            {
+              "found": false
+            },
+            {
+              "entry": {
+                "description": "Show this help",
+                "group": "session",
+                "id": "help"
+              },
+              "found": true
+            },
+            {
+              "ids": [
+                "help",
+                "status",
+                "clear",
+                "exit",
+                "tools",
+                "sandbox",
+                "permissions",
+                "commands",
+                "context",
+                "instructions",
+                "knowledge",
+                "references",
+                "reference",
+                "research-status",
+                "development-status",
+                "brief",
+                "milestone",
+                "git-status",
+                "diff",
+                "checkpoints",
+                "undo",
+                "cancel",
+                "task",
+                "task-status",
+                "develop",
+                "plan",
+                "quality",
+                "review-change",
+                "godot",
+                "godot-installations",
+                "godot-project",
+                "godot-doctor",
+                "godot-probe",
+                "godot-probe-status",
+                "godot-knowledge",
+                "godot-knowledge-refresh",
+                "godot-api",
+                "gdscript-check",
+                "gdscript-diagnostics",
+                "gdscript-lsp",
+                "gdscript-lsp-stop",
+                "gdscript-hover",
+                "gdscript-complete",
+                "gdscript-definition",
+                "read-structure",
+                "modules",
+                "modules-add",
+                "modules-enable",
+                "modules-activate",
+                "doctor",
+                "siralos"
+              ],
+              "stable": true
+            },
+            {
+              "nodeScript": {
+                "available": false,
+                "definitionId": "node-script"
+              },
+              "npmScript": {
+                "available": false,
+                "definitionId": "npm-script"
+              }
+            }
+          ]
+        },
+        "scenarioId": "command-catalog-snapshot",
+        "subject": "command-catalog"
+      }
+    },
+    {
+      "scenarioId": "cli-session-set",
+      "reason": "The frozen record pins the /domains-* command ids, help text, and catalog parses. The product vocabulary is now /modules-* (ADR 0037); renders changed with it.",
+      "supersededIn": 83,
+      "decision": "Supersede the frozen cli-session-set record with the candidate-authored modules-vocabulary record. Recorded 2026-10-10 during the modules reconsolidation (ADR 0037).",
+      "oracleRecordSha256": "c56777e07d6c8c2fc07b694821ecb9b9c1a6158524a76980f073a107fc8d460c",
+      "record": {
+        "outcome": "COMPLETED",
+        "result": {
+          "cases": [
+            {
+              "catalogParse": [
+                {
+                  "command": "help",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "status",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "clear",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "exit",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "tools",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "sandbox",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "permissions",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "commands",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "context",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "instructions",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "knowledge",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "references",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "reference",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "research-status",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "development-status",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "brief",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "milestone",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "git-status",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "diff",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "checkpoints",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "undo",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "cancel",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "task",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "task-status",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "develop",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "plan",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "quality",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "review-change",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "godot",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "godot-installations",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "godot-project",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "godot-doctor",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "godot-probe",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "godot-probe-status",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "godot-knowledge",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "godot-knowledge-refresh",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "godot-api",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "gdscript-check",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "gdscript-diagnostics",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "gdscript-lsp",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "gdscript-lsp-stop",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "gdscript-hover",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "gdscript-complete",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "gdscript-definition",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "read-structure",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "modules",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "modules-add",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "modules-enable",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "modules-activate",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "doctor",
+                  "unknownCommandRendered": false
+                },
+                {
+                  "command": "siralos",
+                  "unknownCommandRendered": false
+                }
+              ],
+              "emptyExitCode": 0,
+              "emptyWrites": 0,
+              "name": "input-parsing",
+              "promptExitCode": 0,
+              "promptWrites": [
+                "\n",
+                "Siralos received",
+                ": hello there",
+                "\n"
+              ],
+              "unknownWrites": [
+                "Unknown command: /definitely-not-a-command\nType /help for the list of available commands.\n"
+              ]
+            },
+            {
+              "cleared": 1,
+              "exitCode": 0,
+              "name": "session-lifecycle",
+              "promptCount": 0,
+              "writeCount": 4
+            },
+            {
+              "commandsWrites": [
+                "RUNNER       STATUS       SECURITY\nnpm-script   unavailable  approval, read-only workspace, offline\nnode-script  unavailable  approval, read-only workspace, offline\n\nSandbox: anthropic-runtime (setup-required)\nProcess execution: denied\nActive command: none\nDefault timeout: 120 seconds\nstdout limit: 1 MiB\nstderr limit: 1 MiB\n\nRecent commands:\n  none\n"
+              ],
+              "helpWrites": [
+                "Available commands:\n  /help              Show this help\n  /status            Show provider, session, and workspace status\n  /clear             Clear the terminal (conversation is kept)\n  /tools             List the available tools\n  /sandbox           Show the sandbox backend status\n  /permissions       Show capability rules\n  /commands          Show command runners and command status\n  /cancel            Cancel the running command\n  /context           Show the projected context (stable/contextual/volatile, pressure)\n  /instructions      Show discovered project instruction files with revisions\n  /knowledge         Show current project knowledge facts (/knowledge why: last retrieval trace)\n  /references        Show configured external references and their status\n  /reference <alias> Show one reference's identity and availability\n  /research-status   Show research capability, sources, and recent evidence\n  /git-status        Show Git availability and repository status\n  /diff              Show a bounded Git diff (working, staged, or head)\n  /checkpoints       List recorded recovery checkpoints\n  /undo              Undo the latest Siralos mutation (or /undo <checkpoint-id>)\n  /task <request>    Start a host-owned ad-hoc task (completion requires host verification)\n  /task-status       Show the current task: phase, contract revision, criteria, steps, progress\n  /godot             Show the selected Godot installation and project compatibility\n  /godot-installations  Show all discovered Godot installations and selection rationale\n  /godot-project     Show the static Godot project profile\n  /godot-doctor      Run bounded Godot diagnostics\n  /godot-probe       Prepare one recovery-mode Godot project probe (approval required; reports unavailable when the platform cannot bind execution)\n  /godot-probe-status  Show the recovery probe capability and last outcome\n  /godot-knowledge   Show the exact-engine API knowledge status\n  /godot-knowledge-refresh  Regenerate the exact-engine API knowledge profile (reports unavailable when the platform cannot bind execution)\n  /godot-api <query>  Search the exact engine's API documentation locally\n  /gdscript-check <relative-path>  Check one .gd script with --check-only (approval required)\n  /gdscript-diagnostics  Check the project's .gd scripts sequentially with --check-only (approval required)\n  /gdscript-lsp      Start (approval required) or show the Godot GDScript language session\n  /gdscript-lsp-stop  Gracefully stop the language session (no approval needed)\n  /gdscript-hover <path> <line> <column>  Hover information from the language session\n  /gdscript-complete <path> <line> <column>  Completion candidates from the language session\n  /gdscript-definition <path> <line> <column>  Definition locations from the language session\n  /develop <request>  Start one GDScript development workflow (one-time approval; each source change is approved separately)\n  /development-status  Show the active development workflow's bounded status\n  /quality           Show the current or final development quality report\n  /review-change     Run a fresh read-only independent review of the current development change (no approval, no modifications)\n  /exit              Close Siralos\n"
+              ],
+              "name": "help-and-commands"
+            },
+            {
+              "name": "status-view",
+              "writes": [
+                "Provider: deterministic-fake\nSession: active\nMessages: 0\nWorkspace: <workspace>\nSandbox: inspect\nPending approval: no\nGit: unavailable\nCheckpoint: none\nUncertain checkpoints: 0\nProvider tools: 24\nTools: 31\nProcess execution: denied\nCommand runners: 2\nActive command: none\nLast command exit: none\nCommand profile: validation-offline\nGodot: no installation selected\nGodot project: none, compatibility: no-project, warnings: 1\nRecovery probe: never run\nKnowledge: unavailable\nGodot LSP: inactive\nResearch: disabled (2 sources)\n",
+                "Planning: none\n"
+              ]
+            },
+            {
+              "name": "unknown-command",
+              "writes": [
+                "Unknown command: /nope arg\nType /help for the list of available commands.\n"
+              ]
+            },
+            {
+              "name": "prompt-turn",
+              "writes": [
+                "\n",
+                "Siralos received",
+                ": add a greeting",
+                " to src/app.ts",
+                "\n",
+                "Provider: deterministic-fake\nSession: active\nMessages: 2\nWorkspace: <workspace>\nSandbox: inspect\nPending approval: no\nGit: unavailable\nCheckpoint: none\nUncertain checkpoints: 0\nProvider tools: 24\nTools: 31\nProcess execution: denied\nCommand runners: 2\nActive command: none\nLast command exit: none\nCommand profile: validation-offline\nGodot: no installation selected\nGodot project: none, compatibility: no-project, warnings: 1\nRecovery probe: never run\nKnowledge: unavailable\nGodot LSP: inactive\nResearch: disabled (2 sources)\n",
+                "Planning: none\n"
+              ]
+            },
+            {
+              "exitCode": 0,
+              "name": "godot-commands-unavailable",
+              "writeCount": 11,
+              "writes": [
+                "Godot:\n  Selected installation: none\n  Project detected: no\nNo project code was executed.\nNo project import was performed.\n",
+                "No Godot installations were discovered.\n\nSelection rationale:\n  No selectable Godot installation was discovered.\n",
+                "No Godot project detected at the workspace root.\n",
+                "Siralos Godot doctor\n\nConfiguration:\n  Active installation: none\n  Configured installations: 0\n  PATH discovery: enabled\n  Overrides: none\n\nSandbox:\n  State: setup-required\n  Backend: anthropic-runtime\n  Network restriction: no\n  Filesystem write restriction: no\n  Process-tree restriction: no\n\nCache:\n  Schema version: 1\n  Cached profiles: 0\n\nRecovery-mode project probe: unavailable (win32)\nAPI knowledge: unavailable (win32)\nGDScript diagnostics: unavailable (win32)\n  Recovery-mode project probing is unavailable on this platform: the exact approved Godot identity cannot be launched, the disposable mirror cannot be constructed with exactly the approved bytes, and its cleanup cannot be bound to the exact created objects, because Node and the pinned sandbox runtime offer no exec-by-handle, directory-relative create, or delete-by-handle primitive. Nothing was created, nothing was deleted, and no engine was launched.\n  The API knowledge capability is not wired in this composition.\n  The GDScript diagnostic capability is not wired in this composition.\n\nNo Godot installations were discovered.\n\nSelection rationale:\n  No selectable Godot installation was discovered.\n\nProject: not detected (no project.godot at the workspace root)\n\nNo project code was executed.\nNo project import was performed.\n",
+                "Checking recovery-probe capability…\n",
+                "  ✕ unavailable: Recovery-mode project probing is unavailable on this platform: the exact approved Godot identity cannot be launched, the disposable mirror cannot be constructed with exactly the approved bytes, and its cleanup cannot be bound to the exact created objects, because Node and the pinned sandbox runtime offer no exec-by-handle, directory-relative create, or delete-by-handle primitive. Nothing was created, nothing was deleted, and no engine was launched.\n",
+                "Project probe:\n  Trust state: untrusted\n  Manifest digest: none\n  Last engine: none\n  Last result: never run\n",
+                "Godot API knowledge\n\nEngine: none selected (win32)\nKnowledge status: unavailable\n\nReason: Exact-engine API documentation generation is unavailable: Node and the pinned sandbox runtime offer no exec-by-handle or directory-handle-relative primitive, so the staged executable's pathname is re-opened at spawn time and a same-user process could substitute different bytes between final verification and launch, and the Siralos-private probe directory cannot be created or cleaned up identity-bound. The verified fingerprint could then be attached to bytes that never execute. Generation fails closed and the executable is never spawned; no probe directory is created. It will become available only when a mechanically identity-bound launch and directory-lifecycle primitive exists.\n\nDocumentation channels:\n  Engine API:          exact executable-derived (not generated yet)\n  Manual docs:         not locally synchronized",
+                "Checking exact-engine API knowledge capability…\n",
+                "  ✕ unavailable: Exact-engine API documentation generation is unavailable: Node and the pinned sandbox runtime offer no exec-by-handle or directory-handle-relative primitive, so the staged executable's pathname is re-opened at spawn time and a same-user process could substitute different bytes between final verification and launch, and the Siralos-private probe directory cannot be created or cleaned up identity-bound. The verified fingerprint could then be attached to bytes that never execute. Generation fails closed and the executable is never spawned; no probe directory is created. It will become available only when a mechanically identity-bound launch and directory-lifecycle primitive exists.\n",
+                "API search unavailable: No Godot API knowledge is loaded: exact-engine API generation is unavailable on this platform."
+              ]
+            },
+            {
+              "exitCode": 0,
+              "name": "gdscript-commands-unavailable",
+              "writeCount": 10,
+              "writes": [
+                "Checking GDScript diagnostic capability…\n",
+                "  ✕ unavailable: GDScript check-only diagnostics are unavailable on this platform: the exact approved Godot identity cannot be launched against exactly the approved mirrored script bytes, the disposable mirror cannot be constructed with exactly the approved bytes, and its cleanup cannot be bound to the exact created objects, because Node and the pinned sandbox runtime offer no exec-by-handle, directory-relative create, or delete-by-handle primitive. Nothing was created, nothing was deleted, and no engine was launched.\n",
+                "Checking GDScript diagnostic capability…\n",
+                "  ✕ unavailable: GDScript check-only diagnostics are unavailable on this platform: the exact approved Godot identity cannot be launched against exactly the approved mirrored script bytes, the disposable mirror cannot be constructed with exactly the approved bytes, and its cleanup cannot be bound to the exact created objects, because Node and the pinned sandbox runtime offer no exec-by-handle, directory-relative create, or delete-by-handle primitive. Nothing was created, nothing was deleted, and no engine was launched.\n",
+                "Checking GDScript language-session capability…\n",
+                "  ✕ unavailable: The Godot GDScript language session is unavailable on this platform: the exact approved Godot editor cannot be launched against exactly the approved mirrored project bytes, the disposable mirror cannot be constructed or cleaned up identity-bound, and the loopback LSP channel cannot be tied to a verified process identity, because Node and the pinned sandbox runtime offer no exec-by-handle, directory-relative create, or delete-by-handle primitive. Nothing was created, no port was opened, no engine was launched.\n",
+                "GDScript language session stopped.\n",
+                "No Godot language session is active; start and approve one with /gdscript-lsp first.\n",
+                "No Godot language session is active; start and approve one with /gdscript-lsp first.\n",
+                "No Godot language session is active; start and approve one with /gdscript-lsp first.\n"
+              ]
+            },
+            {
+              "exitCode": 0,
+              "name": "develop-commands-unavailable",
+              "writeCount": 12,
+              "writes": [
+                "Checking the development-workflow capability…\n",
+                "  ✕ unavailable: The GDScript development workflow cannot apply source changes on this platform: The exact change set cannot be applied on this platform: Node offers no directory-relative (openat/renameat) primitive, so a same-user process that swaps a parent or target at any instruction boundary can redirect pathname-based staging and replacement outside the workspace. The change set fails closed before any write, lock, approval, or checkpoint; it will become available when a mechanically identity-bound commit primitive exists.\n",
+                "Planning: full (explicit-plan-request)\n",
+                "Plan rev 1 — Full\n\nObjective\nStructured plan for: test\n\nScope\n- the requested workspace change\n\nCandidate\n- src/player/player.gd\n- tests/player/**\n\nSteps\nstep-1: Inspect the relevant files\nstep-2: Implement the bounded change\nstep-3: Validate with check-only parsing and existing tests\n\nRisks\n- [low] Bounded change; risk is minimal.\n\nValidation\n- check-only parse\n- existing project tests\n\nRequirements (descriptive only — they grant nothing)\n- workspace mutation\n\nRollback\nRevert the prepared change set.\n\nPlan state: current\nPlan approval: none\n",
+                "Plan-only mode: no source was modified, no mutation approval was requested,\nand no execution follows. Use /develop <request> to execute (edits still\nrequire their own exact one-time approval).\n",
+                "Task task-1 (contract revision 1)\nIdentity: contract rev 1 / 2fb02ee9… · plan rev 1 / befdc96b…\n⏳ Phase: blocked — plan-only mode — execution not started; re-run /develop to execute the plan\nPlan: plan-task-1 rev 1 (full)\nPlan state: current\nPlan approval: none\nSteps: 0/0 completed\n  (no structured steps)\nAcceptance: 0/1 satisfied\n  · host-verified pending\nValidation: not_run\nReview: not_run\nProgress: healthy (0 useful observations)\nCompletion: NOT allowed (3 reasons)\n",
+                "The GDScript development workflow is unavailable: The GDScript development workflow cannot apply source changes on this platform: The exact change set cannot be applied on this platform: Node offers no directory-relative (openat/renameat) primitive, so a same-user process that swaps a parent or target at any instruction boundary can redirect pathname-based staging and replacement outside the workspace. The change set fails closed before any write, lock, approval, or checkpoint; it will become available when a mechanically identity-bound commit primitive exists.",
+                "Planning: full (plan plan-task-1 rev 1)\nPlan state: current\nPlan approval: none\n",
+                "Context projection: not yet computed (send a prompt first)\n",
+                "No quality report exists yet; apply an approved change set in a /develop workflow first.",
+                "Running a fresh independent review of the current development change…\n",
+                "Independent review failed: No eligible development change exists; start a /develop workflow and apply an approved change set first."
+              ]
+            },
+            {
+              "exitCode": 0,
+              "name": "system-commands-unavailable",
+              "writeCount": 10,
+              "writes": [
+                "Checking sandbox…\n",
+                "Profile: inspect\nBackend: anthropic-runtime\nPlatform: windows\nState: setup-required\nVersion: 0.0.71\nFilesystem read restriction: no\nFilesystem write restriction: no\nNetwork restriction: no\nProcess-tree restriction: no\nViolation reporting: no\nNetwork: denied\nEnvironment: minimal\nSetup: Windows sandbox needs a one-time install (one UAC prompt):\n  npx sandbox-runtime windows-install\n  — or call installWindowsSandbox(), or run `srt-win.exe install` directly.\nNo logout is needed: the WFP filter keys on the dedicated `srt-sandbox` user's SID, so your network is unaffected.\nWarning: the native Windows backend is alpha; do not treat it as secure until Siralos conformance passes.\n",
+                "Profile: inspect\n\n  workspace.read     allow\n  workspace.write    deny\n  git.inspect        allow\n  godot.inspect      allow\n  godot.probe_project ask\n  godot.development  allow\n  process.execute    deny\n  network.outbound   deny\n\nCommand execution requires one-time approval per exact command plan.\n",
+                "Git: unavailable\nVersion: unknown\nRepository: unavailable\nNote: Git inspection is unavailable because the sandbox backend state is setup-required; Git is never spawned outside the sandbox.\n",
+                "[error] Git inspection is unavailable because the sandbox backend state is setup-required; Git is never spawned outside the sandbox.\n",
+                "No checkpoints recorded.\n",
+                "Undo checkpoint (latest)...\n",
+                "✕ Undo failed: Undo is unavailable: restoring a checkpoint requires pathname-based displacement and replacement, and Node offers no directory-relative (openat/renameat) primitive, so a same-user process that swaps a parent or target at any instruction boundary could redirect the restore outside the workspace. Undo fails closed before any write; it will become available when a mechanically identity-bound commit primitive exists.\n",
+                "RUNNER       STATUS       SECURITY\nnpm-script   unavailable  approval, read-only workspace, offline\nnode-script  unavailable  approval, read-only workspace, offline\n\nSandbox: anthropic-runtime (setup-required)\nProcess execution: denied\nActive command: none\nDefault timeout: 120 seconds\nstdout limit: 1 MiB\nstderr limit: 1 MiB\n\nRecent commands:\n  none\n",
+                "  No command is active.\n"
+              ]
+            },
+            {
+              "clearOnceCleared": 1,
+              "clearOnceWrites": 0,
+              "drainedExitCode": 0,
+              "drainedWrites": 0,
+              "emptyExitCode": 0,
+              "emptyWrites": 0,
+              "interleavedCleared": 0,
+              "interleavedWriteCount": 11,
+              "interleavedWrites": [
+                "\n",
+                "Siralos received",
+                ": hello",
+                "\n",
+                "Provider: deterministic-fake\nSession: active\nMessages: 2\nWorkspace: <workspace>\nSandbox: inspect\nPending approval: no\nGit: unavailable\nCheckpoint: none\nUncertain checkpoints: 0\nProvider tools: 24\nTools: 31\nProcess execution: denied\nCommand runners: 2\nActive command: none\nLast command exit: none\nCommand profile: validation-offline\nGodot: no installation selected\nGodot project: none, compatibility: no-project, warnings: 1\nRecovery probe: never run\nKnowledge: unavailable\nGodot LSP: inactive\nResearch: disabled (2 sources)\n",
+                "Planning: none\n",
+                "\n",
+                "Siralos received",
+                ": world",
+                "\n",
+                "Available commands:\n  /help              Show this help\n  /status            Show provider, session, and workspace status\n  /clear             Clear the terminal (conversation is kept)\n  /tools             List the available tools\n  /sandbox           Show the sandbox backend status\n  /permissions       Show capability rules\n  /commands          Show command runners and command status\n  /cancel            Cancel the running command\n  /context           Show the projected context (stable/contextual/volatile, pressure)\n  /instructions      Show discovered project instruction files with revisions\n  /knowledge         Show current project knowledge facts (/knowledge why: last retrieval trace)\n  /references        Show configured external references and their status\n  /reference <alias> Show one reference's identity and availability\n  /research-status   Show research capability, sources, and recent evidence\n  /git-status        Show Git availability and repository status\n  /diff              Show a bounded Git diff (working, staged, or head)\n  /checkpoints       List recorded recovery checkpoints\n  /undo              Undo the latest Siralos mutation (or /undo <checkpoint-id>)\n  /task <request>    Start a host-owned ad-hoc task (completion requires host verification)\n  /task-status       Show the current task: phase, contract revision, criteria, steps, progress\n  /godot             Show the selected Godot installation and project compatibility\n  /godot-installations  Show all discovered Godot installations and selection rationale\n  /godot-project     Show the static Godot project profile\n  /godot-doctor      Run bounded Godot diagnostics\n  /godot-probe       Prepare one recovery-mode Godot project probe (approval required; reports unavailable when the platform cannot bind execution)\n  /godot-probe-status  Show the recovery probe capability and last outcome\n  /godot-knowledge   Show the exact-engine API knowledge status\n  /godot-knowledge-refresh  Regenerate the exact-engine API knowledge profile (reports unavailable when the platform cannot bind execution)\n  /godot-api <query>  Search the exact engine's API documentation locally\n  /gdscript-check <relative-path>  Check one .gd script with --check-only (approval required)\n  /gdscript-diagnostics  Check the project's .gd scripts sequentially with --check-only (approval required)\n  /gdscript-lsp      Start (approval required) or show the Godot GDScript language session\n  /gdscript-lsp-stop  Gracefully stop the language session (no approval needed)\n  /gdscript-hover <path> <line> <column>  Hover information from the language session\n  /gdscript-complete <path> <line> <column>  Completion candidates from the language session\n  /gdscript-definition <path> <line> <column>  Definition locations from the language session\n  /develop <request>  Start one GDScript development workflow (one-time approval; each source change is approved separately)\n  /development-status  Show the active development workflow's bounded status\n  /quality           Show the current or final development quality report\n  /review-change     Run a fresh read-only independent review of the current development change (no approval, no modifications)\n  /exit              Close Siralos\n"
+              ],
+              "name": "input-queue-ownership"
+            },
+            {
+              "containsWorkspacePlaceholder": true,
+              "controls": "^@^A^H^?��",
+              "csiStripped": "red",
+              "emojiPreserved": "😀x",
+              "loneEscape": "normal",
+              "name": "sanitizer-boundary",
+              "oscStripped": "ab",
+              "splitCsi": "hello"
+            },
+            {
+              "containsConfigPlaceholder": false,
+              "containsWorkspacePlaceholder": true,
+              "exitCode": 0,
+              "firstWrites": [
+                "Provider: deterministic-fake\nSession: active\nMessages: 0\nWorkspace: <workspace>\nSandbox: inspect\nPending approval: no\nGit: unavailable\nCheckpoint: none\nUncertain checkpoints: 0\nProvider tools: 24\nTools: 31\nProcess execution: denied\nCommand runners: 2\nActive command: none\nLast command exit: none\nCommand profile: validation-offline\nGodot: no installation selected\nGodot project: none, compatibility: no-project, warnings: 1\nRecovery probe: never run\nKnowledge: unavailable\nGodot LSP: inactive\nResearch: disabled (2 sources)\n",
+                "Planning: none\n",
+                "\n",
+                "Siralos received",
+                ": hello world",
+                "\n",
+                "Provider: deterministic-fake\nSession: active\nMessages: 2\nWorkspace: <workspace>\nSandbox: inspect\nPending approval: no\nGit: unavailable\nCheckpoint: none\nUncertain checkpoints: 0\nProvider tools: 24\nTools: 31\nProcess execution: denied\nCommand runners: 2\nActive command: none\nLast command exit: none\nCommand profile: validation-offline\nGodot: no installation selected\nGodot project: none, compatibility: no-project, warnings: 1\nRecovery probe: never run\nKnowledge: unavailable\nGodot LSP: inactive\nResearch: disabled (2 sources)\n",
+                "Planning: none\n",
+                "Available commands:\n  /help              Show this help\n  /status            Show provider, session, and workspace status\n  /clear             Clear the terminal (conversation is kept)\n  /tools             List the available tools\n  /sandbox           Show the sandbox backend status\n  /permissions       Show capability rules\n  /commands          Show command runners and command status\n  /cancel            Cancel the running command\n  /context           Show the projected context (stable/contextual/volatile, pressure)\n  /instructions      Show discovered project instruction files with revisions\n  /knowledge         Show current project knowledge facts (/knowledge why: last retrieval trace)\n  /references        Show configured external references and their status\n  /reference <alias> Show one reference's identity and availability\n  /research-status   Show research capability, sources, and recent evidence\n  /git-status        Show Git availability and repository status\n  /diff              Show a bounded Git diff (working, staged, or head)\n  /checkpoints       List recorded recovery checkpoints\n  /undo              Undo the latest Siralos mutation (or /undo <checkpoint-id>)\n  /task <request>    Start a host-owned ad-hoc task (completion requires host verification)\n  /task-status       Show the current task: phase, contract revision, criteria, steps, progress\n  /godot             Show the selected Godot installation and project compatibility\n  /godot-installations  Show all discovered Godot installations and selection rationale\n  /godot-project     Show the static Godot project profile\n  /godot-doctor      Run bounded Godot diagnostics\n  /godot-probe       Prepare one recovery-mode Godot project probe (approval required; reports unavailable when the platform cannot bind execution)\n  /godot-probe-status  Show the recovery probe capability and last outcome\n  /godot-knowledge   Show the exact-engine API knowledge status\n  /godot-knowledge-refresh  Regenerate the exact-engine API knowledge profile (reports unavailable when the platform cannot bind execution)\n  /godot-api <query>  Search the exact engine's API documentation locally\n  /gdscript-check <relative-path>  Check one .gd script with --check-only (approval required)\n  /gdscript-diagnostics  Check the project's .gd scripts sequentially with --check-only (approval required)\n  /gdscript-lsp      Start (approval required) or show the Godot GDScript language session\n  /gdscript-lsp-stop  Gracefully stop the language session (no approval needed)\n  /gdscript-hover <path> <line> <column>  Hover information from the language session\n  /gdscript-complete <path> <line> <column>  Completion candidates from the language session\n  /gdscript-definition <path> <line> <column>  Definition locations from the language session\n  /develop <request>  Start one GDScript development workflow (one-time approval; each source change is approved separately)\n  /development-status  Show the active development workflow's bounded status\n  /quality           Show the current or final development quality report\n  /review-change     Run a fresh read-only independent review of the current development change (no approval, no modifications)\n  /exit              Close Siralos\n"
+              ],
+              "identical": true,
+              "name": "session-ordering-determinism",
+              "secondWrites": [
+                "Provider: deterministic-fake\nSession: active\nMessages: 0\nWorkspace: <workspace>\nSandbox: inspect\nPending approval: no\nGit: unavailable\nCheckpoint: none\nUncertain checkpoints: 0\nProvider tools: 24\nTools: 31\nProcess execution: denied\nCommand runners: 2\nActive command: none\nLast command exit: none\nCommand profile: validation-offline\nGodot: no installation selected\nGodot project: none, compatibility: no-project, warnings: 1\nRecovery probe: never run\nKnowledge: unavailable\nGodot LSP: inactive\nResearch: disabled (2 sources)\n",
+                "Planning: none\n",
+                "\n",
+                "Siralos received",
+                ": hello world",
+                "\n",
+                "Provider: deterministic-fake\nSession: active\nMessages: 2\nWorkspace: <workspace>\nSandbox: inspect\nPending approval: no\nGit: unavailable\nCheckpoint: none\nUncertain checkpoints: 0\nProvider tools: 24\nTools: 31\nProcess execution: denied\nCommand runners: 2\nActive command: none\nLast command exit: none\nCommand profile: validation-offline\nGodot: no installation selected\nGodot project: none, compatibility: no-project, warnings: 1\nRecovery probe: never run\nKnowledge: unavailable\nGodot LSP: inactive\nResearch: disabled (2 sources)\n",
+                "Planning: none\n",
+                "Available commands:\n  /help              Show this help\n  /status            Show provider, session, and workspace status\n  /clear             Clear the terminal (conversation is kept)\n  /tools             List the available tools\n  /sandbox           Show the sandbox backend status\n  /permissions       Show capability rules\n  /commands          Show command runners and command status\n  /cancel            Cancel the running command\n  /context           Show the projected context (stable/contextual/volatile, pressure)\n  /instructions      Show discovered project instruction files with revisions\n  /knowledge         Show current project knowledge facts (/knowledge why: last retrieval trace)\n  /references        Show configured external references and their status\n  /reference <alias> Show one reference's identity and availability\n  /research-status   Show research capability, sources, and recent evidence\n  /git-status        Show Git availability and repository status\n  /diff              Show a bounded Git diff (working, staged, or head)\n  /checkpoints       List recorded recovery checkpoints\n  /undo              Undo the latest Siralos mutation (or /undo <checkpoint-id>)\n  /task <request>    Start a host-owned ad-hoc task (completion requires host verification)\n  /task-status       Show the current task: phase, contract revision, criteria, steps, progress\n  /godot             Show the selected Godot installation and project compatibility\n  /godot-installations  Show all discovered Godot installations and selection rationale\n  /godot-project     Show the static Godot project profile\n  /godot-doctor      Run bounded Godot diagnostics\n  /godot-probe       Prepare one recovery-mode Godot project probe (approval required; reports unavailable when the platform cannot bind execution)\n  /godot-probe-status  Show the recovery probe capability and last outcome\n  /godot-knowledge   Show the exact-engine API knowledge status\n  /godot-knowledge-refresh  Regenerate the exact-engine API knowledge profile (reports unavailable when the platform cannot bind execution)\n  /godot-api <query>  Search the exact engine's API documentation locally\n  /gdscript-check <relative-path>  Check one .gd script with --check-only (approval required)\n  /gdscript-diagnostics  Check the project's .gd scripts sequentially with --check-only (approval required)\n  /gdscript-lsp      Start (approval required) or show the Godot GDScript language session\n  /gdscript-lsp-stop  Gracefully stop the language session (no approval needed)\n  /gdscript-hover <path> <line> <column>  Hover information from the language session\n  /gdscript-complete <path> <line> <column>  Completion candidates from the language session\n  /gdscript-definition <path> <line> <column>  Definition locations from the language session\n  /develop <request>  Start one GDScript development workflow (one-time approval; each source change is approved separately)\n  /development-status  Show the active development workflow's bounded status\n  /quality           Show the current or final development quality report\n  /review-change     Run a fresh read-only independent review of the current development change (no approval, no modifications)\n  /exit              Close Siralos\n"
+              ],
+              "writeCount": 9
+            }
+          ]
+        },
+        "scenarioId": "cli-session-set",
+        "subject": "cli-session"
       }
     }
   ]

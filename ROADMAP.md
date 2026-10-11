@@ -778,10 +778,10 @@ later session needs must appear here or in a commit.
      so a value the loader reads back is one the writer refuses to store.
 
 3. **The record path's rendering claim.** `validate_record`
-   (`crates/siralos-adapters/src/domain/manifest.rs:490`) rejects an empty path, a
+   (`crates/siralos-adapters/src/module/manifest.rs:606`) rejects an empty path, a
    NUL and an absolute path, and its doc comment read as if that were enough that a
    crafted `siralos.toml` "cannot drive arbitrary rendering". It is not:
-   `format_domains` (`crates/siralos-cli/src/output.rs:210`) renders `record.path`
+   `format_modules` (`crates/siralos-cli/src/output.rs:211`) renders `record.path`
    verbatim, and the terminal sanitizer wrapping it
    (`crates/siralos-cli/src/interactive.rs:1118`) keeps `\n` and `\t` by design
    (`crates/siralos-cli/src/sanitize.rs:67`), so a path with a newline in it forges

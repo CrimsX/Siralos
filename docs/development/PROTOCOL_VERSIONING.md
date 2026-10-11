@@ -45,7 +45,7 @@ Status: authoritative (pre-Stage-4 assurance, contract Part 20 / Part 21).
 | Differential corpus manifest                   | `tests/differential/corpus/manifest.json`    | `schemaVersion: 1`, `corpusVersion: 1` | hard incompatible                                                |
 | Differential outcome records                   | emitted by both runners                      | tied to corpus schema                  | hard incompatible                                                |
 | User configuration schema                      | `schemas/user-config.schema.json`            | draft 2020-12 `$id`                    | backward compatible (additive)                                   |
-| Domain ABI world (R6, ADR 0034)                | `crates/siralos-adapters/wit/domain-abi.wit` | `siralos:domain-abi@1.0.0`             | hard incompatible (exact equality; unknown versions fail closed) |
+| Domain ABI world (R6, ADR 0034)                | `crates/siralos-adapters/wit/module-abi.wit` | `siralos:domain-abi@1.0.0`             | hard incompatible (exact equality; unknown versions fail closed) |
 | Cargo manifest / package.json version identity | differential `version.identity` scenario     | product version                        | parity-gated                                                     |
 
 ## Host/domain contracts
