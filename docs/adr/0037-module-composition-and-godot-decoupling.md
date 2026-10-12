@@ -176,7 +176,8 @@ of the supersession list and the removal was executed through it:
   34 entries (one per pinned `godot-*` scenario): scenario id, reason,
   decision (owner directive 2026-10-10, option A), the frozen oracle
   record digest, the last executed candidate record digest (v83 green
-  run), a corpus-version stamp, and a loader-verified self-digest. A
+  run; disclosure-only — unverifiable by construction, kept for
+  provenance), a corpus-version stamp, and a loader-verified self-digest. A
   retired id must be in the pinned oracle and absent from the corpus;
   bounded (64), once per id, with named refusals for present,
   unknown (including bare subject names), mismatched, duplicated, and

@@ -31,6 +31,9 @@ const ENTRY_KEYS = [
   "retiredIn",
   "decision",
   "oracleRecordSha256",
+  // Disclosure-only: nothing can recheck a record that no longer
+  // executes. Kept for provenance — the digest binds the last
+  // executed candidate output named in the entry's decision.
   "candidateRecordSha256",
 ];
 const MAX_ENTRIES = 64;

@@ -13,13 +13,13 @@ must retain the requirement ID and cite the decision.
 [ADR 0036](../adr/0036-lean-product-composition-and-extension-model.md) is the
 authoritative interpretation for future-facing requirements. Under that
 freeze: Profiles are the composition unit; Context is inspectable/controllable
-state; Skills are declarative and authority-free; Plugins are the only
-executable extension package (explicit install, capability-scoped); Tool is
+state; Skills are declarative and authority-free; Modules are the only
+executable extension package (explicit install, capability-scoped; ADR 0037); Tool is
 the one callable operation abstraction; a Run uses one stable Effective
 Profile; /evolve requires measured evaluation and prefers configuration over
 Host complexity. Requirements implying now-rejected future architecture
 (general Hooks, built-in multi-agent frameworks, TaskGraph, generic workflow
-engines, agent teams/Fleet, distributed workers, plugin marketplaces, plugin
+engines, agent teams/Fleet, distributed workers, module marketplaces, module
 dependency graphs, automatic acquisition, model-router architecture, generic
 Memory, GUI/TUI runtime ownership) are interpreted as deferred/superseded in
 status below — their IDs remain stable and their requirement text remains
