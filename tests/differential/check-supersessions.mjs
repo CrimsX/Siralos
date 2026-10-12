@@ -186,10 +186,12 @@ function runPureEvidenceChecks() {
     "utf8",
   );
   let retiredIds = new Set();
+  let retirementsOk = true;
   try {
     const parsed = parseRetirementsDocument(retirementsText, corpus.manifest.corpusVersion);
     retiredIds = parsed.retiredIds;
   } catch (error) {
+    retirementsOk = false;
     failures.push(
       `checked-in retirements list is structurally invalid: ${error?.code ?? "unexpected-error"}`,
     );
@@ -322,6 +324,50 @@ function runPureEvidenceChecks() {
       "EVIDENCE_UNKNOWN_RECORD",
     ),
   );
+
+  // Retired-subject binding: the hardcoded RETIRED_SUBJECTS set in
+  // shared/protocol/records.mjs must equal exactly the oracle subjects
+  // of the digest-bound retired ids. Acceptance-by-name must never
+  // exceed what the list retires, and a hardcoded name with no retired
+  // entry must not linger. Skipped only when the list itself failed
+  // structural parse (already reported above).
+  if (retirementsOk) {
+    const recordsSource = readFileSync(join(HERE, "shared", "protocol", "records.mjs"), "utf8");
+    const literal = recordsSource.match(/const RETIRED_SUBJECTS = new Set\(\[([\s\S]*?)\]\);/);
+    if (literal === null) {
+      failures.push(
+        "retired-subject binding: RETIRED_SUBJECTS literal not found in shared/protocol/records.mjs",
+      );
+    } else {
+      const hardcoded = new Set([...literal[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]));
+      const oracleById = new Map(
+        pinnedRecords.map((record) => [record.scenarioId, record.subject]),
+      );
+      const retiredSubjects = new Set();
+      for (const id of retiredIds) {
+        const subject = oracleById.get(id);
+        if (subject === undefined) {
+          failures.push(`retired-subject binding: retired id ${id} has no oracle record`);
+        } else {
+          retiredSubjects.add(subject);
+        }
+      }
+      for (const subject of hardcoded) {
+        if (!retiredSubjects.has(subject)) {
+          failures.push(
+            `retired-subject binding: ${subject} hardcoded in records.mjs but retired by no digest-bound entry`,
+          );
+        }
+      }
+      for (const subject of retiredSubjects) {
+        if (!hardcoded.has(subject)) {
+          failures.push(
+            `retired-subject binding: retired subject ${subject} missing from records.mjs RETIRED_SUBJECTS`,
+          );
+        }
+      }
+    }
+  }
 
   return failures.filter(Boolean);
 }

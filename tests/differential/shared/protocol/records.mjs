@@ -766,7 +766,10 @@ export function validateOutcomeRecord(record, source, expectedScenario = undefin
   // can never execute: the corpus contract (ALLOWED_SUBJECTS) no longer
   // admits them, and the retirement list binds each absence by digest.
   // Keep both sets in step: removing a subject from ALLOWED_SUBJECTS
-  // without retiring it fails the orphan-frozen gate instead.
+  // without retiring it fails the orphan-frozen gate instead. The
+  // retired-subject binding check in check-supersessions.mjs fails the
+  // gate when this set diverges from the digest-bound list: do not
+  // extend this set by hand.
   const RETIRED_SUBJECTS = new Set([
     "godot-scene-resolve",
     "godot-discovery",
@@ -776,8 +779,6 @@ export function validateOutcomeRecord(record, source, expectedScenario = undefin
     "godot-review-context",
     "godot-mutation-prepare",
     "godot-develop-plan",
-    "godot-runtime-launch",
-    "godot-runtime-evidence",
   ]);
   if (
     typeof record.subject !== "string" ||
