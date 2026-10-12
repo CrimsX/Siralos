@@ -22,9 +22,9 @@ and priorities).
     JSON parse, strict shape validation, canonical digest; no
     filesystem, no process), so malformed documents, invalid parity,
     and unknown subjects are typed rejections that never silently
-    become valid scenarios. Running it needs the sibling module checkout
-    beside the repository (the pin the Rust gate uses) and a nightly
-    toolchain; the scheduled assurance workflow provisions both and runs
+    become valid scenarios. Running it needs only a nightly toolchain —
+    the harness no longer depends on the external module, so no sibling
+    checkout is provisioned; the scheduled assurance workflow runs
     the bounded smoke
     (`cargo fuzz run corpus_scenario -- -runs=10000 -max_total_time=60`).
 - Local fuzzing is unavailable from this repository's pin, and the reason

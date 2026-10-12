@@ -160,7 +160,55 @@ synthetic conformance guests, their directory, the
 stability outranks aesthetic consistency, and renaming the script
 would require touching every doc citation for no behavioral reason.
 
-## 7. Godot decoupling plan — and its evidence boundary
+## 7. Godot decoupling — resolved: option A, executed
+
+The owner directive of 2026-10-10 selected option A, and this section
+records the executed resolution (it supersedes the "blocked" analysis
+below, which is retained as the reasoning trail, and the consequences
+that follow it).
+
+### Resolution (executed 2026-10-10)
+
+The digest-bound retired-subjects mechanism was built as the sibling
+of the supersession list and the removal was executed through it:
+
+- `tests/differential/evidence/post-freeze/retirements.json` carries
+  34 entries (one per pinned `godot-*` scenario): scenario id, reason,
+  decision (owner directive 2026-10-10, option A), the frozen oracle
+  record digest, the last executed candidate record digest (v83 green
+  run), a corpus-version stamp, and a loader-verified self-digest. A
+  retired id must be in the pinned oracle and absent from the corpus;
+  bounded (64), once per id, with named refusals for present,
+  unknown (including bare subject names), mismatched, duplicated, and
+  malformed entries, plus 8 adversarial guard fixtures beside the
+  supersession negatives.
+- The 43 `godot-*` scenario files are deleted; the corpus moves v83 →
+  v84 with 314 scenarios (manifest regenerated, both `CORPUS_VERSION`
+  constants, count assert, `ALLOWED_SUBJECTS` shrunk). The 9
+  post-freeze `godot-runtime-*` scenarios, which have no oracle record
+  to retire, leave with their 9 expectation records removed — listed
+  in the removal commit, not silent.
+- The harness loses `subjects/godot_records.rs`, `godot_tests.rs`,
+  the godot validation and dispatch arms, the `SUBJECT_GODOT_*`
+  constants, and the `siralos-godot` path dependency; the shared input
+  switch survives as `subjects/scenario_input.rs`, and the two digest
+  call sites the plugin used to serve now use
+  `siralos-core::identity` (byte-identical on every exercised input,
+  proven by unchanged surviving records). Both lockfiles drop the
+  plugin with no other version moving.
+- CI provisions no plugin checkout anywhere (`rust.yml`,
+  `assurance.yml`, pins included). This resolves the AGENTS.md
+  `1bf2ca3` vs CI `c8777b1…` pin mismatch by removing both pins, as
+  directed; the external repository is deprecated by the owner
+  separately and is untouched by this change.
+- Frozen residue stays by design and is named here so no later
+  session "discovers" it as work: the user-config `godot` keys
+  (load-bearing for the consumed `user-config-matrix` supersession),
+  the `siralos:domain-abi@1.0.0` wire identity with world/export
+  names and `module-abi.wit` bytes, the byte-identical frozen oracle
+  bundle, the `godot`/`gdscript` CLI command vocabulary (fail-closed
+  `unavailable`), the frozen subject names in retired records, and
+  the `experiments/domain-abi` prototypes.
 
 The owner directive asks for full removal of `siralos-godot` from
 this repository: dropping the `harness/Cargo.toml` path dependency,
@@ -191,22 +239,16 @@ verified against the gate sources:
   section, has consumed its single supersession; the godot config
   keys therefore stay parsed and emitted byte-identically.
 
-Consequences, recorded so no later session rediscovers them:
+Consequences after execution (superseding the pre-resolution notes
+below, which remain as the reasoning trail):
 
-- The `godot-*` subjects keep executing; the harness keeps its
-  `siralos-godot = { path = "../../siralos-godot" }` dependency;
-  `rust.yml` / `assurance.yml` keep their clone/provision steps and
-  pins; `fuzz/Cargo.lock` keeps its transitive entries.
-- The AGENTS.md `1bf2ca3` vs CI `c8777b1…` pin mismatch is NOT
-  resolved by this campaign: both pins survive with the dependency,
-  and reconciliation stays owned where it was (W1.6/W2.x).
-- Docs may call the external plugin deprecated only if the owner
-  separately deprecates that repository; this repository keeps
-  describing what it executes.
-
-Owner options if removal is still wanted (proposals only — each
-needs an explicit owner decision and its own adversarial guards
-before any gate logic is touched):
+- No `godot-*` subject executes; the harness has no path dependency on
+  any external module crate; CI clones nothing beside the repository.
+- Docs describe the decoupled reality; frozen residue is named, never
+  executed.
+- Owner options if removal is still wanted (proposals only — each
+  needs an explicit owner decision and its own adversarial guards
+  before any gate logic is touched):
 
 - (A) A digest-bound retired-subjects list, mechanically checked
   like supersessions (reason, decision, retired oracle digests,

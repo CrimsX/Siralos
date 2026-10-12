@@ -29,13 +29,14 @@ exclude = ["fuzz", "harness"]
 - `fuzz/` is nightly-only and must never enter the stable quality gate.
 - `harness/` is the differential harness ([ADR 0033](docs/adr/0033-differential-behavioral-harness.md)).
   It is a **separate workspace** with its own `Cargo.lock`, excluded so the
-  product workspace carries no external module dependency and builds from a
+  product workspace stays lean and builds from a
   bare `git clone`.
 
-The Godot module lives outside this repository, in the standalone module
-repository, and is reached here through the path dependency
-`siralos-godot = { path = "../siralos-godot" }`. That dependency belongs to
-the **excluded harness workspace only** — no product member may carry it.
+The Godot module lives outside this repository, in its owner-managed
+standalone repository. Nothing in this repository depends on it: the former
+`siralos-godot = { path = "../siralos-godot" }` path dependency left with
+the siralos-godot decoupling (ADR 0037 option A, executed), and the
+`godot-*` differential subjects are retired, not executed.
 
 ## Dependency direction
 
@@ -52,12 +53,12 @@ build on any violation:
 | `siralos-core`             | nothing                                                            | domain-neutral host semantics: contracts, state, transitions, policy, identity, determinism |
 | `siralos-adapters`         | `siralos-core`                                                     | infrastructure: filesystem, config, provider transport, process, the sandbox boundary       |
 | `siralos-cli`              | `siralos-core`, `siralos-adapters`                                 | frontends and presentation only (TUI, stdio, headless)                                      |
-| `harness/` (excluded)      | `siralos-core`, `siralos-adapters`, `siralos-cli`, `siralos-godot` | dev-only verification tooling; never shipped                                                |
-| `siralos-godot` (external) | `siralos-core`                                                     | the optional Godot module                                                                   |
+| `harness/` (excluded)      | `siralos-core`, `siralos-adapters`, `siralos-cli`                  | dev-only verification tooling; never shipped                                                |
+| `siralos-godot` (external) | `siralos-core`                                                     | the optional Godot module (no path dependency from this repository)                         |
 
-The one non-obvious edge: `godot → core` crosses a repository boundary as an
-external path dependency, and `harness → godot` is what pulls it into a build.
-Nothing in the product does.
+No workspace member depends on the external module: the former
+`harness → godot` path edge left with the decoupling, and the product
+never had one.
 
 A second invariant follows: **`siralos-core` contains no Godot or other
 module-specific symbol.** Module intelligence arrives from outside the core,

@@ -250,11 +250,13 @@ surfaces are listed in [ARCHITECTURE.md](ARCHITECTURE.md) and
 
 ## Optional Godot support
 
-Godot Engine is Siralos's first optional specialization. The module package lives
-in the standalone module repository
-[github.com/CrimsX/siralos-godot](https://github.com/CrimsX/siralos-godot) and
-depends on the core only. It can statically inspect Godot projects, scenes, and
-resources without executing project code. Dynamic engine probes and project
+Godot support lives entirely in the external module repository
+[github.com/CrimsX/siralos-godot](https://github.com/CrimsX/siralos-godot):
+that is where Godot projects are statically inspected. This repository
+holds no Godot execution or inspection surfaces — the CLI keeps the
+`/godot` command vocabulary only to refuse it as fail-closed
+`unavailable`, and the user configuration still accepts the documented
+`godot` keys as frozen residue. Dynamic engine probes and project
 execution stay fail-closed: they report `unavailable` and launch nothing.
 
 Siralos does not install Godot, silently enable a module, or acquire a module
@@ -286,8 +288,10 @@ dependency:
 
 ```text
 siralos-cli → siralos-adapters → siralos-core
-siralos-godot → siralos-core            (standalone module repository)
 ```
+
+The Godot module is developed in a separate repository against
+`siralos-core`; nothing in this repository depends on it.
 
 `siralos-core` is domain-neutral and depends on no workspace crate.
 `siralos-adapters` may depend only on `siralos-core`. `siralos-cli` composes them

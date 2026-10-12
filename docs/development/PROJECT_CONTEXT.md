@@ -587,23 +587,29 @@ again (H2).
 
 ## 11. Godot domain policy
 
-Godot is currently the only Optional Module.
+Godot support left this repository's execution surface with the
+siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option
+A, executed): no Godot module is installed, enabled, or executed here,
+and the `godot-*` differential subjects are retired, not run. What
+remains is frozen residue by design — the user-configuration `godot`
+keys (load-bearing for a superseded corpus record), the `/godot` CLI
+command vocabulary (fail-closed `unavailable`), and the versioned
+component identifiers. The Godot module itself lives in its
+owner-managed standalone repository.
 
 ```text
-NOT INSTALLED by default
-NOT ENABLED by default
+NOT INSTALLED here
+NOT ENABLED here
+NOT EXECUTED here
 NOT AUTO-INSTALLED
 NOT AUTO-DOWNLOADED
 NOT AUTO-RECOMMENDED
 NO workspace-driven acquisition
 ```
 
-A `project.godot` file never triggers package state transitions. The Godot
-Module package and Godot Engine installation are separate. Core must work with
-the package absent. A disabled Godot module contributes no tools, project-module
-discovery, Godot context, Godot validation, or Godot runtime. The TypeScript
-reference's static Godot surfaces do not imply that the future Rust package is
-installed or enabled.
+A `project.godot` file never triggers package state transitions. Core
+works with zero modules. The TypeScript reference's static Godot
+surfaces do not imply any Rust package is installed or enabled.
 
 ## 12. Domain host boundary
 
@@ -616,7 +622,7 @@ the versioned world `siralos:domain-abi@1.0.0` lives in
 `siralos-adapters::module` on top of the domain-neutral lifecycle in
 `siralos-core::module`; the deterministic synthetic conformance module
 (`tests/domain-conformance/`) proves the boundary on the real component
-bytes. Module code receives only structurally granted imports (the world's
+bytes, with zero modules installed. Module code receives only structurally granted imports (the world's
 `host-effects` interface plus the minimal wasm32-wasip2 std plumbing; no
 filesystem, network, process, or ambient WASI surface); package identity
 (computed from the exact accepted component bytes) and capability requests

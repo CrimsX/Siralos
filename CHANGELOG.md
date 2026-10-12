@@ -32,6 +32,16 @@ and the number does not change any of it.
 
 ### Changed
 
+- **The `godot-*` differential subjects are retired and the external
+  plugin coupling is gone** (owner-directed, 2026-10-10, ADR 0037 option
+  A executed). A new digest-bound retired-subjects list
+  (`tests/differential/evidence/post-freeze/retirements.json`, sibling of
+  the supersession list with its own adversarial guards) retires the 34
+  pinned `godot-*` records; their scenario files, harness runners, the
+  `siralos-godot` path dependency, and the CI plugin provisioning are
+  deleted. The frozen oracle bundle is byte-identical. Frozen residue
+  stays by design: the `godot` user-config keys, the `siralos:domain-abi`
+  wire identity, and the fail-closed `/godot` CLI vocabulary.
 - **The domain/plugin vocabulary is one noun: module** (owner-directed,
   2026-10-10, recorded in [ADR 0037](docs/adr/0037-module-composition-and-godot-decoupling.md)).
   The CLI speaks `/modules`, `/modules-add`, `/modules-enable`, and
