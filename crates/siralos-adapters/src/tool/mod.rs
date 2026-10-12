@@ -15,5 +15,5 @@ pub use context::{
     ContextExpandTool, ContextInspectTool, ContextSearchTool, ContextToolState,
 };
 pub use workspace_tools::{
-    WorkspaceListTool, WorkspaceReadTool, WorkspaceSearchTool,
+    ReadTool, WorkspaceListTool, WorkspaceReadTool, WorkspaceSearchTool,
 };

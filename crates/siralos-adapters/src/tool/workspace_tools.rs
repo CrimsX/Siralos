@@ -206,93 +206,166 @@ impl Tool for WorkspaceReadTool {
         input: &Value,
         cancellation: CancellationSignal<'_>,
     ) -> ToolExecutionResult {
-        let parsed = match parse_read_input(input) {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                return ToolExecutionResult::InvalidInput {
-                    message: read_input_error_message(error),
-                };
-            }
-        };
-        if cancellation.is_cancelled() {
-            return ToolExecutionResult::Cancelled {
-                message: "Reading was cancelled.".to_owned(),
+        execute_read(&self.root, input, cancellation)
+    }
+}
+
+/// The default `read` Tool: the bounded workspace read surface projected
+/// under its short name. Same backend, same capability, same outcomes as
+/// `workspace.read`; only the projected definition differs.
+pub struct ReadTool {
+    definition: ToolDefinition,
+    capability: CapabilityId,
+    root: PathBuf,
+}
+
+impl ReadTool {
+    /// Construct the adapter over a canonicalized workspace root.
+    pub fn new(root: &Path) -> Result<Self, WorkspaceRootError> {
+        Ok(Self {
+            definition: ToolDefinition {
+                name: "read".to_owned(),
+                description: "Read one text file inside the workspace. Modes: exact (authoritative source for editing, returns a revision handle), structural (deterministic GDScript declarations), summary (bounded advisory overview). Summaries/structural views are never authoritative source."
+                    .to_owned(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "File path relative to the workspace root."
+                        },
+                        "startLine": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "One-based start line (exact mode). Defaults to 1."
+                        },
+                        "endLine": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "Inclusive one-based end line (exact mode). Defaults to the last line."
+                        },
+                        "mode": {
+                            "type": "string",
+                            "enum": ["exact", "structural", "summary"],
+                            "description": "exact (default), structural, or summary."
+                        }
+                    },
+                    "required": ["path"],
+                    "additionalProperties": false
+                }),
+            },
+            capability: workspace_read_capability(),
+            root: workspace_root(root)?,
+        })
+    }
+}
+
+impl Tool for ReadTool {
+    fn definition(&self) -> ToolDefinition {
+        self.definition.clone()
+    }
+
+    fn capability(&self) -> &CapabilityId {
+        &self.capability
+    }
+
+    fn execute(
+        &self,
+        input: &Value,
+        cancellation: CancellationSignal<'_>,
+    ) -> ToolExecutionResult {
+        execute_read(&self.root, input, cancellation)
+    }
+}
+
+/// Shared bounded-read execution behind `workspace.read` and `read`.
+fn execute_read(
+    root: &Path,
+    input: &Value,
+    cancellation: CancellationSignal<'_>,
+) -> ToolExecutionResult {
+    let parsed = match parse_read_input(input) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            return ToolExecutionResult::InvalidInput {
+                message: read_input_error_message(error),
             };
         }
-        match read_file(
-            &self.root,
-            &parsed,
-            &WORKSPACE_LIMITS,
-            None,
-            cancellation.is_cancelled(),
-        ) {
-            ReadOutcome::InvalidInput { message } => {
-                ToolExecutionResult::InvalidInput { message }
+    };
+    if cancellation.is_cancelled() {
+        return ToolExecutionResult::Cancelled {
+            message: "Reading was cancelled.".to_owned(),
+        };
+    }
+    match read_file(
+        root,
+        &parsed,
+        &WORKSPACE_LIMITS,
+        None,
+        cancellation.is_cancelled(),
+    ) {
+        ReadOutcome::InvalidInput { message } => {
+            ToolExecutionResult::InvalidInput { message }
+        }
+        ReadOutcome::Denied { message } => {
+            ToolExecutionResult::Denied { message }
+        }
+        ReadOutcome::Cancelled => ToolExecutionResult::Cancelled {
+            message: "Reading was cancelled.".to_owned(),
+        },
+        ReadOutcome::Failed { message } => {
+            ToolExecutionResult::Failed { message }
+        }
+        ReadOutcome::Unsupported {
+            path,
+            mode,
+            revision,
+            supported,
+            reason,
+        } => {
+            if supported {
+                // GDScript structural/summary extraction is Godot
+                // language intelligence (R8/R9), not R7.2.
+                return ToolExecutionResult::Unavailable { message: reason };
             }
-            ReadOutcome::Denied { message } => {
-                ToolExecutionResult::Denied { message }
+            let mode = mode.as_str();
+            ToolExecutionResult::Success {
+                output: json!({
+                    "path": path,
+                    "mode": mode,
+                    "revision": revision,
+                    "supported": false,
+                    "reason": reason,
+                }),
+                summary: format!("{mode} read unsupported for this file type"),
             }
-            ReadOutcome::Cancelled => ToolExecutionResult::Cancelled {
-                message: "Reading was cancelled.".to_owned(),
-            },
-            ReadOutcome::Failed { message } => {
-                ToolExecutionResult::Failed { message }
-            }
-            ReadOutcome::Unsupported {
-                path,
-                mode,
-                revision,
-                supported,
-                reason,
-            } => {
-                if supported {
-                    // GDScript structural/summary extraction is Godot
-                    // language intelligence (R8/R9), not R7.2.
-                    return ToolExecutionResult::Unavailable {
-                        message: reason,
-                    };
-                }
-                let mode = mode.as_str();
-                ToolExecutionResult::Success {
-                    output: json!({
-                        "path": path,
-                        "mode": mode,
-                        "revision": revision,
-                        "supported": false,
-                        "reason": reason,
-                    }),
-                    summary: format!(
-                        "{mode} read unsupported for this file type"
-                    ),
-                }
-            }
-            ReadOutcome::Success {
-                path,
-                sha256,
-                revision,
-                content,
-                start_line,
-                end_line,
-                total_lines,
-                truncated,
-            } => {
-                let lines = end_line - start_line + 1;
-                ToolExecutionResult::Success {
-                    output: json!({
-                        "path": path,
-                        "sha256": sha256,
-                        "revision": revision,
-                        "content": content,
-                        "startLine": start_line,
-                        "endLine": end_line,
-                        "totalLines": total_lines,
-                        "truncated": truncated,
-                    }),
-                    summary: format!(
-                        "{lines} lines{}",
-                        if truncated { " (truncated)" } else { "" }
-                    ),
-                }
+        }
+        ReadOutcome::Success {
+            path,
+            sha256,
+            revision,
+            content,
+            start_line,
+            end_line,
+            total_lines,
+            truncated,
+        } => {
+            let lines = end_line - start_line + 1;
+            ToolExecutionResult::Success {
+                output: json!({
+                    "path": path,
+                    "sha256": sha256,
+                    "revision": revision,
+                    "content": content,
+                    "startLine": start_line,
+                    "endLine": end_line,
+                    "totalLines": total_lines,
+                    "truncated": truncated,
+                }),
+                summary: format!(
+                    "{lines} lines{}",
+                    if truncated { " (truncated)" } else { "" }
+                ),
             }
         }
     }
@@ -466,7 +539,9 @@ mod tests {
     use siralos_core::provider::{CancellationToken, ToolExecutionResult};
     use siralos_core::tool::Tool;
 
-    use super::{WorkspaceListTool, WorkspaceReadTool, WorkspaceSearchTool};
+    use super::{
+        ReadTool, WorkspaceListTool, WorkspaceReadTool, WorkspaceSearchTool,
+    };
 
     use crate::test_support::unique;
 
@@ -556,6 +631,29 @@ mod tests {
         assert_eq!(output["totalLines"], 2);
         assert_eq!(output["truncated"], false);
         assert_eq!(summary, "2 lines");
+        fixture.assert_unchanged();
+    }
+
+    #[test]
+    fn read_tool_matches_workspace_read_outcomes() {
+        let fixture = Fixture::new();
+        let tool = ReadTool::new(&fixture.root).expect("workspace root");
+        assert_eq!(tool.definition().name, "read");
+        assert_eq!(tool.capability().as_str(), "workspace.read");
+        let token = CancellationToken::new();
+        let result = tool.execute(&json!({ "path": "a.txt" }), token.signal());
+        let ToolExecutionResult::Success { output, summary } = result else {
+            panic!("read failed: {result:?}");
+        };
+        assert_eq!(output["path"], "a.txt");
+        assert_eq!(output["content"], "hello\nworld");
+        assert_eq!(output["totalLines"], 2);
+        assert_eq!(summary, "2 lines");
+        let rejected = tool.execute(&json!({}), token.signal());
+        assert!(
+            matches!(rejected, ToolExecutionResult::InvalidInput { .. }),
+            "missing path must be rejected: {rejected:?}"
+        );
         fixture.assert_unchanged();
     }
 

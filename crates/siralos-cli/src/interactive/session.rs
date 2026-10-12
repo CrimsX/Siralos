@@ -7,7 +7,7 @@ use super::{
     ContextCapacity, ContextPolicy, ConversationItem,
     DEFAULT_REVIEW_PROVIDER_ID, FlushError, FlushOutcome, HostCredential,
     HostProvider, InteractiveError, InteractiveOptions, ModuleHost,
-    ModuleManifest, PermissionPolicy, ProjectionService, Rc,
+    ModuleManifest, PermissionPolicy, ProjectionService, Rc, ReadTool,
     RecordedReplayProvider, ReplayStoreLoadError, RetainingReplayRecorder,
     SIRALOS_SYSTEM_INSTRUCTIONS, SegmentInput, SessionProvider,
     SiralosApplication, Stability, ToolLoopEvent, ToolRegistry,
@@ -643,6 +643,7 @@ pub(crate) fn compose_session(
         Box::new(WorkspaceListTool::new(&workspace_root)?),
         Box::new(WorkspaceReadTool::new(&workspace_root)?),
         Box::new(WorkspaceSearchTool::new(&workspace_root)?),
+        Box::new(ReadTool::new(&workspace_root)?),
     ];
     // R7.4 profiles select the built-in fail-closed posture; they never
     // grant a Tool. The only registered R7.2 capability is read-only
