@@ -55,15 +55,15 @@ deliberately NOT established by this corpus; those surfaces remain
 the later Godot milestones' oracle.
 
 The Stage 3R R6 subjects (domain-lifecycle and domain-capability)
-execute generic Domain lifecycle/capability parity: the TypeScript
+execute generic Module lifecycle/capability parity: the TypeScript
 side reaches the real generic reference modules
 (`packages/core/src/domain`); the Rust side reaches
-`siralos-core::domain`. The `domain-lifecycle` scenarios drive the
+`crate::module`. The `domain-lifecycle` scenarios drive the
 explicit absent/installed/enabled/active state machine (typed
 transitions, activation eligibility, exact activation binding, and
 the workspace-scan proof that workspace contents never install,
-enable, activate, download, or recommend a Domain — including a
-repository containing `project.godot` with no installed Domain). The
+enable, activate, download, or recommend a Module — including a
+repository containing `project.godot` with no installed Module). The
 `domain-capability` scenarios exercise the Host-authoritative grant
 decision (grant subset behavior, typed denial with ordered missing
 capabilities, and the invariant that denial never widens Host

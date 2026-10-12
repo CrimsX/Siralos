@@ -354,7 +354,7 @@ pub(in crate::harness) fn language_definition_record(
 // Stage 3R R6 subjects: domain-lifecycle and domain-capability.
 // ---------------------------------------------------------------------------
 //
-// Executes each R6 scenario against the real siralos-core::domain
+// Executes each R6 scenario against the real crate::module
 // lifecycle/capability semantics and builds the canonical R6
 // observation object that the TypeScript oracle probe emits for the
 // same inputs. The observations are semantic parity data, never a
