@@ -45,8 +45,8 @@ The following surfaces intentionally report `unavailable` and perform no filesys
 - private run-directory creation or cleanup;
 - `node-script` and `npm-script` command execution;
 - Git inspection;
-- Godot engine probes, API-dump generation, recovery project probes, GDScript check-only diagnostics, and GDScript LSP startup;
-- executable caches, Godot knowledge caches, recovery mirrors, and repository-reference materialization.
+- Godot engine probes, API-dump generation, recovery project probes, GDScript check-only diagnostics, and GDScript LSP startup: surfaces absent from this repository entirely (out, not unavailable) since the siralos-godot decoupling — there is no runner to refuse;
+- executable caches and repository-reference materialization.
 
 These capabilities remain unavailable by a **ported-parity decision**, not by a language limitation. The Rust implementation was ported to byte-match a frozen TypeScript oracle that also lacked an identity-bound commit primitive, and the differential corpus **pins that outcome**: `tests/differential/corpus/workspace-apply.apply-unavailable.json` and `tests/differential/corpus/workspace-prepare.unavailable.json` are among the scenarios asserting a typed `unavailable`. Flipping any of these capabilities is therefore a deliberate, reviewed oracle amendment — never a code change alone. The earlier rationale in this file blamed Node; that was true of the removed TypeScript tree and is obsolete. Static preparation contracts and truthful diagnostics may exist, but they must refuse before approval, checkpoint creation, mirror/cache creation, deletion, or spawn.
 
@@ -67,7 +67,7 @@ The Anthropic Sandbox Runtime backend is pinned. Linux/macOS availability requir
 - Never expose absolute workspace, cache, mirror, executable, or credential paths to providers or report-safe output.
 - The terminal sanitizer is the single output boundary and the input queue is the single interactive-read owner. The interactive frontend owns the command vocabulary it dispatches (`crates/siralos-cli/src/interactive.rs`); `siralos-core::commands` is a frozen replay vocabulary the differential harness reads to reproduce two pinned subjects, never the product's dispatch source.
 - Self-reference and doctor collection are read-only and offline by default: no refresh, live probe, repair, permission broadening, mutation, checkpoint, or secret-bearing report. `ToolProjector` remains authoritative for model-visible tools and `SandboxBackend` for enforcement capability.
-- Project-independent probes never accept project arguments; recovery, check-only, and LSP-only flags remain structurally paired even while every runner is unavailable.
+- Project-independent probes never accept project arguments; recovery, check-only, and LSP-only flags remain structurally paired in the frozen replay vocabulary even though no runner exists to dispatch them.
 
 ## Verification
 
