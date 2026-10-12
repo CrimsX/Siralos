@@ -48,13 +48,13 @@ build on any violation:
 > module. `siralos-adapters` may depend only on `siralos-core`.
 > `siralos-cli` may depend only on `siralos-core` and `siralos-adapters`.
 
-| Crate                      | May depend on                                                      | Authority it holds                                                                          |
-| -------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
-| `siralos-core`             | nothing                                                            | domain-neutral host semantics: contracts, state, transitions, policy, identity, determinism |
-| `siralos-adapters`         | `siralos-core`                                                     | infrastructure: filesystem, config, provider transport, process, the sandbox boundary       |
-| `siralos-cli`              | `siralos-core`, `siralos-adapters`                                 | frontends and presentation only (TUI, stdio, headless)                                      |
-| `harness/` (excluded)      | `siralos-core`, `siralos-adapters`, `siralos-cli`                  | dev-only verification tooling; never shipped                                                |
-| `siralos-godot` (external) | `siralos-core`                                                     | the optional Godot module (no path dependency from this repository)                         |
+| Crate                      | May depend on                                     | Authority it holds                                                                          |
+| -------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `siralos-core`             | nothing                                           | domain-neutral host semantics: contracts, state, transitions, policy, identity, determinism |
+| `siralos-adapters`         | `siralos-core`                                    | infrastructure: filesystem, config, provider transport, process, the sandbox boundary       |
+| `siralos-cli`              | `siralos-core`, `siralos-adapters`                | frontends and presentation only (TUI, stdio, headless)                                      |
+| `harness/` (excluded)      | `siralos-core`, `siralos-adapters`, `siralos-cli` | dev-only verification tooling; never shipped                                                |
+| `siralos-godot` (external) | `siralos-core`                                    | the optional Godot module (no path dependency from this repository)                         |
 
 No workspace member depends on the external module: the former
 `harness → godot` path edge left with the decoupling, and the product
