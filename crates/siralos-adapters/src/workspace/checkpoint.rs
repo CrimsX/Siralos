@@ -110,6 +110,11 @@ pub enum CheckpointStoreError {
     /// The store cannot accept the record within its count and byte
     /// bounds, even after automatic pruning of evictable records.
     CapacityExceeded(String),
+    /// The proposed record's exact serialized size cannot be
+    /// measured, so capacity cannot be proven. Creation refuses
+    /// rather than estimating low: the byte limit counts exact
+    /// metadata and preimage bytes.
+    MeasurementFailed,
 }
 
 impl std::fmt::Display for CheckpointStoreError {
@@ -133,6 +138,9 @@ impl std::fmt::Display for CheckpointStoreError {
             Self::WriteFailed(detail) | Self::CapacityExceeded(detail) => {
                 formatter.write_str(detail)
             }
+            Self::MeasurementFailed => formatter.write_str(
+                "Checkpoint record size cannot be measured.",
+            ),
         }
     }
 }

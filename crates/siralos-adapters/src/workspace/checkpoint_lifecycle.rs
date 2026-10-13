@@ -545,11 +545,14 @@ fn ensure_capacity_for(
 ) -> Result<(), CheckpointStoreError> {
     // The record is not stored yet; measure its exact serialized
     // bytes through the single canonical shape the writer persists,
-    // so estimates never drift from stored bytes.
+    // so estimates never drift from stored bytes. Serialization of
+    // the canonical shape is infallible in practice (fixed-depth
+    // value); the refusal below is the fail-closed guard for a
+    // measurement that cannot be taken, never an estimate.
     let record_bytes =
         serde_json::to_string_pretty(&serialize_checkpoint(record))
-            .map_or(0, |text| text.len() as u64)
-            + preimage_len;
+            .map(|text| text.len() as u64 + preimage_len)
+            .map_err(|_| CheckpointStoreError::MeasurementFailed)?;
     let usage = checkpoint_capacity(store)?;
     if usage.checkpoints < store.max_checkpoints_limit()
         && usage.bytes.saturating_add(record_bytes) <= store.max_store_bytes()
