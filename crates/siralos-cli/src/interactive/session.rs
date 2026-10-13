@@ -142,6 +142,12 @@ pub(crate) struct SessionComposition<'a> {
     /// Set when a reload invalidates/absent the trusted profile. Further turns
     /// are refused until a fresh composition is created.
     pub(super) authority_revoked: bool,
+    /// Host-owned startup notices for the owning frontend to render once
+    /// through the terminal sanitizer (static strings; never model
+    /// output, never paths). `pub(crate)` because the headless entry
+    /// renders them too; the batch evaluation path has no terminal and
+    /// ignores them.
+    pub(crate) startup_notices: Vec<String>,
 }
 
 /// C2 (ticket 130): the composition IS the worker's session.
@@ -346,6 +352,7 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
                 credential_resolved: false,
                 live_model_switchable: false,
                 context_suffix: String::new(),
+                startup_notices: Vec::new(),
             };
         }
         // The same recipe the TUI entry used before the session moved here: the
@@ -415,6 +422,11 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
                 String::new(),
                 self.context_session_holder.as_ref().map(|s| &s.metrics),
             ),
+            // Host-owned composition notices; the owning frontend
+            // renders them once through the terminal sanitizer.
+            // Re-sent on every status (reload re-announces a still-true
+            // notice); only the startup path renders them.
+            startup_notices: self.startup_notices.clone(),
         }
     }
 
@@ -648,8 +660,11 @@ pub(crate) fn compose_session(
     ];
     // ADR 0038: the default mutation tools join the registry with the
     // checkpoint store bound to this workspace. A store that cannot be
-    // opened degrades truthfully to the read-only surface (one
-    // host-side diagnostic, never a silent partial registration).
+    // opened degrades truthfully to the read-only surface: the notice
+    // joins the bundle for the owning frontend to render through the
+    // terminal sanitizer (never a silent partial registration, never a
+    // direct stderr write from composition).
+    let mut startup_notices = Vec::new();
     match WriteTool::default_store(&workspace_root) {
         Ok(store) => {
             tools.push(Box::new(WriteTool::new(
@@ -659,8 +674,9 @@ pub(crate) fn compose_session(
             tools.push(Box::new(EditTool::new(&workspace_root, store)?));
         }
         Err(_error) => {
-            eprintln!(
+            startup_notices.push(
                 "siralos: checkpoint store unavailable: mutation tools disabled (details hidden)"
+                    .to_owned(),
             );
         }
     }
@@ -1086,6 +1102,7 @@ pub(crate) fn compose_session(
         applied_protocol_str: applied_protocol.as_str().to_owned(),
         applied_non_live_digest: non_live_state_digest(&loaded_profile),
         authority_revoked: false,
+        startup_notices,
     })
 }
 

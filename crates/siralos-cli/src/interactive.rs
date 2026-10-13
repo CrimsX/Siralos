@@ -146,6 +146,7 @@ use display::render_context_segment;
 use display::render_model_line;
 use display::render_provider_line;
 use display::render_provider_line_display;
+pub(crate) use display::render_startup_notices;
 use display::render_tools_segment;
 pub(crate) use display::safe_alias_for_display;
 use display::safe_profile_diagnostic;

@@ -27,7 +27,8 @@ use crate::evaluation::{
     drive_turn, json_optional_string, json_string,
 };
 use crate::interactive::{
-    InteractiveOptions, compose_session, safe_alias_for_display,
+    InteractiveOptions, compose_session, render_startup_notices,
+    safe_alias_for_display,
 };
 use crate::sanitize::sanitize_for_display;
 use crate::session_worker::{FlushError, FlushOutcome, WorkerSession};
@@ -130,6 +131,14 @@ pub fn run_headless<W: Write>(
         workspace_root,
     })
     .map_err(|error| HeadlessError::Composition(error.to_string()))?;
+    // Degraded-surface notices go to the owned writer through the
+    // sanitizer before the turn runs (headless dispatches tools, so a
+    // read-only degradation is material to the outcome).
+    if let Err(error) = out
+        .write_all(render_startup_notices(&session.startup_notices).as_bytes())
+    {
+        return Err(HeadlessError::Prompt(error.to_string()));
+    }
     let status = session.status();
     let provider =
         status.provider.clone().unwrap_or_else(|| "(unconfigured)".to_owned());

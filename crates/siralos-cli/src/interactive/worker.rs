@@ -631,6 +631,17 @@ pub(super) fn await_worker_ready(
             Some(WorkerEvent::Pane(data)) => *pane.borrow_mut() = Some(data),
             Some(WorkerEvent::Ready(status)) => {
                 apply_status(state, &status);
+                // Host-owned startup notices land in the transcript once,
+                // sanitized like every other terminal line. They ride the
+                // header (never a standalone event: nothing may precede
+                // the header, and a stray report could be misconsumed as
+                // a command answer).
+                {
+                    let mut state = state.borrow_mut();
+                    for notice in &status.startup_notices {
+                        state.push_line(sanitize_for_display(notice));
+                    }
+                }
                 return Ok(worker);
             }
             Some(WorkerEvent::Failed(message)) => {

@@ -1163,6 +1163,7 @@ mod tests {
                 credential_resolved: false,
                 live_model_switchable: true,
                 context_suffix: String::new(),
+                startup_notices: Vec::new(),
             }
         }
         fn cancel(&mut self) {

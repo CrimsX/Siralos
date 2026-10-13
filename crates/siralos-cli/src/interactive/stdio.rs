@@ -15,8 +15,8 @@ use super::{
     reload_report_from_load, render_activate_module, render_add_module,
     render_context_segment, render_enable_module, render_evolve_lines,
     render_model_line, render_modules, render_provider_line,
-    render_tools_segment, safe_alias_for_display, sanitize_for_display,
-    slash_command_catalog,
+    render_startup_notices, render_tools_segment, safe_alias_for_display,
+    sanitize_for_display, slash_command_catalog,
 };
 
 /// Run the default interactive session over process stdin/stdout.
@@ -141,7 +141,15 @@ where
         mut applied_protocol_str,
         mut applied_non_live_digest,
         mut authority_revoked,
+        startup_notices,
     } = session;
+
+    // Host-owned startup notices cross the terminal sanitizer to the
+    // owned writer before the first prompt (composition owns no
+    // writer, so it returns them instead of printing them).
+    writer
+        .write_all(render_startup_notices(&startup_notices).as_bytes())
+        .map_err(InteractiveError::Io)?;
 
     // --- Frontend residual (stdio): prompt loop over reader/writer. ---
     // All session state above comes from the shared helper; only the

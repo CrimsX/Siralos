@@ -189,6 +189,62 @@ fn unexpected_pre_ready_worker_text_is_not_reflected_in_startup_errors() {
 }
 
 #[test]
+fn startup_notices_render_once_sanitized() {
+    assert_eq!(super::render_startup_notices(&[]), "");
+    assert_eq!(
+        super::render_startup_notices(&["static notice".to_owned()]),
+        "static notice\n"
+    );
+    // Even a hostile notice crosses the sanitizer: no ANSI/OSC
+    // sequence survives the single output boundary.
+    let rendered = super::render_startup_notices(&[
+        "\u{1b}]0;evil\u{07}\u{1b}[31mred".to_owned(),
+    ]);
+    assert!(!rendered.contains('\u{1b}'));
+    assert!(rendered.contains("red"));
+    assert!(rendered.ends_with('\n'));
+}
+
+#[test]
+fn ready_startup_notices_land_in_transcript_sanitized() {
+    let scripted = crate::session_worker::worker_source_tests::scripted();
+    scripted
+        .events
+        .send(crate::session_worker::WorkerEvent::Pane(scripted_pane()))
+        .expect("scripted pane");
+    scripted
+        .events
+        .send(crate::session_worker::WorkerEvent::Ready(
+            crate::session_worker::SessionStatus {
+                status: "example-vendor / example/model-a".to_owned(),
+                provider: Some("example-vendor".to_owned()),
+                model: Some("example/model-a".to_owned()),
+                endpoint: Some("https://api.example.com/v1".to_owned()),
+                protocol: "openai-completions".to_owned(),
+                credential_display: Some("env:EXAMPLE_KEY".to_owned()),
+                credential_resolved: true,
+                live_model_switchable: true,
+                context_suffix: String::new(),
+                startup_notices: vec![
+                    "siralos: checkpoint store unavailable: mutation tools disabled (details hidden)"
+                        .to_owned(),
+                    "\u{1b}]0;evil\u{07}plain".to_owned(),
+                ],
+            },
+        ))
+        .expect("scripted ready");
+    let state = Rc::new(RefCell::new(crate::tui::TuiState::new()));
+    let pane = Rc::new(RefCell::new(None));
+    let _worker = super::await_worker_ready(scripted.source, &state, &pane)
+        .expect("ready with notices");
+    settle_reveal(&state);
+    let transcript = state.borrow().transcript_lines.join("\n");
+    assert!(transcript.contains("mutation tools disabled"));
+    assert!(transcript.contains("plain"));
+    assert!(!transcript.contains('\u{1b}'));
+}
+
+#[test]
 fn the_dispatcher_asks_the_worker_and_renders_its_answer() {
     // C2 step 3's real acceptance: the session-touching arms SEND a
     // WorkerCommand and RENDER the answer, driven through the production
@@ -267,6 +323,7 @@ fn the_dispatcher_asks_the_worker_and_renders_its_answer() {
                     credential_resolved: true,
                     live_model_switchable: true,
                     context_suffix: String::new(),
+                    startup_notices: Vec::new(),
                 },
             ));
         }
@@ -308,6 +365,7 @@ fn the_dispatcher_applies_the_header_pane_and_failure_it_receives() {
                 credential_resolved: true,
                 live_model_switchable: true,
                 context_suffix: " | ctx 7/4096".to_owned(),
+                startup_notices: Vec::new(),
             },
         ),
         crate::session_worker::WorkerEvent::Report("ok\n".to_owned()),
@@ -768,6 +826,7 @@ fn a_model_switch_persists_first_and_then_commands_the_worker() {
             credential_resolved: false,
             live_model_switchable: true,
             context_suffix: String::new(),
+            startup_notices: Vec::new(),
         },
     )]);
     let mut ticks = 0usize;

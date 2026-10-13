@@ -151,6 +151,11 @@ pub struct SessionStatus {
     /// re-render a TRANSIENT status -- the add-flow's "fetching models..." --
     /// with the same suffix instead of dropping a readout it cannot compute.
     pub context_suffix: String,
+    /// Host-owned composition notices for the owning frontend to render
+    /// once through the terminal sanitizer (static strings; the batch
+    /// evaluation path has no terminal and ignores them). Re-sent on
+    /// every status; only the startup path renders them.
+    pub startup_notices: Vec<String>,
 }
 
 impl std::fmt::Debug for SessionStatus {
@@ -175,6 +180,7 @@ impl std::fmt::Debug for SessionStatus {
             .field("credential_resolved", &self.credential_resolved)
             .field("live_model_switchable", &self.live_model_switchable)
             .field("context_suffix", &"[PROJECTED]")
+            .field("startup_notices", &self.startup_notices.len())
             .finish()
     }
 }
@@ -1915,6 +1921,7 @@ mod loop_tests {
                 credential_resolved: false,
                 live_model_switchable: true,
                 context_suffix: String::new(),
+                startup_notices: Vec::new(),
             }
         }
         fn enable_progress_ticks(&mut self) {}
@@ -2034,6 +2041,7 @@ mod loop_tests {
                     credential_resolved: false,
                     live_model_switchable: true,
                     context_suffix: String::new(),
+                    startup_notices: Vec::new(),
                 }),
                 WorkerEvent::Report(
                     "reload applied: model=beta (restart to converge)\n"
@@ -2049,6 +2057,7 @@ mod loop_tests {
                     credential_resolved: false,
                     live_model_switchable: true,
                     context_suffix: String::new(),
+                    startup_notices: Vec::new(),
                 }),
                 // The command channel closed without a Shutdown: the loop
                 // still flushes once, and says so.
@@ -2587,6 +2596,7 @@ mod loop_tests {
                 credential_resolved: false,
                 live_model_switchable: true,
                 context_suffix: String::new(),
+                startup_notices: Vec::new(),
             }
         }
         fn cancel(&mut self) {

@@ -11,6 +11,21 @@ use super::{
     sanitize_for_display,
 };
 
+/// Render host-owned startup notices for the owned writer.
+///
+/// Every notice crosses the terminal sanitizer even though production
+/// notices are static host strings: the single output boundary is
+/// structural, not content-dependent. Each notice renders on its own
+/// line.
+pub(crate) fn render_startup_notices(notices: &[String]) -> String {
+    let mut out = String::new();
+    for notice in notices {
+        out.push_str(&sanitize_for_display(notice));
+        out.push('\n');
+    }
+    out
+}
+
 /// Host-generated provider line from the composed profile (U7) — redacted (G1).
 pub(super) fn render_provider_line(
     provider: Option<&str>,
