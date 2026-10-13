@@ -9,15 +9,18 @@
 //! Every mutation runs the same host gate order: input validation,
 //! cancellation, containment-safe resolution, excluded-directory and
 //! protected-path refusal, contract bounds, checkpoint-before-mutation,
-//! atomic compare-and-swap commit, post-commit verification, and
-//! checkpoint state marking. The compare-and-swap commit narrows the
-//! ordinary concurrent-writer window but is advisory, like every
-//! pathname commit in this repository: resolution, staging, and rename
-//! stay pathname-based, so a same-user process that substitutes the
-//! target or a parent mid-operation can only cause refusal (conflict
-//! or failure), never a misdirected write. Per-action approval is
-//! enforced by the application executor ([`Tool::requires_approval`]),
-//! never by these adapters: adapters never decide Host authorization.
+//! parent revalidation, atomic compare-and-swap commit, post-commit
+//! verification (exact bytes, parent still contained, target not a
+//! link), and checkpoint state marking. A target or parent swapped
+//! outside the final rename and verify-then-report gaps is detected
+//! and refused (conflict, failure, or denial) with no success claim;
+//! the two residual gaps are pathname-inherent on this platform (no
+//! directory-relative primitives), so a swap landing inside them can
+//! only be bounded after the fact: the checkpoint stays prepared and
+//! reconciliation classifies the true state instead of recording a
+//! guess. Per-action approval is enforced by the application executor
+//! ([`Tool::requires_approval`]), never by these adapters: adapters
+//! never decide Host authorization.
 
 use std::path::{Path, PathBuf};
 
@@ -144,6 +147,33 @@ fn resolve_existing(
     })
 }
 
+/// Re-check that a resolved parent directory still resolves inside
+/// the canonical workspace root.
+///
+/// Resolution-time containment does not bind the later pathname
+/// operations against a same-user substitution, so every mutation
+/// revalidates its parent immediately before staging, again before
+/// committing, and once more during post-commit verification. Each
+/// recheck narrows the substitution window; the final rename and
+/// the verify-then-report gap remain pathname-based (see the module
+/// documentation), so a swap landing inside them can only be
+/// detected after the fact, never prevented on this platform.
+fn revalidate_parent(root: &Path, parent: &Path) -> Result<(), ()> {
+    let canonical = std::fs::canonicalize(parent).map_err(|_| ())?;
+    if canonical == root || canonical.starts_with(root) {
+        Ok(())
+    } else {
+        Err(())
+    }
+}
+
+fn parent_moved() -> ToolExecutionResult {
+    ToolExecutionResult::Conflict {
+        message: "The target directory changed while it was being written."
+            .to_owned(),
+    }
+}
+
 /// Read one complete text file for editing: regular file, bounded,
 /// valid UTF-8. Anything else fails before any checkpoint exists.
 fn read_edit_target(
@@ -193,8 +223,8 @@ fn read_edit_target(
     Ok((bytes, text))
 }
 
-fn preview_counts(before_lines: u64, after_lines: u64) -> CheckpointPreview {
-    CheckpointPreview { added_lines: after_lines, removed_lines: before_lines }
+fn preview_counts(removed_lines: u64, added_lines: u64) -> CheckpointPreview {
+    CheckpointPreview { added_lines, removed_lines }
 }
 
 fn count_lines(text: &str) -> u64 {
@@ -368,11 +398,17 @@ fn execute_write(
         };
     }
     let bytes = content.as_bytes();
+    let Some(created_at) = host_timestamp() else {
+        return ToolExecutionResult::Failed {
+            message: "Host clock is unavailable; the mutation is refused without a creation timestamp."
+                .to_owned(),
+        };
+    };
     let creation = CheckpointCreation {
         relative_path: relative.clone(),
         operation: CheckpointOperation::Create,
         tool_name: "write".to_owned(),
-        created_at: host_timestamp(),
+        created_at,
         before: CheckpointFileState {
             exists: false,
             sha256: None,
@@ -390,6 +426,15 @@ fn execute_write(
         Ok(checkpoint) => checkpoint,
         Err(error) => return checkpoint_failed(error),
     };
+    // The parent resolved inside the root above; recheck it
+    // immediately before staging so a swapped parent refuses here
+    // instead of staging outside the workspace.
+    if revalidate_parent(&backend.root, &target.parent).is_err() {
+        let _ = backend
+            .store
+            .mark_state(&checkpoint.id, CheckpointTerminalState::Abandoned);
+        return parent_moved();
+    }
     let staged = match stage_atomic(
         &target.parent,
         &target.leaf,
@@ -409,6 +454,15 @@ fn execute_write(
             return commit_failed(error);
         }
     };
+    // Recheck again before the irreversible rename: staging took
+    // observable time, and a parent swapped during it must refuse
+    // rather than commit outside the workspace.
+    if revalidate_parent(&backend.root, &target.parent).is_err() {
+        let _ = backend
+            .store
+            .mark_state(&checkpoint.id, CheckpointTerminalState::Abandoned);
+        return parent_moved();
+    }
     if let Err(error) = staged.commit_if_absent() {
         // Best-effort (see above): the failed commit changed no
         // bytes, so a prepared record still describes the truth.
@@ -420,7 +474,7 @@ fn execute_write(
     // A failed post-commit verification leaves the record prepared:
     // reconciliation classifies the true state (applied, abandoned,
     // or uncertain) instead of recording a guess.
-    if let Err(result) = verify_written(&absolute, bytes) {
+    if let Err(result) = verify_committed(&backend.root, &absolute, bytes) {
         return result;
     }
     // Best-effort: a failed mark leaves a prepared record whose
@@ -453,10 +507,38 @@ fn create_relative(root: &Path, parent: &Path, leaf: &str) -> Option<String> {
     Some(components.join("/"))
 }
 
-fn verify_written(
+/// Verify a committed mutation: exact bytes, a parent that still
+/// resolves inside the workspace root, and a target that is not a
+/// link.
+///
+/// Byte verification alone would read back attacker-redirected
+/// content as success after a parent swap, so the parent
+/// containment recheck and the no-link check are part of the same
+/// verdict. A swap landing between this verification and the
+/// report is outside every check (see [`revalidate_parent`]); the
+/// checkpoint stays prepared then, and reconciliation classifies
+/// the true state instead of recording a guess.
+fn verify_committed(
+    root: &Path,
     absolute: &Path,
     expected: &[u8],
 ) -> Result<(), ToolExecutionResult> {
+    let stats = std::fs::symlink_metadata(absolute).map_err(|_| {
+        ToolExecutionResult::Failed {
+            message: "The written file could not be verified.".to_owned(),
+        }
+    })?;
+    if stats.file_type().is_symlink() || !stats.is_file() {
+        return Err(ToolExecutionResult::Denied {
+            message: "Target must be a regular file; refusing symlink or special file."
+                .to_owned(),
+        });
+    }
+    if let Some(parent) = absolute.parent() {
+        if revalidate_parent(root, parent).is_err() {
+            return Err(parent_moved());
+        }
+    }
     match read_complete_file_bounded(absolute, expected.len()) {
         BoundedFileRead::Complete(bytes) if bytes == expected => Ok(()),
         _ => Err(ToolExecutionResult::Failed {
@@ -465,13 +547,21 @@ fn verify_written(
     }
 }
 
-fn host_timestamp() -> String {
-    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
-        Ok(duration) => {
-            format!("{}.{:09}", duration.as_secs(), duration.subsec_nanos())
-        }
-        Err(_) => "0.0".to_owned(),
-    }
+/// Host creation timestamp for a checkpoint record, if the system
+/// clock can supply one.
+///
+/// A pre-epoch clock is a broken-host condition, not a defaultable
+/// one: a `"0.0"` sentinel would sort oldest and get pruned first,
+/// so callers refuse the mutation instead.
+fn host_timestamp() -> Option<String> {
+    format_timestamp(std::time::SystemTime::now())
+}
+
+/// Pure timestamp formatting (testable clock edge).
+fn format_timestamp(now: std::time::SystemTime) -> Option<String> {
+    now.duration_since(std::time::UNIX_EPOCH).ok().map(|duration| {
+        format!("{}.{:09}", duration.as_secs(), duration.subsec_nanos())
+    })
 }
 
 /// The default `edit` Tool: replace one exact substring occurrence
@@ -615,11 +705,17 @@ fn execute_edit(
     let new_text = current_text.replacen(&old_string, &new_string, 1);
     let new_bytes = new_text.as_bytes();
     let current_sha256 = sha256_hex(&current_bytes);
+    let Some(created_at) = host_timestamp() else {
+        return ToolExecutionResult::Failed {
+            message: "Host clock is unavailable; the mutation is refused without a creation timestamp."
+                .to_owned(),
+        };
+    };
     let creation = CheckpointCreation {
         relative_path: resolved.workspace_relative_path.clone(),
         operation: CheckpointOperation::Update,
         tool_name: "edit".to_owned(),
-        created_at: host_timestamp(),
+        created_at,
         before: CheckpointFileState {
             exists: true,
             sha256: Some(current_sha256.clone()),
@@ -663,6 +759,15 @@ fn execute_edit(
             };
         }
     };
+    // The file content was read through this parent; recheck it
+    // before staging so a swapped parent refuses here instead of
+    // staging outside the workspace.
+    if revalidate_parent(&backend.root, &parent).is_err() {
+        let _ = backend
+            .store
+            .mark_state(&checkpoint.id, CheckpointTerminalState::Abandoned);
+        return parent_moved();
+    }
     let staged = match stage_atomic(
         &parent,
         &leaf,
@@ -682,6 +787,15 @@ fn execute_edit(
             return commit_failed(error);
         }
     };
+    // Recheck again before the irreversible rename: staging took
+    // observable time, and a parent swapped during it must refuse
+    // rather than commit outside the workspace.
+    if revalidate_parent(&backend.root, &parent).is_err() {
+        let _ = backend
+            .store
+            .mark_state(&checkpoint.id, CheckpointTerminalState::Abandoned);
+        return parent_moved();
+    }
     if let Err(error) = staged.commit_if_digest(&current_sha256) {
         // Best-effort (see above): the failed commit changed no
         // bytes, so a prepared record still describes the truth.
@@ -693,7 +807,9 @@ fn execute_edit(
     // A failed post-commit verification leaves the record prepared:
     // reconciliation classifies the true state instead of recording
     // a guess.
-    if let Err(result) = verify_written(&resolved.absolute_path, new_bytes) {
+    if let Err(result) =
+        verify_committed(&backend.root, &resolved.absolute_path, new_bytes)
+    {
         return result;
     }
     // Best-effort: a failed mark leaves a prepared record whose
@@ -791,6 +907,25 @@ mod tests {
             crate::workspace::root::WorkspaceRootError::StoreBindingMismatch
                 .to_string(),
             "Checkpoint store is bound to a different workspace."
+        );
+    }
+
+    #[test]
+    fn timestamp_formats_epoch_and_refuses_pre_epoch_clocks() {
+        let epoch = std::time::UNIX_EPOCH;
+        assert_eq!(
+            super::format_timestamp(epoch),
+            Some("0.000000000".to_owned())
+        );
+        assert_eq!(
+            super::format_timestamp(
+                epoch + std::time::Duration::new(7, 1_200)
+            ),
+            Some("7.000001200".to_owned())
+        );
+        assert_eq!(
+            super::format_timestamp(epoch - std::time::Duration::new(1, 0)),
+            None
         );
     }
 
@@ -1244,5 +1379,698 @@ mod tests {
             fs::read(fixture.root.join("doomed.txt")).unwrap(),
             b"temporary"
         );
+    }
+
+    // --- A5: approval-gate proofs through the executor/round path ---
+    //
+    // The tests above call `tool.execute()` directly, which bypasses
+    // the application gate by construction (adapters never decide
+    // Host authorization). The tests below drive the same tools
+    // through `SiralosApplication`, proving the gate refuses without
+    // a recorded approval and executes only on an exact digest match.
+
+    use std::cell::Cell;
+
+    use siralos_core::provider::{
+        CancellationSignal, ConversationItem, ModelEvent, ModelProvider,
+        ModelRequest, ProviderEvent, ToolCallInput,
+    };
+    use siralos_core::tool::{
+        ActionApproval, PermissionPolicy, PermissionRule, PolicyRule,
+        SiralosApplication, ToolLoopEvent, ToolRegistry, action_digest,
+        canonical_input_json,
+    };
+
+    struct ScriptProvider {
+        turns: Vec<Vec<ProviderEvent>>,
+        next: Cell<usize>,
+    }
+
+    impl ScriptProvider {
+        fn new(turns: Vec<Vec<ProviderEvent>>) -> Self {
+            Self { turns, next: Cell::new(0) }
+        }
+    }
+
+    impl ModelProvider for ScriptProvider {
+        type Stream<'a>
+            = std::vec::IntoIter<ProviderEvent>
+        where
+            Self: 'a;
+
+        fn id(&self) -> &str {
+            "script-test"
+        }
+
+        fn stream<'a>(
+            &'a self,
+            _request: &'a ModelRequest,
+            _cancellation: CancellationSignal<'a>,
+        ) -> Self::Stream<'a> {
+            let index =
+                self.next.get().min(self.turns.len().saturating_sub(1));
+            self.next.set(index + 1);
+            self.turns[index].clone().into_iter()
+        }
+    }
+
+    fn completed() -> ProviderEvent {
+        ProviderEvent::Event(ModelEvent::Completed)
+    }
+
+    fn proposed_call(
+        call_id: &str,
+        tool_name: &str,
+        input: serde_json::Value,
+    ) -> ProviderEvent {
+        ProviderEvent::Event(ModelEvent::ToolCall {
+            call_id: call_id.to_owned(),
+            tool_name: tool_name.to_owned(),
+            input: ToolCallInput::from_value(input),
+        })
+    }
+
+    fn write_capability() -> siralos_core::tool::CapabilityId {
+        siralos_core::tool::CapabilityId::parse("workspace.write")
+            .expect("workspace.write is a valid capability id")
+    }
+
+    fn write_policy(rule: PermissionRule) -> PermissionPolicy {
+        PermissionPolicy::from_rules([PolicyRule {
+            capability: write_capability(),
+            rule,
+        }])
+    }
+
+    fn drive<P: ModelProvider>(
+        application: &mut SiralosApplication<'_, P>,
+    ) -> Vec<ToolLoopEvent> {
+        let mut events = Vec::new();
+        while let Some(event) = application.poll_event() {
+            events.push(event);
+        }
+        events
+    }
+
+    fn tool_result<'a>(
+        history: &'a [ConversationItem],
+        call_id: &str,
+    ) -> &'a ToolExecutionResult {
+        history
+            .iter()
+            .find_map(|item| match item {
+                ConversationItem::ToolResult {
+                    call_id: item_call_id,
+                    result,
+                    ..
+                } if item_call_id == call_id => Some(result),
+                _ => None,
+            })
+            .expect("tool result must be paired in history")
+    }
+
+    fn approval_for(
+        tool_name: &str,
+        input: &serde_json::Value,
+    ) -> ActionApproval {
+        let digest =
+            action_digest(tool_name, &canonical_input_json(input), None);
+        ActionApproval::new(tool_name, digest, None)
+            .expect("computed digest is valid")
+    }
+
+    const NO_APPROVAL_MESSAGE: &str = "Capability workspace.write requires a one-time host approval for this exact action; no matching approval was recorded, so the call was denied without execution.";
+
+    #[test]
+    fn executor_refuses_write_without_approval() {
+        let fixture = Fixture::new();
+        let tool = fixture.write_tool();
+        let registry = ToolRegistry::new(vec![
+            Box::new(tool) as Box<dyn siralos_core::tool::Tool>
+        ])
+        .unwrap();
+        let input = json!({"path": "gated.txt", "content": "x"});
+        let provider = ScriptProvider::new(vec![
+            vec![proposed_call("c1", "write", input), completed()],
+            vec![completed()],
+        ]);
+        let mut app = SiralosApplication::new(
+            &provider,
+            &registry,
+            write_policy(PermissionRule::Ask),
+            None,
+            None,
+        );
+        app.send_prompt("create it".to_owned()).unwrap();
+        drive(&mut app);
+        assert!(
+            matches!(
+                tool_result(app.history(), "c1"),
+                ToolExecutionResult::Denied { message }
+                    if message == NO_APPROVAL_MESSAGE
+            ),
+            "write without approval must be denied without execution"
+        );
+        assert!(!fixture.root.join("gated.txt").exists());
+        assert_eq!(fixture.checkpoint_count(), 0);
+    }
+
+    #[test]
+    fn executor_refuses_edit_without_approval() {
+        let fixture = Fixture::new();
+        fs::write(fixture.root.join("a.txt"), b"keep me").unwrap();
+        let tool = fixture.edit_tool();
+        let registry = ToolRegistry::new(vec![
+            Box::new(tool) as Box<dyn siralos_core::tool::Tool>
+        ])
+        .unwrap();
+        let input = json!({
+            "path": "a.txt",
+            "oldString": "keep",
+            "newString": "drop"
+        });
+        let provider = ScriptProvider::new(vec![
+            vec![proposed_call("c1", "edit", input), completed()],
+            vec![completed()],
+        ]);
+        let mut app = SiralosApplication::new(
+            &provider,
+            &registry,
+            write_policy(PermissionRule::Ask),
+            None,
+            None,
+        );
+        app.send_prompt("edit it".to_owned()).unwrap();
+        drive(&mut app);
+        assert!(
+            matches!(
+                tool_result(app.history(), "c1"),
+                ToolExecutionResult::Denied { message }
+                    if message == NO_APPROVAL_MESSAGE
+            ),
+            "edit without approval must be denied without execution"
+        );
+        assert_eq!(fs::read(fixture.root.join("a.txt")).unwrap(), b"keep me");
+        assert_eq!(fixture.checkpoint_count(), 0);
+    }
+
+    #[test]
+    fn executor_refusal_holds_under_allow() {
+        // The approval gate is independent of the permission rule
+        // (D4): even `allow` never executes a requires_approval tool
+        // without a recorded one-time approval.
+        let fixture = Fixture::new();
+        let tool = fixture.write_tool();
+        let registry = ToolRegistry::new(vec![
+            Box::new(tool) as Box<dyn siralos_core::tool::Tool>
+        ])
+        .unwrap();
+        let input = json!({"path": "allowed.txt", "content": "x"});
+        let provider = ScriptProvider::new(vec![
+            vec![proposed_call("c1", "write", input), completed()],
+            vec![completed()],
+        ]);
+        let mut app = SiralosApplication::new(
+            &provider,
+            &registry,
+            write_policy(PermissionRule::Allow),
+            None,
+            None,
+        );
+        app.send_prompt("create it".to_owned()).unwrap();
+        drive(&mut app);
+        assert!(
+            matches!(
+                tool_result(app.history(), "c1"),
+                ToolExecutionResult::Denied { message }
+                    if message == NO_APPROVAL_MESSAGE
+            ),
+            "allow must not bypass the per-action approval gate"
+        );
+        assert!(!fixture.root.join("allowed.txt").exists());
+        assert_eq!(fixture.checkpoint_count(), 0);
+    }
+
+    #[test]
+    fn executor_runs_write_with_matching_approval() {
+        let fixture = Fixture::new();
+        let tool = fixture.write_tool();
+        let registry = ToolRegistry::new(vec![
+            Box::new(tool) as Box<dyn siralos_core::tool::Tool>
+        ])
+        .unwrap();
+        let input = json!({"path": "made.txt", "content": "exact"});
+        let approvals =
+            siralos_core::tool::ActionApprovals::new().into_shared();
+        approvals.approve(approval_for("write", &input));
+        let provider = ScriptProvider::new(vec![
+            vec![proposed_call("c1", "write", input), completed()],
+            vec![completed()],
+        ]);
+        let mut app = SiralosApplication::new(
+            &provider,
+            &registry,
+            write_policy(PermissionRule::Ask),
+            None,
+            None,
+        )
+        .with_action_approvals(approvals);
+        app.send_prompt("create it".to_owned()).unwrap();
+        drive(&mut app);
+        let output = match tool_result(app.history(), "c1") {
+            ToolExecutionResult::Success { output, .. } => output.clone(),
+            other => panic!("approved write must succeed: {other:?}"),
+        };
+        assert_eq!(fs::read(fixture.root.join("made.txt")).unwrap(), b"exact");
+        let id = output["checkpoint"].as_str().expect("checkpoint id");
+        let store =
+            open_checkpoint_store(&fixture.root, &fixture.store_root).unwrap();
+        let record = store.get(id).expect("checkpoint stored");
+        assert_eq!(
+            record.state,
+            siralos_core::workspace::checkpoint::CheckpointState::Applied
+        );
+    }
+
+    #[test]
+    fn executor_runs_edit_with_matching_approval() {
+        let fixture = Fixture::new();
+        fs::write(fixture.root.join("b.txt"), b"hello world").unwrap();
+        let tool = fixture.edit_tool();
+        let registry = ToolRegistry::new(vec![
+            Box::new(tool) as Box<dyn siralos_core::tool::Tool>
+        ])
+        .unwrap();
+        let input = json!({
+            "path": "b.txt",
+            "oldString": "world",
+            "newString": "there"
+        });
+        let approvals =
+            siralos_core::tool::ActionApprovals::new().into_shared();
+        approvals.approve(approval_for("edit", &input));
+        let provider = ScriptProvider::new(vec![
+            vec![proposed_call("c1", "edit", input), completed()],
+            vec![completed()],
+        ]);
+        let mut app = SiralosApplication::new(
+            &provider,
+            &registry,
+            write_policy(PermissionRule::Ask),
+            None,
+            None,
+        )
+        .with_action_approvals(approvals);
+        app.send_prompt("edit it".to_owned()).unwrap();
+        drive(&mut app);
+        assert!(
+            matches!(
+                tool_result(app.history(), "c1"),
+                ToolExecutionResult::Success { .. }
+            ),
+            "approved edit must succeed"
+        );
+        assert_eq!(
+            fs::read(fixture.root.join("b.txt")).unwrap(),
+            b"hello there"
+        );
+    }
+
+    #[test]
+    fn executor_refuses_write_on_digest_mismatch() {
+        // Approval binds the exact bytes (D4): approving one content
+        // and dispatching another must refuse before any effect.
+        let fixture = Fixture::new();
+        let tool = fixture.write_tool();
+        let registry = ToolRegistry::new(vec![
+            Box::new(tool) as Box<dyn siralos_core::tool::Tool>
+        ])
+        .unwrap();
+        let approved = json!({"path": "swapped.txt", "content": "approved"});
+        let dispatched = json!({"path": "swapped.txt", "content": "mutated"});
+        let approvals =
+            siralos_core::tool::ActionApprovals::new().into_shared();
+        approvals.approve(approval_for("write", &approved));
+        let provider = ScriptProvider::new(vec![
+            vec![proposed_call("c1", "write", dispatched), completed()],
+            vec![completed()],
+        ]);
+        let mut app = SiralosApplication::new(
+            &provider,
+            &registry,
+            write_policy(PermissionRule::Ask),
+            None,
+            None,
+        )
+        .with_action_approvals(approvals);
+        app.send_prompt("create it".to_owned()).unwrap();
+        drive(&mut app);
+        assert!(
+            matches!(
+                tool_result(app.history(), "c1"),
+                ToolExecutionResult::Denied { message }
+                    if message == NO_APPROVAL_MESSAGE
+            ),
+            "mutated bytes must not match the recorded approval"
+        );
+        assert!(!fixture.root.join("swapped.txt").exists());
+        assert_eq!(fixture.checkpoint_count(), 0);
+    }
+
+    #[test]
+    fn executor_refuses_edit_on_string_mismatch() {
+        let fixture = Fixture::new();
+        fs::write(fixture.root.join("c.txt"), b"alpha omega").unwrap();
+        let tool = fixture.edit_tool();
+        let registry = ToolRegistry::new(vec![
+            Box::new(tool) as Box<dyn siralos_core::tool::Tool>
+        ])
+        .unwrap();
+        let approved = json!({
+            "path": "c.txt",
+            "oldString": "omega",
+            "newString": "alpha"
+        });
+        let dispatched = json!({
+            "path": "c.txt",
+            "oldString": "omega",
+            "newString": "beta"
+        });
+        let approvals =
+            siralos_core::tool::ActionApprovals::new().into_shared();
+        approvals.approve(approval_for("edit", &approved));
+        let provider = ScriptProvider::new(vec![
+            vec![proposed_call("c1", "edit", dispatched), completed()],
+            vec![completed()],
+        ]);
+        let mut app = SiralosApplication::new(
+            &provider,
+            &registry,
+            write_policy(PermissionRule::Ask),
+            None,
+            None,
+        )
+        .with_action_approvals(approvals);
+        app.send_prompt("edit it".to_owned()).unwrap();
+        drive(&mut app);
+        assert!(
+            matches!(
+                tool_result(app.history(), "c1"),
+                ToolExecutionResult::Denied { message }
+                    if message == NO_APPROVAL_MESSAGE
+            ),
+            "mutated strings must not match the recorded approval"
+        );
+        assert_eq!(
+            fs::read(fixture.root.join("c.txt")).unwrap(),
+            b"alpha omega"
+        );
+        assert_eq!(fixture.checkpoint_count(), 0);
+    }
+
+    #[test]
+    fn drive_and_unc_paths_are_denied() {
+        let fixture = Fixture::new();
+        fs::write(fixture.root.join("v.txt"), b"stay").unwrap();
+        let write = fixture.write_tool();
+        let edit = fixture.edit_tool();
+        let token = CancellationToken::new();
+        for path in [
+            "C:\\evil.txt",
+            "C:evil.txt",
+            "C:/evil.txt",
+            "\\\\server\\share\\x.txt",
+            "\\\\?\\C:\\x.txt",
+            "/absolute.txt",
+        ] {
+            let write_result = write.execute(
+                &json!({"path": path, "content": "x"}),
+                token.signal(),
+            );
+            assert!(
+                matches!(
+                    &write_result,
+                    ToolExecutionResult::Denied { message }
+                        if message.as_str()
+                            == "Path must be relative to the workspace."
+                ),
+                "{path}: {write_result:?}"
+            );
+            let edit_result = edit.execute(
+                &json!({
+                    "path": path,
+                    "oldString": "a",
+                    "newString": "b"
+                }),
+                token.signal(),
+            );
+            assert!(
+                matches!(
+                    &edit_result,
+                    ToolExecutionResult::Denied { message }
+                        if message.as_str()
+                            == "Path must be relative to the workspace."
+                ),
+                "{path}: {edit_result:?}"
+            );
+        }
+        assert_eq!(fs::read(fixture.root.join("v.txt")).unwrap(), b"stay");
+        assert_eq!(fixture.checkpoint_count(), 0);
+    }
+
+    #[test]
+    fn revalidate_parent_refuses_moved_or_escaped_parents() {
+        use super::revalidate_parent;
+        let fixture = Fixture::new();
+        // The backend root is always canonical; canonicalize here
+        // for the same reason (verbatim paths never prefix-match).
+        let root = std::fs::canonicalize(&fixture.root).unwrap();
+        let sub = fixture.root.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        assert!(revalidate_parent(&root, &sub).is_ok());
+        let gone = fixture.root.join("gone");
+        assert!(revalidate_parent(&root, &gone).is_err());
+        let outside = std::env::temp_dir().join(format!(
+            "siralos-mut-out-{}-{}",
+            std::process::id(),
+            unique()
+        ));
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(&outside).unwrap();
+        assert!(revalidate_parent(&root, &outside).is_err());
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn verify_committed_detects_a_swapped_parent() {
+        use super::verify_committed;
+        let fixture = Fixture::new();
+        let sub = fixture.root.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(sub.join("f.txt"), b"data").unwrap();
+        let absolute = sub.join("f.txt");
+        assert!(verify_committed(&fixture.root, &absolute, b"data").is_ok());
+        let outside = std::env::temp_dir().join(format!(
+            "siralos-mut-out-{}-{}",
+            std::process::id(),
+            unique()
+        ));
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("f.txt"), b"data").unwrap();
+        fs::remove_dir_all(&sub).unwrap();
+        std::os::unix::fs::symlink(&outside, &sub).unwrap();
+        // Same bytes through the swapped parent: the byte check
+        // would pass, so the parent recheck must carry the verdict.
+        let refused = verify_committed(&fixture.root, &absolute, b"data");
+        assert!(
+            matches!(
+                refused,
+                Err(ToolExecutionResult::Conflict { message })
+                    if message
+                        == "The target directory changed while it was being written."
+            ),
+            "{refused:?}"
+        );
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn verify_committed_refuses_a_vanished_parent() {
+        use super::verify_committed;
+        let fixture = Fixture::new();
+        let sub = fixture.root.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(sub.join("f.txt"), b"data").unwrap();
+        let absolute = sub.join("f.txt");
+        fs::remove_dir_all(&sub).unwrap();
+        assert!(verify_committed(&fixture.root, &absolute, b"data").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn socket_files_are_not_mutation_targets() {
+        let fixture = Fixture::new();
+        let socket = fixture.root.join("sock");
+        let _listener =
+            std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let write = fixture.write_tool();
+        let edit = fixture.edit_tool();
+        let token = CancellationToken::new();
+        assert!(matches!(
+            write.execute(
+                &json!({"path": "sock", "content": "x"}),
+                token.signal()
+            ),
+            ToolExecutionResult::Conflict { .. }
+        ));
+        assert!(matches!(
+            edit.execute(
+                &json!({
+                    "path": "sock",
+                    "oldString": "a",
+                    "newString": "b"
+                }),
+                token.signal()
+            ),
+            ToolExecutionResult::Failed { .. }
+        ));
+    }
+
+    #[test]
+    fn rename_substitution_race_never_misdirects() {
+        // The substitution window is the explicit subject here: one
+        // thread renames the hot parent directory away and back while
+        // the main thread drives hundreds of write/edit attempts.
+        // Scheduling decides which outcomes occur, so the test
+        // asserts only schedule-independent properties: nothing is
+        // ever written outside the workspace, every success carries
+        // the exact approved bytes at the intended path, and every
+        // other outcome is a typed refusal.
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let fixture = Fixture::new();
+        let hot = fixture.root.join("hot");
+        fs::create_dir_all(&hot).unwrap();
+        fs::write(hot.join("e.txt"), b"needle in hay").unwrap();
+        let outside = std::env::temp_dir().join(format!(
+            "siralos-mut-out-{}-{}",
+            std::process::id(),
+            unique()
+        ));
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("canary.txt"), b"untouched").unwrap();
+        let parked = fixture.root.join("hot-parked");
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let swapper_stop = Arc::clone(&stop);
+        let (hot_thread, parked_thread) = (hot.clone(), parked.clone());
+        let swapper = std::thread::spawn(move || {
+            for _ in 0..2000 {
+                if swapper_stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                // Rename the parent away and back; failures (a
+                // concurrent operation holding the directory) only
+                // shorten the race, they never invalidate it.
+                let _ = fs::rename(&hot_thread, &parked_thread);
+                let _ = fs::rename(&parked_thread, &hot_thread);
+                // Rewrite the edit target so compare-and-swap races
+                // engage as well.
+                if let Ok(guard) = fs::read(hot_thread.join("e.txt")) {
+                    let _ = fs::write(
+                        hot_thread.join("e.txt"),
+                        if guard == b"needle in hay" {
+                            b"moved hay".to_vec()
+                        } else {
+                            b"needle in hay".to_vec()
+                        },
+                    );
+                }
+            }
+        });
+
+        let write = fixture.write_tool();
+        let edit = fixture.edit_tool();
+        let token = CancellationToken::new();
+        let mut refusals = 0u32;
+        let mut created = Vec::new();
+        for index in 0..200u32 {
+            let name = format!("hot/t-{index}.txt");
+            match write.execute(
+                &json!({"path": name, "content": "payload"}),
+                token.signal(),
+            ) {
+                ToolExecutionResult::Success { output, .. } => {
+                    assert_eq!(output["path"], name);
+                    created.push(name);
+                }
+                ToolExecutionResult::Denied { .. }
+                | ToolExecutionResult::Conflict { .. }
+                | ToolExecutionResult::Failed { .. } => {
+                    refusals += 1;
+                }
+                other => panic!("untyped outcome: {other:?}"),
+            }
+            match edit.execute(
+                &json!({
+                    "path": "hot/e.txt",
+                    "oldString": "needle",
+                    "newString": "thread"
+                }),
+                token.signal(),
+            ) {
+                ToolExecutionResult::Success { .. } => {}
+                ToolExecutionResult::Denied { .. }
+                | ToolExecutionResult::Conflict { .. }
+                | ToolExecutionResult::Failed { .. } => {
+                    refusals += 1;
+                }
+                other => panic!("untyped outcome: {other:?}"),
+            }
+        }
+        stop.store(true, Ordering::Relaxed);
+        swapper.join().expect("swapper thread joins");
+        // The swapper may have stopped with the parent parked away;
+        // restore it before verifying in-workspace exactness.
+        if !hot.exists() {
+            fs::rename(&parked, &hot).expect("parent restores");
+        }
+        // Every reported success lands the exact bytes at the
+        // intended in-workspace path: reads happen after the race,
+        // so no transient rename can flake them.
+        for name in &created {
+            assert_eq!(
+                fs::read(fixture.root.join(name)).unwrap(),
+                b"payload",
+                "{name}"
+            );
+        }
+        let edit_bytes = fs::read(fixture.root.join("hot/e.txt")).unwrap();
+        assert!(
+            edit_bytes.windows(6).any(|w| w == b"thread")
+                || edit_bytes == b"moved hay"
+                || edit_bytes == b"needle in hay",
+            "edit target holds coherent bytes"
+        );
+        // The race must have engaged at least once: hundreds of
+        // multi-step mutations against two thousand renames.
+        assert!(refusals > 0, "expected the race to refuse at least once");
+        assert_eq!(
+            fs::read(outside.join("canary.txt")).unwrap(),
+            b"untouched"
+        );
+        let mut strays = Vec::new();
+        for entry in fs::read_dir(&outside).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_name() != "canary.txt" {
+                strays.push(entry.path());
+            }
+        }
+        assert!(strays.is_empty(), "outside writes: {strays:?}");
+        let _ = fs::remove_dir_all(&outside);
     }
 }
