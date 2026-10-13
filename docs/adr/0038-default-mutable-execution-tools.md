@@ -136,3 +136,15 @@ automatic acquisition, no hooks, no task-graph machinery, and no
 multi-agent foundation. The four tools are host-executed operations
 with typed schemas, not agents. Core works with zero modules; the
 tools work with zero modules installed.
+
+## 9. Implementation phasing (2026-10-13)
+
+The campaign lands in phases; no phase flips the posture alone
+(see ROADMAP.md §10 Remaining for the durable in-flight ledger).
+`read` projection, this ADR, and the `write`/`edit` implementation
+with their adversarial suites land first — while every live
+`write`/`edit` call is still denied for want of the approval UI.
+The live interactive approval prompt is in flight (owner-approved);
+`bash`, the corpus v84→v85 amendment, and the AGENTS.md/SECURITY.md
+posture flips stay closed until the digest-bound amendment lands
+with its printed audit.

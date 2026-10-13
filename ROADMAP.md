@@ -793,6 +793,24 @@ later session needs must appear here or in a commit.
    deliver; rejecting control characters in the path would change behaviour, so it
    needs its own reviewed decision.
 
+4. **The default-tools campaign (ADR 0038) lands in phases; the posture
+   has NOT flipped.** `read`/`write`/`edit` are registered default tools
+   behind their gates (containment, protected paths, atomic writers,
+   auto-checkpoint, per-action approval), each backed by its adversarial
+   suite — but the interim divergence is visible, not silent:
+   - Landed: the `read` projection, ADR 0038, and the `write`/`edit`
+     implementation. Every live `write`/`edit` call is still denied:
+     no approval UI exists yet to record the one-time per-action
+     approval the gate requires, and the headless/harness paths seed
+     approvals only via the API.
+   - In flight (owner-approved 2026-10-13): the live interactive
+     approval prompt for `write`/`edit` (leaving the flow ready for
+     `bash`).
+   - Still closed: `bash` (typed `unavailable`; Windows enforcement
+     absent), the corpus v84→v85 amendment, and the AGENTS.md/SECURITY.md
+     posture flips — those flip only with the digest-bound corpus
+     amendment and its printed audit, never by code change alone.
+
 ### Blocked
 
 - **The version identity (§9)** — the external plugin's `version = "0.0.0"`
