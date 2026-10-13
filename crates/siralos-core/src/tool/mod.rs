@@ -32,8 +32,8 @@ mod projection_tests;
 mod tests;
 
 pub use approval::{
-    ActionApproval, ActionApprovals, ApprovalError, SharedApprovals,
-    action_digest, canonical_input_json,
+    ActionApproval, ActionApprovals, ActionDigest, ApprovalError,
+    SharedApprovals, action_digest, canonical_input_json,
 };
 pub use budget::{DEFAULT_MAX_TOOL_ROUNDS, MAX_TOOL_ROUNDS, RoundBudget};
 pub use capability::{

@@ -32,6 +32,35 @@ use serde_json::Value;
 
 use crate::identity::sha256_hex;
 
+/// One validated 64-character hexadecimal SHA-256 action digest.
+///
+/// Validity is established once, in [`ActionDigest::parse`]: holders
+/// of this type never re-check length or hex shape at call sites.
+/// The digest binds one exact tool call (tool name, canonical input,
+/// task revision); see [`action_digest`].
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ActionDigest(String);
+
+impl ActionDigest {
+    /// Validate one digest at the host boundary.
+    ///
+    /// Anything that is not 64 hexadecimal characters is a host
+    /// programming defect and fails here, never at execution time.
+    pub fn parse(value: &str) -> Result<Self, ApprovalError> {
+        if value.len() != 64
+            || !value.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(ApprovalError::InvalidDigest);
+        }
+        Ok(Self(value.to_owned()))
+    }
+
+    /// The canonical digest text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 /// One host-issued per-action approval.
 ///
 /// The record binds the exact tool name, the exact action digest
@@ -44,7 +73,7 @@ pub struct ActionApproval {
     /// Exact tool name this approval authorizes.
     tool_name: String,
     /// Expected [`action_digest`] for the approved call.
-    action_digest: String,
+    action_digest: ActionDigest,
     /// Task revision the approval was issued for.
     task_revision: Option<u64>,
 }
@@ -52,25 +81,20 @@ pub struct ActionApproval {
 impl ActionApproval {
     /// Build one validated approval record.
     ///
-    /// The tool name must be non-empty and the digest must be a
-    /// 64-character hexadecimal SHA-256; anything else is a host
+    /// The tool name must be non-empty; anything else is a host
     /// programming defect and fails here, never at execution time.
+    /// The digest arrives already validated as an [`ActionDigest`].
     pub fn new(
         tool_name: &str,
-        action_digest: &str,
+        action_digest: ActionDigest,
         task_revision: Option<u64>,
     ) -> Result<Self, ApprovalError> {
         if tool_name.is_empty() {
             return Err(ApprovalError::EmptyTool);
         }
-        if action_digest.len() != 64
-            || !action_digest.bytes().all(|byte| byte.is_ascii_hexdigit())
-        {
-            return Err(ApprovalError::InvalidDigest);
-        }
         Ok(Self {
             tool_name: tool_name.to_owned(),
-            action_digest: action_digest.to_owned(),
+            action_digest,
             task_revision,
         })
     }
@@ -81,7 +105,7 @@ impl ActionApproval {
     }
 
     /// The expected action digest for the approved call.
-    pub fn action_digest(&self) -> &str {
+    pub fn action_digest(&self) -> &ActionDigest {
         &self.action_digest
     }
 
@@ -137,14 +161,16 @@ pub fn action_digest(
     tool_name: &str,
     canonical_input: &str,
     task_revision: Option<u64>,
-) -> String {
+) -> ActionDigest {
     let revision = match task_revision {
         Some(revision) => revision.to_string(),
         None => "none".to_owned(),
     };
-    sha256_hex(
+    let hex = sha256_hex(
         format!("{tool_name}\n{revision}\n{canonical_input}").as_bytes(),
-    )
+    );
+    ActionDigest::parse(&hex)
+        .expect("sha256_hex always yields 64 lowercase hex characters")
 }
 
 /// Canonical JSON text for approval binding.
@@ -165,7 +191,7 @@ pub fn canonical_input_json(input: &Value) -> String {
 /// replaying an approved call finds nothing and is denied.
 #[derive(Debug, Clone, Default)]
 pub struct ActionApprovals {
-    approvals: BTreeMap<String, ActionApproval>,
+    approvals: BTreeMap<ActionDigest, ActionApproval>,
 }
 
 impl ActionApprovals {
@@ -196,7 +222,7 @@ impl ActionApprovals {
     pub fn take(
         &mut self,
         tool_name: &str,
-        action_digest: &str,
+        action_digest: &ActionDigest,
         task_revision: Option<u64>,
     ) -> Option<ActionApproval> {
         let approval = self.approvals.get(action_digest)?;
@@ -241,7 +267,7 @@ impl SharedApprovals {
     pub fn take(
         &self,
         tool_name: &str,
-        action_digest: &str,
+        action_digest: &ActionDigest,
         task_revision: Option<u64>,
     ) -> Option<ActionApproval> {
         self.0.borrow_mut().take(tool_name, action_digest, task_revision)
@@ -267,29 +293,42 @@ impl Default for SharedApprovals {
 #[cfg(test)]
 mod tests {
     use super::{
-        ActionApproval, ActionApprovals, action_digest, canonical_input_json,
+        ActionApproval, ActionApprovals, ActionDigest, action_digest,
+        canonical_input_json,
     };
     use serde_json::json;
 
-    fn digest_for(tool: &str, input: &serde_json::Value) -> String {
+    fn digest_for(tool: &str, input: &serde_json::Value) -> ActionDigest {
         action_digest(tool, &canonical_input_json(input), Some(7))
     }
 
+    fn parsed(value: &str) -> ActionDigest {
+        ActionDigest::parse(value).expect("test digest is valid")
+    }
+
     #[test]
-    fn rejects_empty_tool_and_malformed_digests() {
-        assert_eq!(
-            ActionApproval::new("", &"a".repeat(64), None).unwrap_err(),
-            super::ApprovalError::EmptyTool
-        );
+    fn digest_parse_accepts_only_64_hex_characters() {
+        let valid = "a".repeat(64);
+        assert_eq!(parsed(&valid).as_str(), valid.as_str());
         for digest in ["", "abc", &"g".repeat(64), &"a".repeat(63)] {
             assert_eq!(
-                ActionApproval::new("write", digest, None).unwrap_err(),
+                ActionDigest::parse(digest).unwrap_err(),
                 super::ApprovalError::InvalidDigest,
                 "{digest}"
             );
         }
-        ActionApproval::new("write", &"A".repeat(64), None)
-            .expect("uppercase hex is valid");
+        // Acceptance is unchanged by the newtype: uppercase hex
+        // validates (it simply never matches a computed digest).
+        ActionDigest::parse(&"A".repeat(64)).expect("uppercase hex valid");
+    }
+
+    #[test]
+    fn rejects_empty_tool_names() {
+        assert_eq!(
+            ActionApproval::new("", parsed(&"a".repeat(64)), None)
+                .unwrap_err(),
+            super::ApprovalError::EmptyTool
+        );
     }
 
     #[test]
@@ -324,8 +363,9 @@ mod tests {
         let input = json!({"path": "a.txt"});
         let digest = digest_for("write", &input);
         let mut ledger = ActionApprovals::new();
-        ledger
-            .approve(ActionApproval::new("write", &digest, Some(7)).unwrap());
+        ledger.approve(
+            ActionApproval::new("write", digest.clone(), Some(7)).unwrap(),
+        );
         assert_eq!(ledger.len(), 1);
         assert!(ledger.take("edit", &digest, Some(7)).is_none());
         assert!(ledger.take("write", &digest, Some(8)).is_none());
@@ -341,9 +381,10 @@ mod tests {
     fn unknown_digests_leave_the_ledger_untouched() {
         let mut ledger = ActionApprovals::new();
         let digest = digest_for("write", &json!({}));
-        ledger
-            .approve(ActionApproval::new("write", &digest, Some(7)).unwrap());
-        assert!(ledger.take("write", &"b".repeat(64), Some(7)).is_none());
+        ledger.approve(ActionApproval::new("write", digest, Some(7)).unwrap());
+        assert!(
+            ledger.take("write", &parsed(&"b".repeat(64)), Some(7)).is_none()
+        );
         assert_eq!(ledger.len(), 1);
     }
 
@@ -352,8 +393,9 @@ mod tests {
         let input = json!({"path": "a.txt"});
         let digest = digest_for("write", &input);
         let shared = ActionApprovals::new().into_shared();
-        shared
-            .approve(ActionApproval::new("write", &digest, Some(7)).unwrap());
+        shared.approve(
+            ActionApproval::new("write", digest.clone(), Some(7)).unwrap(),
+        );
         let clone = shared.clone();
         assert!(clone.take("write", &digest, Some(7)).is_some());
         assert!(shared.is_empty());

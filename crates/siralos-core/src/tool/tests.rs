@@ -1009,7 +1009,7 @@ fn ask_with_matching_approval_executes_once_then_replay_is_denied() {
         "empty ledger matches nothing"
     );
     approvals
-        .approve(ActionApproval::new("plain.tool", &digest, None).unwrap());
+        .approve(ActionApproval::new("plain.tool", digest, None).unwrap());
     let registry = registry(vec![boxed(tool)]);
     let provider = TurnScriptProvider::new(vec![
         vec![tool_call("c1", "plain.tool", input.clone()), completed()],
@@ -1052,7 +1052,7 @@ fn ask_with_stale_revision_approval_is_denied_without_execution() {
         action_digest("plain.tool", &canonical_input_json(&input), Some(7));
     let approvals = ActionApprovals::new().into_shared();
     approvals
-        .approve(ActionApproval::new("plain.tool", &digest, Some(7)).unwrap());
+        .approve(ActionApproval::new("plain.tool", digest, Some(7)).unwrap());
     let registry = registry(vec![boxed(tool)]);
     let provider = TurnScriptProvider::new(vec![
         vec![tool_call("c1", "plain.tool", input), completed()],
