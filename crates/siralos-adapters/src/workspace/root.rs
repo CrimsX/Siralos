@@ -15,6 +15,10 @@ pub enum WorkspaceRootError {
     NotAccessible(String),
     /// The canonical root is not a directory.
     NotADirectory,
+    /// A checkpoint store bound to a different workspace was supplied
+    /// with this root (checkpoints must never record one workspace
+    /// while mutating another).
+    StoreBindingMismatch,
 }
 
 impl fmt::Display for WorkspaceRootError {
@@ -26,6 +30,9 @@ impl fmt::Display for WorkspaceRootError {
             Self::NotADirectory => {
                 formatter.write_str("Workspace root is not a directory.")
             }
+            Self::StoreBindingMismatch => formatter.write_str(
+                "Checkpoint store is bound to a different workspace.",
+            ),
         }
     }
 }

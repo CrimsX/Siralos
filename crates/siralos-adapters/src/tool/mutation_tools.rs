@@ -77,10 +77,7 @@ impl MutationBackend {
         if crate::workspace::checkpoint::fingerprint_of(&canonical)
             != store.workspace_fingerprint()
         {
-            return Err(WorkspaceRootError::NotAccessible(
-                "checkpoint store is bound to a different workspace"
-                    .to_owned(),
-            ));
+            return Err(WorkspaceRootError::StoreBindingMismatch);
         }
         Ok(Self { root: canonical, store })
     }
@@ -772,6 +769,29 @@ mod tests {
             let _ = fs::remove_dir_all(&self.root);
             let _ = fs::remove_dir_all(&self.store_root);
         }
+    }
+
+    #[test]
+    fn mismatched_checkpoint_store_is_a_typed_refusal() {
+        let first = Fixture::new();
+        let second = Fixture::new();
+        let foreign =
+            open_checkpoint_store(&second.root, &second.store_root).unwrap();
+        assert!(matches!(
+            WriteTool::new(&first.root, foreign),
+            Err(crate::workspace::root::WorkspaceRootError::StoreBindingMismatch)
+        ));
+        let foreign =
+            open_checkpoint_store(&second.root, &second.store_root).unwrap();
+        assert!(matches!(
+            EditTool::new(&first.root, foreign),
+            Err(crate::workspace::root::WorkspaceRootError::StoreBindingMismatch)
+        ));
+        assert_eq!(
+            crate::workspace::root::WorkspaceRootError::StoreBindingMismatch
+                .to_string(),
+            "Checkpoint store is bound to a different workspace."
+        );
     }
 
     fn success_output(result: ToolExecutionResult) -> serde_json::Value {
