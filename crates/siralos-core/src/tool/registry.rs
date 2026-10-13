@@ -33,6 +33,17 @@ pub trait Tool {
     /// The opaque capability required by this Tool.
     fn capability(&self) -> &CapabilityId;
 
+    /// Whether every call requires a one-time host approval from the
+    /// per-action ledger, even under an `allow` permission rule.
+    ///
+    /// Plain tools return `false` (the permission gate alone decides).
+    /// Mutation and execution tools opt in: their security property is
+    /// explicit per-action approval, which no permission rule can
+    /// grant implicitly (ADR 0038 D4).
+    fn requires_approval(&self) -> bool {
+        false
+    }
+
     /// Execute one call under the current Host authorization.
     ///
     /// Input validation is owned by the Tool; invalid input must return

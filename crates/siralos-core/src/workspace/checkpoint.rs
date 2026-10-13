@@ -333,14 +333,22 @@ fn states_equal(a: &WorkspaceFileState, b: &WorkspaceFileState) -> bool {
     a.sha256.is_some() && a.sha256 == b.sha256
 }
 
-/// Core-facing checkpoint store contract (inspection surface only at
-/// R4: creation and retention capacity remain unavailable, exactly as
-/// the reference reports them).
+/// Core-facing checkpoint store contract.
+///
+/// Inspection covers historical data in every model. Creation and
+/// retention capacity are available only where the host implements
+/// the lifecycle (bounded creation, byte accounting, automatic
+/// pruning of evictable records); stores without that host surface
+/// report [`CheckpointStoreModel::CreationUnavailable`], exactly as
+/// the reference reports them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckpointStoreModel {
     /// New checkpoint preparation is unavailable (no identity-bound
     /// commit primitive); historical data may still be inspected.
     CreationUnavailable,
+    /// Bounded checkpoint creation with byte accounting and
+    /// automatic pruning is implemented by the host (ADR 0038).
+    CreationAvailable,
 }
 #[cfg(test)]
 mod tests {

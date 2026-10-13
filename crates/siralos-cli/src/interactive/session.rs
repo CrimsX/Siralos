@@ -5,16 +5,17 @@
 use super::{
     ApplicationProjectionConfig, BTreeMap, ConfigurationError,
     ContextCapacity, ContextPolicy, ConversationItem,
-    DEFAULT_REVIEW_PROVIDER_ID, FlushError, FlushOutcome, HostCredential,
-    HostProvider, InteractiveError, InteractiveOptions, ModuleHost,
-    ModuleManifest, PermissionPolicy, ProjectionService, Rc, ReadTool,
-    RecordedReplayProvider, ReplayStoreLoadError, RetainingReplayRecorder,
-    SIRALOS_SYSTEM_INSTRUCTIONS, SegmentInput, SessionProvider,
-    SiralosApplication, Stability, ToolLoopEvent, ToolRegistry,
-    WorkspaceListTool, WorkspaceProfileLoad, WorkspaceReadTool,
-    WorkspaceSearchTool, apply_reloaded_config, approve_workspace_profile,
-    compose_skills_segment, declare_and_compose_profile,
-    effective_profile_protocol, load_replay_store, load_user_configuration,
+    DEFAULT_REVIEW_PROVIDER_ID, EditTool, FlushError, FlushOutcome,
+    HostCredential, HostProvider, InteractiveError, InteractiveOptions,
+    ModuleHost, ModuleManifest, PermissionPolicy, ProjectionService, Rc,
+    ReadTool, RecordedReplayProvider, ReplayStoreLoadError,
+    RetainingReplayRecorder, SIRALOS_SYSTEM_INSTRUCTIONS, SegmentInput,
+    SessionProvider, SiralosApplication, Stability, ToolLoopEvent,
+    ToolRegistry, WorkspaceListTool, WorkspaceProfileLoad, WorkspaceReadTool,
+    WorkspaceSearchTool, WriteTool, apply_reloaded_config,
+    approve_workspace_profile, compose_skills_segment,
+    declare_and_compose_profile, effective_profile_protocol,
+    load_replay_store, load_user_configuration,
     load_workspace_profile_snapshot, non_live_state_digest,
     redacted_credential_display, reload_authority_is_revalidated,
     reload_report_from_load, render_activate_module, render_add_module,
@@ -645,9 +646,29 @@ pub(crate) fn compose_session(
         Box::new(WorkspaceSearchTool::new(&workspace_root)?),
         Box::new(ReadTool::new(&workspace_root)?),
     ];
+    // ADR 0038: the default mutation tools join the registry with the
+    // checkpoint store bound to this workspace. A store that cannot be
+    // opened degrades truthfully to the read-only surface (one
+    // host-side diagnostic, never a silent partial registration).
+    match WriteTool::default_store(&workspace_root) {
+        Ok(store) => {
+            tools.push(Box::new(WriteTool::new(
+                &workspace_root,
+                store.clone(),
+            )?));
+            tools.push(Box::new(EditTool::new(&workspace_root, store)?));
+        }
+        Err(_error) => {
+            eprintln!(
+                "siralos: checkpoint store unavailable: mutation tools disabled (details hidden)"
+            );
+        }
+    }
     // R7.4 profiles select the built-in fail-closed posture; they never
-    // grant a Tool. The only registered R7.2 capability is read-only
-    // workspace inspection, and its decision is still checked per call.
+    // grant a Tool. Read-only workspace inspection is allowed and its
+    // decision is still checked per call; workspace mutation defaults
+    // to ask (per-action approval through the host ledger, ADR 0038)
+    // and profiles can only narrow it toward deny.
     // Stage 5.2 (decision 48): the workspace profile narrows these Host
     // rules - composition can never produce a rule broader than the
     // Host's own, and a refused or invalid profile is simply not applied

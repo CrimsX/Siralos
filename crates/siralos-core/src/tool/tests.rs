@@ -14,11 +14,14 @@ use crate::provider::{
     ConversationItem, ModelEvent, ModelProvider, ModelRequest, ProviderEvent,
     ToolCallInput, ToolDefinition, ToolExecutionResult,
 };
+use crate::tool::approval::{
+    ActionApproval, ActionApprovals, action_digest, canonical_input_json,
+};
 use crate::tool::capability::CapabilityId;
 use crate::tool::events::ToolLoopEvent;
 use crate::tool::permission::{PermissionPolicy, PermissionRule, PolicyRule};
 use crate::tool::registry::{ApprovedToolSurface, Tool, ToolRegistry};
-use crate::tool::session::SiralosApplication;
+use crate::tool::session::{ApplicationProjectionConfig, SiralosApplication};
 
 fn capability(value: &str) -> CapabilityId {
     CapabilityId::parse(value).unwrap()
@@ -983,5 +986,103 @@ fn panicking_tool_becomes_a_recoverable_failed_result() {
         Some(ToolExecutionResult::Failed { message })
             if message == "The provider failed with an unknown error."
     ));
+    assert_eq!(events.last(), Some(&ToolLoopEvent::ResponseCompleted));
+}
+
+fn ask_policy() -> PermissionPolicy {
+    PermissionPolicy::from_rules([PolicyRule {
+        capability: capability("workspace.read"),
+        rule: PermissionRule::Ask,
+    }])
+}
+
+#[test]
+fn ask_with_matching_approval_executes_once_then_replay_is_denied() {
+    let tool = FixedTool::new("plain.tool", success_result());
+    let calls = tool.calls.clone();
+    let input = json!({"path": "a.txt"});
+    let digest =
+        action_digest("plain.tool", &canonical_input_json(&input), None);
+    let approvals = ActionApprovals::new().into_shared();
+    assert!(
+        approvals.take("plain.tool", &digest, None).is_none(),
+        "empty ledger matches nothing"
+    );
+    approvals
+        .approve(ActionApproval::new("plain.tool", &digest, None).unwrap());
+    let registry = registry(vec![boxed(tool)]);
+    let provider = TurnScriptProvider::new(vec![
+        vec![tool_call("c1", "plain.tool", input.clone()), completed()],
+        vec![tool_call("c2", "plain.tool", input.clone()), completed()],
+        vec![text("done"), completed()],
+    ]);
+    let mut app = SiralosApplication::new(
+        &provider,
+        &registry,
+        ask_policy(),
+        None,
+        None,
+    )
+    .with_action_approvals(approvals);
+    app.send_prompt("hello".to_owned()).unwrap();
+    let events = run_to_end(&mut app);
+    assert_eq!(calls.get(), 1, "approval authorizes exactly one call");
+    assert!(matches!(
+        result_in_history(app.history(), "c1"),
+        Some(ToolExecutionResult::Success { .. })
+    ));
+    assert!(matches!(
+        result_in_history(app.history(), "c2"),
+        Some(ToolExecutionResult::Denied { message })
+            if message == "Capability workspace.read requires approval, but this tool does not support a reviewable preparation protocol; the call was denied without execution."
+    ));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        ToolLoopEvent::ToolCompleted { call_id, .. } if call_id == "c1"
+    )));
+    assert_eq!(events.last(), Some(&ToolLoopEvent::ResponseCompleted));
+}
+
+#[test]
+fn ask_with_stale_revision_approval_is_denied_without_execution() {
+    let tool = FixedTool::new("plain.tool", success_result());
+    let calls = tool.calls.clone();
+    let input = json!({"path": "a.txt"});
+    let digest =
+        action_digest("plain.tool", &canonical_input_json(&input), Some(7));
+    let approvals = ActionApprovals::new().into_shared();
+    approvals
+        .approve(ActionApproval::new("plain.tool", &digest, Some(7)).unwrap());
+    let registry = registry(vec![boxed(tool)]);
+    let provider = TurnScriptProvider::new(vec![
+        vec![tool_call("c1", "plain.tool", input), completed()],
+        vec![text("done"), completed()],
+    ]);
+    let mut app = SiralosApplication::new(
+        &provider,
+        &registry,
+        ask_policy(),
+        None,
+        None,
+    )
+    .with_action_approvals(approvals)
+    .with_projection(
+        crate::projection::ProjectionService::new(),
+        ApplicationProjectionConfig {
+            task_revision: Some(9),
+            ..ApplicationProjectionConfig::default()
+        },
+    );
+    app.send_prompt("hello".to_owned()).unwrap();
+    let events = run_to_end(&mut app);
+    assert_eq!(calls.get(), 0, "stale revision must not execute");
+    assert!(matches!(
+        result_in_history(app.history(), "c1"),
+        Some(ToolExecutionResult::Denied { .. })
+    ));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        ToolLoopEvent::ToolFailed { call_id, .. } if call_id == "c1"
+    )));
     assert_eq!(events.last(), Some(&ToolLoopEvent::ResponseCompleted));
 }

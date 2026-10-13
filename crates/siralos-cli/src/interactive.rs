@@ -32,7 +32,8 @@ use siralos_adapters::skills_loader::{
     SkillCatalogLoad, load_workspace_skills,
 };
 use siralos_adapters::tool::{
-    ReadTool, WorkspaceListTool, WorkspaceReadTool, WorkspaceSearchTool,
+    EditTool, ReadTool, WorkspaceListTool, WorkspaceReadTool,
+    WorkspaceSearchTool, WriteTool,
 };
 use siralos_adapters::workspace::fs::{
     BoundedFileRead, is_model_protected_workspace_path,

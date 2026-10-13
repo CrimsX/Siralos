@@ -2,13 +2,14 @@
 //!
 //! Siralos-owned recovery records stored outside the workspace at
 //! `~/.siralos/checkpoints/<workspace-fingerprint>/<checkpoint-id>/`
-//! with the exact `metadata.json` + `preimage.bin` layout. R4 ports the
-//! inspection surface (parse, validate, get, list, deterministic state
-//! transitions, reconciliation classification and reporting); new
-//! checkpoint creation, retention capacity, and undo remain unavailable
-//! exactly as the reference reports them, and checkpoints stay fully
-//! independent of Git. Corrupt or invalid metadata fails closed: it is
-//! never returned as valid, never repaired, and never deleted.
+//! with the exact `metadata.json` + `preimage.bin` layout. This module
+//! ports the inspection surface (parse, validate, get, list,
+//! deterministic state transitions, reconciliation classification and
+//! reporting). Bounded creation, byte accounting, automatic pruning,
+//! and undo execution live in [`super::checkpoint_lifecycle`] (ADR
+//! 0038); checkpoints stay fully independent of Git. Corrupt or
+//! invalid metadata fails closed: it is never returned as valid,
+//! never repaired, and never deleted.
 //!
 //! The workspace fingerprint binding (SHA-256 of the canonical
 //! workspace path) is a machine identity, so differential records
@@ -106,6 +107,9 @@ pub enum CheckpointStoreError {
     },
     /// Metadata could not be written.
     WriteFailed(String),
+    /// The store cannot accept the record within its count and byte
+    /// bounds, even after automatic pruning of evictable records.
+    CapacityExceeded(String),
 }
 
 impl std::fmt::Display for CheckpointStoreError {
@@ -126,7 +130,9 @@ impl std::fmt::Display for CheckpointStoreError {
                     to.as_str(),
                 )
             }
-            Self::WriteFailed(detail) => formatter.write_str(detail),
+            Self::WriteFailed(detail) | Self::CapacityExceeded(detail) => {
+                formatter.write_str(detail)
+            }
         }
     }
 }
@@ -493,6 +499,33 @@ impl CheckpointStore {
     /// The workspace fingerprint this store validates records against.
     pub fn workspace_fingerprint(&self) -> &str {
         &self.workspace_fingerprint
+    }
+
+    /// Canonical workspace root (host-only absolute path).
+    pub(crate) fn workspace_root_path(&self) -> &Path {
+        &self.workspace_root
+    }
+
+    /// Directory holding this workspace's checkpoint records.
+    pub(crate) fn fingerprint_directory(&self) -> PathBuf {
+        self.checkpoint_root.join(&self.workspace_fingerprint)
+    }
+
+    /// Maximum before-state bytes retained per checkpoint.
+    pub(crate) fn max_preimage_bytes_limit(&self) -> u64 {
+        self.max_preimage_bytes
+    }
+
+    /// Maximum checkpoint records retained per workspace.
+    pub(crate) fn max_checkpoints_limit(&self) -> usize {
+        self.max_checkpoints
+    }
+
+    /// Maximum logical store bytes: every retained record may carry up
+    /// to one full metadata document plus one full preimage.
+    pub(crate) fn max_store_bytes(&self) -> u64 {
+        self.max_checkpoints as u64
+            * (MAX_METADATA_BYTES + self.max_preimage_bytes)
     }
 
     /// Directory of one checkpoint id (id-validated first).
@@ -879,7 +912,9 @@ pub fn read_workspace_file_state(
 /// Serialize one checkpoint to the exact stored metadata shape
 /// (semantic equality with the reference record; key order is
 /// canonicalized by the JSON value).
-fn serialize_checkpoint(checkpoint: &FileCheckpoint) -> serde_json::Value {
+pub(crate) fn serialize_checkpoint(
+    checkpoint: &FileCheckpoint,
+) -> serde_json::Value {
     let file_state = |state: &CheckpointFileState| {
         serde_json::json!({
             "exists": state.exists,

@@ -15,6 +15,7 @@
 //! the later Godot milestones' surface).
 
 pub mod checkpoint;
+pub mod checkpoint_lifecycle;
 pub mod effects;
 pub mod fs;
 pub mod git;
@@ -24,6 +25,10 @@ pub mod resolve;
 pub mod root;
 pub mod search;
 
+pub use checkpoint_lifecycle::{
+    CapacityUsage, CheckpointCreation, PruneReport, UndoApplyOutcome,
+    apply_undo, checkpoint_capacity, create_checkpoint, prune_checkpoints,
+};
 pub use effects::{ApplicationOutcome, MutationTool, PreparationOutcome};
 pub use git::git_inspection_disposition;
 pub use list::{EntryKind, ListEntry, ListOutcome, list_directory};

@@ -4,7 +4,8 @@
 //! capability identifier, Host permission evaluation, the immutable
 //! ordered Tool Registry, the one generic callable Tool seam, the Tool
 //! Round with the one-call/one-result pairing invariant, the
-//! approved-visible-surface execution guard, the round budget, the
+//! approved-visible-surface execution guard, the one-time
+//! per-action approval ledger, the round budget, the
 //! closed Tool-loop event set, and the synchronous pull-based
 //! Application loop around the R7.1 bounded provider turn.
 //!
@@ -15,6 +16,7 @@
 //! async generator as an explicit pull machine; no async runtime,
 //! threads, locks, or shared synchronization are introduced.
 
+pub mod approval;
 pub mod budget;
 pub mod capability;
 pub mod display_input;
@@ -29,6 +31,10 @@ mod projection_tests;
 #[cfg(test)]
 mod tests;
 
+pub use approval::{
+    ActionApproval, ActionApprovals, ApprovalError, SharedApprovals,
+    action_digest, canonical_input_json,
+};
 pub use budget::{DEFAULT_MAX_TOOL_ROUNDS, MAX_TOOL_ROUNDS, RoundBudget};
 pub use capability::{
     CapabilityId, CapabilityIdError, MAX_CAPABILITY_ID_BYTES,

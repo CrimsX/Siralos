@@ -470,7 +470,10 @@ pub(super) fn apply_reloaded_config(
     true
 }
 
-/// The session's Host rules — read-only workspace inspection, Allow.
+/// The session's Host rules — read-only workspace inspection,
+/// Allow; workspace mutation, Ask (ADR 0038: every mutation needs a
+/// one-time host approval for the exact action, and the approval gate
+/// holds even under an allow rule).
 ///
 /// The ONE rule set `compose_session` composes the workspace profile
 /// against (R7.4 fail-closed posture; Stage 5.2 narrowing-only). `/reload`
@@ -478,11 +481,22 @@ pub(super) fn apply_reloaded_config(
 /// [`declare_and_compose_profile`] — the same composition path, never a
 /// second one.
 pub(super) fn session_host_rules() -> Vec<PolicyRule> {
-    vec![PolicyRule {
-        capability: siralos_core::tool::CapabilityId::parse("workspace.read")
+    vec![
+        PolicyRule {
+            capability: siralos_core::tool::CapabilityId::parse(
+                "workspace.read",
+            )
             .expect("workspace.read is a valid capability id"),
-        rule: PermissionRule::Allow,
-    }]
+            rule: PermissionRule::Allow,
+        },
+        PolicyRule {
+            capability: siralos_core::tool::CapabilityId::parse(
+                "workspace.write",
+            )
+            .expect("workspace.write is a valid capability id"),
+            rule: PermissionRule::Ask,
+        },
+    ]
 }
 
 /// Declare + compose a loaded profile — the SAME declare/compose pair

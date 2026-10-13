@@ -64,7 +64,8 @@ pub trait ToolCallExecutor {
     ///
     /// The executor must apply the frozen gate order: `tool_started`,
     /// registry lookup, approved-surface check, per-call capability
-    /// recheck, plain-Tool ask check, then `Tool::execute`.
+    /// recheck, plain-Tool ask check, per-action approval check, then
+    /// `Tool::execute`.
     fn execute_call(
         &mut self,
         call: ExecutableToolCall<'_>,

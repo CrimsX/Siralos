@@ -24,6 +24,9 @@ use crate::provider::{
     ToolDefinition, ToolExecutionResult, TurnOutcome, TurnStep,
     open_provider_turn,
 };
+use crate::tool::approval::{
+    SharedApprovals, action_digest, canonical_input_json,
+};
 use crate::tool::budget::RoundBudget;
 use crate::tool::events::ToolLoopEvent;
 use crate::tool::permission::{
@@ -78,6 +81,15 @@ struct HostToolExecutor<'a> {
     registry: &'a ToolRegistry,
     policy: PermissionPolicy,
     surface: Option<ApprovedToolSurface>,
+    /// Host-owned one-time per-action approvals shared with the
+    /// application (see [`SharedApprovals`]: the round runner owns
+    /// this executor by value across pull steps, so the ledger is
+    /// shared rather than borrowed).
+    approvals: SharedApprovals,
+    /// Task revision the current machine carries (the projection
+    /// configuration revision; `None` on the direct R7.2 path).
+    /// Approval records must carry the same revision.
+    task_revision: Option<u64>,
 }
 
 impl HostToolExecutor<'_> {
@@ -151,20 +163,70 @@ impl ToolCallExecutor for HostToolExecutor<'_> {
                 };
             }
             PermissionDecision::Ask { .. } => {
-                let message = format!(
-                    "Capability {capability} requires approval, but this tool does not support a reviewable preparation protocol; the call was denied without execution."
-                );
-                events.push(failure_event(
-                    call.call_id,
+                let digest = action_digest(
                     call.tool_name,
-                    &message,
-                ));
-                return ToolCallExecution {
-                    events,
-                    result: ToolExecutionResult::Denied { message },
-                };
+                    &canonical_input_json(call.input),
+                    self.task_revision,
+                );
+                if self
+                    .approvals
+                    .take(call.tool_name, &digest, self.task_revision)
+                    .is_none()
+                {
+                    // Tools with their own reviewable protocol report
+                    // the missing approval truthfully; plain tools
+                    // keep the exact frozen refusal.
+                    let message = if tool.requires_approval() {
+                        format!(
+                            "Capability {capability} requires a one-time host approval for this exact action; no matching approval was recorded, so the call was denied without execution."
+                        )
+                    } else {
+                        format!(
+                            "Capability {capability} requires approval, but this tool does not support a reviewable preparation protocol; the call was denied without execution."
+                        )
+                    };
+                    events.push(failure_event(
+                        call.call_id,
+                        call.tool_name,
+                        &message,
+                    ));
+                    return ToolCallExecution {
+                        events,
+                        result: ToolExecutionResult::Denied { message },
+                    };
+                }
             }
-            PermissionDecision::Allow => {}
+            PermissionDecision::Allow => {
+                // The permission gate is unchanged, but approval is
+                // an independent gate (ADR 0038 D4): tools that
+                // require per-action approval never execute on a
+                // permission rule alone.
+                if tool.requires_approval() {
+                    let digest = action_digest(
+                        call.tool_name,
+                        &canonical_input_json(call.input),
+                        self.task_revision,
+                    );
+                    if self
+                        .approvals
+                        .take(call.tool_name, &digest, self.task_revision)
+                        .is_none()
+                    {
+                        let message = format!(
+                            "Capability {capability} requires a one-time host approval for this exact action; no matching approval was recorded, so the call was denied without execution."
+                        );
+                        events.push(failure_event(
+                            call.call_id,
+                            call.tool_name,
+                            &message,
+                        ));
+                        return ToolCallExecution {
+                            events,
+                            result: ToolExecutionResult::Denied { message },
+                        };
+                    }
+                }
+            }
         }
         let result = execute_guarded(tool, call.input, cancellation);
         events.push(outcome_event(call.call_id, call.tool_name, &result));
@@ -723,6 +785,11 @@ pub struct SiralosApplication<'a, P: ModelProvider> {
     /// Session configuration (set by the CLI for a frontend that can
     /// repaint), so `send_prompt` can hand it to every machine it builds.
     progress_ticks: bool,
+    /// Host-owned one-time per-action approvals for `ask` capabilities.
+    /// Empty by default: approval-gated calls are denied until the
+    /// host records an approval. Shared with every response machine,
+    /// so consumption is visible across prompts and rounds.
+    approvals: SharedApprovals,
 }
 
 impl<'a, P: ModelProvider> SiralosApplication<'a, P> {
@@ -750,7 +817,24 @@ impl<'a, P: ModelProvider> SiralosApplication<'a, P> {
             projection_service: None,
             projection_config: ApplicationProjectionConfig::default(),
             progress_ticks: false,
+            approvals: SharedApprovals::new(),
         }
+    }
+
+    /// Seed the host-owned one-time per-action approval ledger.
+    ///
+    /// The ledger starts empty (every approval-gated call denied);
+    /// the host records one [`ActionApproval`] per approved action
+    /// through the shared handle. Consumption is one-time and
+    /// visible to every later prompt and round.
+    ///
+    /// [`ActionApproval`]: crate::tool::approval::ActionApproval
+    pub fn with_action_approvals(
+        mut self,
+        approvals: SharedApprovals,
+    ) -> Self {
+        self.approvals = approvals;
+        self
     }
 
     /// Configure R7.3 projection for this application.
@@ -833,6 +917,8 @@ impl<'a, P: ModelProvider> SiralosApplication<'a, P> {
             } else {
                 self.surface.clone()
             },
+            approvals: self.approvals.clone(),
+            task_revision: self.projection_config.task_revision,
         };
         let mut machine =
             ResponseMachine::new(self.provider, host, self.max_tool_rounds);

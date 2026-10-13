@@ -1,19 +1,21 @@
-//! Generic read-only workspace Tool adapters (Stage 3R R7.2).
+//! Generic workspace Tool adapters (Stage 3R R7.2, ADR 0038).
 //!
-//! These Tools wrap the existing R4 workspace primitives without
-//! rewriting filesystem logic. Each Tool owns input validation, returns
-//! the canonical R7.1 `ToolExecutionResult`, and receives only the
-//! read-only `CancellationSignal`. No mutation, process, Git, network,
-//! or optional-module Tool exists here, and adapters never decide Host
-//! authorization.
+//! Read tools wrap the R4 read-only primitives; `write` and `edit`
+//! wrap the atomic staging and checkpoint lifecycle primitives. Each
+//! Tool owns input validation, returns the canonical R7.1
+//! `ToolExecutionResult`, and receives only the read-only
+//! `CancellationSignal`. Mutation authorization (per-action approval)
+//! is decided by the Host application executor, never here.
 
 pub mod context;
 pub mod context_events;
+pub mod mutation_tools;
 pub mod workspace_tools;
 
 pub use context::{
     ContextExpandTool, ContextInspectTool, ContextSearchTool, ContextToolState,
 };
+pub use mutation_tools::{EditTool, WriteTool};
 pub use workspace_tools::{
     ReadTool, WorkspaceListTool, WorkspaceReadTool, WorkspaceSearchTool,
 };

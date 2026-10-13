@@ -1,0 +1,362 @@
+//! One-time digest-bound per-action approvals (ADR 0038 D4).
+//!
+//! The permission gate ([`PermissionRule::Ask`]) declares that a
+//! capability needs approval; this module is the reviewable
+//! preparation protocol the application gate consumes. An
+//! [`ActionApproval`] binds one exact tool call: the tool name, the
+//! canonical input bytes, and the task revision, hashed into
+//! [`action_digest`]. The host-owned [`ActionApprovals`] ledger holds
+//! unconsumed approvals; the executor removes the matching record
+//! before execution, so every approval authorizes at most one call.
+//! A mutated input, a stale task revision, or a replayed call finds
+//! no record and is denied without execution.
+//!
+//! The ledger is host-owned state shared with the per-round executor
+//! through [`SharedApprovals`]. The round runner owns its executor by
+//! value across pull steps, so a borrow cannot span the round; the
+//! single-threaded pull machine shares the ledger instead. No thread,
+//! lock, or cross-thread synchronization is introduced.
+//!
+//! Core never decides what deserves approval: records enter the
+//! ledger only through explicit host [`ActionApprovals::approve`]
+//! calls. An empty ledger denies everything, exactly like the
+//! previous ask path.
+//!
+//! [`PermissionRule::Ask`]: crate::tool::permission::PermissionRule
+
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::rc::Rc;
+
+use serde_json::Value;
+
+use crate::identity::sha256_hex;
+
+/// One host-issued per-action approval.
+///
+/// The record binds the exact tool name, the exact action digest
+/// ([`action_digest`] over the canonical input and task revision),
+/// and the task revision it was issued for. Records are opaque to
+/// the model: the provider never sees them and cannot forge one,
+/// because matching requires the host-owned ledger entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActionApproval {
+    /// Exact tool name this approval authorizes.
+    tool_name: String,
+    /// Expected [`action_digest`] for the approved call.
+    action_digest: String,
+    /// Task revision the approval was issued for.
+    task_revision: Option<u64>,
+}
+
+impl ActionApproval {
+    /// Build one validated approval record.
+    ///
+    /// The tool name must be non-empty and the digest must be a
+    /// 64-character hexadecimal SHA-256; anything else is a host
+    /// programming defect and fails here, never at execution time.
+    pub fn new(
+        tool_name: &str,
+        action_digest: &str,
+        task_revision: Option<u64>,
+    ) -> Result<Self, ApprovalError> {
+        if tool_name.is_empty() {
+            return Err(ApprovalError::EmptyTool);
+        }
+        if action_digest.len() != 64
+            || !action_digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(ApprovalError::InvalidDigest);
+        }
+        Ok(Self {
+            tool_name: tool_name.to_owned(),
+            action_digest: action_digest.to_owned(),
+            task_revision,
+        })
+    }
+
+    /// The exact tool name this approval authorizes.
+    pub fn tool_name(&self) -> &str {
+        &self.tool_name
+    }
+
+    /// The expected action digest for the approved call.
+    pub fn action_digest(&self) -> &str {
+        &self.action_digest
+    }
+
+    /// The task revision the approval was issued for.
+    pub fn task_revision(&self) -> Option<u64> {
+        self.task_revision
+    }
+}
+
+/// Why a host-issued approval record was rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalError {
+    /// The approval tool name is empty.
+    EmptyTool,
+    /// The approval digest is not 64 hexadecimal characters.
+    InvalidDigest,
+}
+
+impl ApprovalError {
+    /// The exact externally observable rejection message.
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::EmptyTool => "approval tool name is empty",
+            Self::InvalidDigest => {
+                "approval digest is not a 64-character hexadecimal \
+                 SHA-256"
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for ApprovalError {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        formatter.write_str(self.message())
+    }
+}
+
+impl std::error::Error for ApprovalError {}
+
+/// Compute the digest one approval binds.
+///
+/// The preimage is the exact tool name, the task revision
+/// (`none` when the machine carries none), and the canonical
+/// input JSON ([`canonical_input_json`]), newline-joined. Any
+/// byte difference in the model input or any revision change
+/// produces a different digest, so the approval cannot authorize
+/// changed content (RUST_STYLE anti-absolutism: approval cannot
+/// authorize changed content).
+pub fn action_digest(
+    tool_name: &str,
+    canonical_input: &str,
+    task_revision: Option<u64>,
+) -> String {
+    let revision = match task_revision {
+        Some(revision) => revision.to_string(),
+        None => "none".to_owned(),
+    };
+    sha256_hex(
+        format!("{tool_name}\n{revision}\n{canonical_input}").as_bytes(),
+    )
+}
+
+/// Canonical JSON text for approval binding.
+///
+/// `serde_json` maps order keys deterministically (no
+/// `preserve_order` in this workspace), so serializing the
+/// detached input value yields byte-stable text for equal
+/// inputs regardless of provider key order.
+pub fn canonical_input_json(input: &Value) -> String {
+    serde_json::to_string(input)
+        .expect("serde_json::Value is always serializable")
+}
+
+/// Host-owned ledger of unconsumed per-action approvals.
+///
+/// Keyed by action digest; a later approval for the same digest
+/// replaces the earlier one. Consumption removes the record, so
+/// replaying an approved call finds nothing and is denied.
+#[derive(Debug, Clone, Default)]
+pub struct ActionApprovals {
+    approvals: BTreeMap<String, ActionApproval>,
+}
+
+impl ActionApprovals {
+    /// An empty ledger (denies every approval-gated call).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Share this ledger with per-round executors.
+    ///
+    /// Clones of the shared handle observe the same records: a
+    /// consumption through any clone is visible to all holders.
+    pub fn into_shared(self) -> SharedApprovals {
+        SharedApprovals(Rc::new(RefCell::new(self)))
+    }
+
+    /// Record one validated approval.
+    pub fn approve(&mut self, approval: ActionApproval) {
+        self.approvals.insert(approval.action_digest.clone(), approval);
+    }
+
+    /// Remove and return the approval matching one exact call.
+    ///
+    /// Returns `None` (leaving the ledger untouched) when no
+    /// record carries the digest, the tool name differs, or the
+    /// task revision differs. A returned record is already
+    /// removed: the same approval can never authorize twice.
+    pub fn take(
+        &mut self,
+        tool_name: &str,
+        action_digest: &str,
+        task_revision: Option<u64>,
+    ) -> Option<ActionApproval> {
+        let approval = self.approvals.get(action_digest)?;
+        if approval.tool_name != tool_name
+            || approval.task_revision != task_revision
+        {
+            return None;
+        }
+        self.approvals.remove(action_digest)
+    }
+
+    /// The number of unconsumed approvals.
+    pub fn len(&self) -> usize {
+        self.approvals.len()
+    }
+
+    /// Whether no unconsumed approval remains.
+    pub fn is_empty(&self) -> bool {
+        self.approvals.is_empty()
+    }
+}
+
+/// Ledger handle shared between the application and its
+/// per-round executors (see the module documentation for why
+/// the handle is shared rather than borrowed).
+#[derive(Debug, Clone)]
+pub struct SharedApprovals(Rc<RefCell<ActionApprovals>>);
+
+impl SharedApprovals {
+    /// An empty shared ledger.
+    pub fn new() -> Self {
+        ActionApprovals::new().into_shared()
+    }
+
+    /// Record one validated approval through the shared handle.
+    pub fn approve(&self, approval: ActionApproval) {
+        self.0.borrow_mut().approve(approval);
+    }
+
+    /// Remove and return the approval matching one exact call
+    /// (see [`ActionApprovals::take`]).
+    pub fn take(
+        &self,
+        tool_name: &str,
+        action_digest: &str,
+        task_revision: Option<u64>,
+    ) -> Option<ActionApproval> {
+        self.0.borrow_mut().take(tool_name, action_digest, task_revision)
+    }
+
+    /// The number of unconsumed approvals.
+    pub fn len(&self) -> usize {
+        self.0.borrow().len()
+    }
+
+    /// Whether no unconsumed approval remains.
+    pub fn is_empty(&self) -> bool {
+        self.0.borrow().is_empty()
+    }
+}
+
+impl Default for SharedApprovals {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ActionApproval, ActionApprovals, action_digest, canonical_input_json,
+    };
+    use serde_json::json;
+
+    fn digest_for(tool: &str, input: &serde_json::Value) -> String {
+        action_digest(tool, &canonical_input_json(input), Some(7))
+    }
+
+    #[test]
+    fn rejects_empty_tool_and_malformed_digests() {
+        assert_eq!(
+            ActionApproval::new("", &"a".repeat(64), None).unwrap_err(),
+            super::ApprovalError::EmptyTool
+        );
+        for digest in ["", "abc", &"g".repeat(64), &"a".repeat(63)] {
+            assert_eq!(
+                ActionApproval::new("write", digest, None).unwrap_err(),
+                super::ApprovalError::InvalidDigest,
+                "{digest}"
+            );
+        }
+        ActionApproval::new("write", &"A".repeat(64), None)
+            .expect("uppercase hex is valid");
+    }
+
+    #[test]
+    fn digest_is_stable_and_binds_tool_input_and_revision() {
+        let input = json!({"path": "a.txt", "content": "x"});
+        let reordered = serde_json::from_str::<serde_json::Value>(
+            r#"{"content":"x","path":"a.txt"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            canonical_input_json(&input),
+            canonical_input_json(&reordered)
+        );
+        let digest = digest_for("write", &input);
+        assert_eq!(digest, digest_for("write", &reordered));
+        assert_ne!(
+            digest,
+            action_digest("write", &canonical_input_json(&input), Some(8))
+        );
+        assert_ne!(
+            digest,
+            action_digest("edit", &canonical_input_json(&input), Some(7))
+        );
+        assert_ne!(
+            digest,
+            digest_for("write", &json!({"path": "a.txt", "content": "y"}))
+        );
+    }
+
+    #[test]
+    fn take_consumes_exactly_once_and_checks_tool_and_revision() {
+        let input = json!({"path": "a.txt"});
+        let digest = digest_for("write", &input);
+        let mut ledger = ActionApprovals::new();
+        ledger
+            .approve(ActionApproval::new("write", &digest, Some(7)).unwrap());
+        assert_eq!(ledger.len(), 1);
+        assert!(ledger.take("edit", &digest, Some(7)).is_none());
+        assert!(ledger.take("write", &digest, Some(8)).is_none());
+        assert!(ledger.take("write", &digest, None).is_none());
+        assert_eq!(ledger.len(), 1);
+        let approval = ledger.take("write", &digest, Some(7)).expect("match");
+        assert_eq!(approval.tool_name(), "write");
+        assert!(ledger.is_empty());
+        assert!(ledger.take("write", &digest, Some(7)).is_none());
+    }
+
+    #[test]
+    fn unknown_digests_leave_the_ledger_untouched() {
+        let mut ledger = ActionApprovals::new();
+        let digest = digest_for("write", &json!({}));
+        ledger
+            .approve(ActionApproval::new("write", &digest, Some(7)).unwrap());
+        assert!(ledger.take("write", &"b".repeat(64), Some(7)).is_none());
+        assert_eq!(ledger.len(), 1);
+    }
+
+    #[test]
+    fn shared_handles_observe_consumption_across_clones() {
+        let input = json!({"path": "a.txt"});
+        let digest = digest_for("write", &input);
+        let shared = ActionApprovals::new().into_shared();
+        shared
+            .approve(ActionApproval::new("write", &digest, Some(7)).unwrap());
+        let clone = shared.clone();
+        assert!(clone.take("write", &digest, Some(7)).is_some());
+        assert!(shared.is_empty());
+        assert!(shared.take("write", &digest, Some(7)).is_none());
+    }
+}
