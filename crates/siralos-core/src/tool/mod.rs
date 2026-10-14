@@ -34,8 +34,9 @@ mod tests;
 pub use approval::{
     ActionApproval, ActionApprovals, ActionDigest, ApprovalError,
     ApprovalPreview, ApprovalRequest, ApprovalVerdict,
-    MAX_APPROVAL_PREVIEW_LINES, SharedApprovalResolver, SharedApprovals,
-    action_digest, canonical_input_json,
+    MAX_APPROVAL_PREVIEW_LINE_CHARS, MAX_APPROVAL_PREVIEW_LINES,
+    SharedApprovalResolver, SharedApprovals, action_digest,
+    canonical_input_json,
 };
 pub use budget::{DEFAULT_MAX_TOOL_ROUNDS, MAX_TOOL_ROUNDS, RoundBudget};
 pub use capability::{

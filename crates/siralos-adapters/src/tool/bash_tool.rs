@@ -21,7 +21,8 @@ use siralos_core::provider::{
 };
 use siralos_core::runtime::sandbox::{SandboxAvailability, SandboxBackend};
 use siralos_core::tool::{
-    ApprovalPreview, CapabilityId, Tool, action_digest, canonical_input_json,
+    ApprovalPreview, CapabilityId, MAX_APPROVAL_PREVIEW_LINE_CHARS, Tool,
+    action_digest, canonical_input_json,
 };
 
 use crate::process::sandbox_backend::{
@@ -52,9 +53,6 @@ const SHELL_PROGRAM: &str = "sh";
 /// Shell flag taking the single command word.
 #[cfg(not(windows))]
 const SHELL_FLAG: &str = "-c";
-/// Maximum command characters shown in one preview line.
-/// (R6 unifies this with the mutation preview bound.)
-const BASH_PREVIEW_LINE_CHARS: usize = 160;
 
 fn bash_capability() -> CapabilityId {
     CapabilityId::parse(BASH_CAPABILITY)
@@ -94,13 +92,18 @@ fn parse_command(input: &Value) -> Result<String, ToolExecutionResult> {
 /// Read-only: the probe spawns nothing.
 fn bash_preview(command: &str) -> ApprovalPreview {
     let hex = sha256_hex(command.as_bytes());
-    let shown =
-        command.chars().take(BASH_PREVIEW_LINE_CHARS).collect::<String>();
+    // Character bound is the shared core approval bound; the marker
+    // wording stays unit-accurate per tool (characters here, lines
+    // in the mutation previews).
+    let shown = command
+        .chars()
+        .take(MAX_APPROVAL_PREVIEW_LINE_CHARS)
+        .collect::<String>();
     let mut lines = vec![format!("command: {shown}"), format!("sha256 {hex}")];
-    if command.chars().count() > BASH_PREVIEW_LINE_CHARS {
+    if command.chars().count() > MAX_APPROVAL_PREVIEW_LINE_CHARS {
         lines.push(format!(
             "({} more characters)",
-            command.chars().count() - BASH_PREVIEW_LINE_CHARS
+            command.chars().count() - MAX_APPROVAL_PREVIEW_LINE_CHARS
         ));
     }
     let backend = HostSandboxBackend;

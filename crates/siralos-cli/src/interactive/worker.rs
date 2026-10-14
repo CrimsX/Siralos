@@ -29,6 +29,12 @@ const WORKER_ANSWER_DEADLINE: std::time::Duration =
 /// Consecutive empty zero-timeout polls before the relay stops hot-spinning.
 const ZERO_TIMEOUT_IDLE_LIMIT: usize = 64;
 
+/// Shared worker-vanished notice: the exact user-facing sentence in
+/// one definition. Sink-write sites append the newline; error
+/// values carry the bare sentence. (The TUI-drain variant names its
+/// own waiter and stays distinct.)
+const WORKER_STOPPED_MESSAGE: &str = "worker stopped before it finished";
+
 /// When a worker relay stops (C2 step 3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Until {
@@ -181,9 +187,9 @@ pub(super) fn pump_worker(
                 // a vanished worker there would print one line twenty times a
                 // second.
                 if until != Until::Drain {
-                    let message = sanitize_for_display(
-                        "worker stopped before it finished\n",
-                    );
+                    let message = sanitize_for_display(&format!(
+                        "{WORKER_STOPPED_MESSAGE}\n"
+                    ));
                     sink.write_all(message.as_bytes())
                         .map_err(InteractiveError::Io)?;
                 }
@@ -225,9 +231,9 @@ pub(super) fn pump_worker(
                 effects.stopped_event = true;
                 stop = true;
                 if until != Until::Drain {
-                    let message = sanitize_for_display(
-                        "worker stopped before it finished\n",
-                    );
+                    let message = sanitize_for_display(&format!(
+                        "{WORKER_STOPPED_MESSAGE}\n"
+                    ));
                     sink.write_all(message.as_bytes())
                         .map_err(InteractiveError::Io)?;
                 }
@@ -409,7 +415,7 @@ pub(super) fn ask_worker_effects(
         pump_worker(worker, sink, state, pane, progress, reasoning, until)?;
     if effects.stopped {
         return Err(InteractiveError::Worker(
-            "worker stopped before it finished".to_owned(),
+            WORKER_STOPPED_MESSAGE.to_owned(),
         ));
     }
     Ok(effects)
@@ -441,7 +447,7 @@ pub(super) fn relay_suspended_turn(
     )?;
     if effects.stopped {
         return Err(InteractiveError::Worker(
-            "worker stopped before it finished".to_owned(),
+            WORKER_STOPPED_MESSAGE.to_owned(),
         ));
     }
     Ok(effects)

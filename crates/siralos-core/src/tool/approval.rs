@@ -313,6 +313,12 @@ pub struct ApprovalPreview {
 /// framing.
 pub const MAX_APPROVAL_PREVIEW_LINES: usize = 24;
 
+/// Maximum characters in one approval preview line, before the
+/// tool's truncation marker. One shared bound so the mutation and
+/// execution previews cannot drift apart; each tool keeps its own
+/// unit-accurate marker wording (lines vs characters).
+pub const MAX_APPROVAL_PREVIEW_LINE_CHARS: usize = 160;
+
 /// One synchronous approval request for a proposed action.
 ///
 /// The executor computes the action digest itself and never hands

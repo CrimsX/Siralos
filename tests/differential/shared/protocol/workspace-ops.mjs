@@ -376,19 +376,19 @@ function validateGitResult(record, label) {
   }
 }
 
+// Statuses a default-tools runner can emit through scenario inputs
+// today: approvals are driven directly, the token is never
+// cancelled, and no backend executes. `cancelled`, `timed_out`,
+// `output_limit`, `sandbox_denied`, `workspace_violation`, and
+// `unavailable` are admitted only when a runner can emit them;
+// until then they fail validation instead of passing silently.
 const DEFAULT_TOOLS_STATUSES = new Set([
   "success",
   "invalid_input",
   "denied",
   "conflict",
   "failed",
-  "cancelled",
-  "timed_out",
-  "output_limit",
-  "sandbox_denied",
   "sandbox_unavailable",
-  "workspace_violation",
-  "unavailable",
 ]);
 
 function validateDefaultToolsResult(record, label) {

@@ -31,7 +31,9 @@ use serde_json::{Value, json};
 use siralos_core::provider::{
     CancellationSignal, ToolDefinition, ToolExecutionResult,
 };
-use siralos_core::tool::{ApprovalPreview, CapabilityId, Tool};
+use siralos_core::tool::{
+    ApprovalPreview, CapabilityId, MAX_APPROVAL_PREVIEW_LINE_CHARS, Tool,
+};
 use siralos_core::workspace::bounds::WORKSPACE_LIMITS;
 
 use crate::atomic::{AtomicWriteFailure, stage_atomic};
@@ -306,14 +308,12 @@ fn preview_counts(removed_lines: u64, added_lines: u64) -> CheckpointPreview {
 /// `MAX_APPROVAL_PREVIEW_LINES` (24, core) and the modal fits 30
 /// lines including its framing, so the preview leaves room for both.
 const PREVIEW_MAX_LINES: usize = 20;
-/// Maximum characters per preview line (readable width; the modal
-/// truncates again at its own bound).
-const PREVIEW_MAX_LINE_CHARS: usize = 160;
 
 /// Truncate one preview line to the presentation bound.
 fn preview_line(text: &str) -> String {
-    if text.chars().count() > PREVIEW_MAX_LINE_CHARS {
-        let kept: String = text.chars().take(PREVIEW_MAX_LINE_CHARS).collect();
+    if text.chars().count() > MAX_APPROVAL_PREVIEW_LINE_CHARS {
+        let kept: String =
+            text.chars().take(MAX_APPROVAL_PREVIEW_LINE_CHARS).collect();
         format!("{kept}…")
     } else {
         text.to_owned()
