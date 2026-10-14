@@ -14,10 +14,14 @@
 //!
 //! **What it does not guarantee.** The created file handle is retained and its
 //! identity evidence is checked against the staged pathname immediately before
-//! the swap; an observed mismatch is refused and the substituted object is left
-//! alone by cleanup. `std::fs::rename` still takes a pathname, however, so a
-//! same-user process can substitute after that check and before the rename. The
-//! cleanup check has the same residual pathname race. On non-Unix targets the
+//! the swap, and the parent directory's retained identity (canonical path plus
+//! device/inode where the platform has one) is checked in the same breath; an
+//! observed mismatch on either is refused with no retry, and the substituted
+//! object is left alone by cleanup. `std::fs::rename` still takes a pathname,
+//! however, so a same-user process can substitute between that final check and
+//! the rename itself, and on targets without a stable file index a same-path
+//! directory replacement is not detectable. Those residuals are documented,
+//! not closed. On non-Unix targets the
 //! std metadata snapshot is length plus modification time rather than a native
 //! file index, so it is useful defense in depth but not a cryptographic identity
 //! proof. The target preconditions are likewise pathname-based. This is defense
@@ -72,6 +76,14 @@ pub enum AtomicWriteFailure {
         /// The target whose identity no longer matched.
         path: PathBuf,
     },
+    /// The parent directory no longer matches the identity captured
+    /// when the replacement was staged (renamed away, replaced, or
+    /// swapped for a link). The rename is refused before it runs;
+    /// nothing is written and nothing is retried.
+    ParentChanged {
+        /// The target whose parent directory changed.
+        path: PathBuf,
+    },
     /// The target's metadata could not be read.
     TargetUnreadable {
         /// The unreadable target.
@@ -109,6 +121,7 @@ impl std::fmt::Debug for AtomicWriteFailure {
                 formatter.write_str("TargetIsNotARegularFile")
             }
             Self::TargetChanged { .. } => formatter.write_str("TargetChanged"),
+            Self::ParentChanged { .. } => formatter.write_str("ParentChanged"),
             Self::TargetUnreadable { source, .. } => formatter
                 .debug_struct("TargetUnreadable")
                 .field("source_kind", &source.kind())
@@ -146,6 +159,12 @@ impl std::fmt::Display for AtomicWriteFailure {
                     "atomic target changed while it was being replaced"
                 )
             }
+            Self::ParentChanged { .. } => {
+                write!(
+                    formatter,
+                    "atomic parent directory changed while it was being replaced"
+                )
+            }
             Self::TargetUnreadable { .. } => {
                 write!(formatter, "atomic target is unreadable")
             }
@@ -164,6 +183,7 @@ impl std::error::Error for AtomicWriteFailure {
             | Self::ReplaceFailed { source, .. } => Some(source),
             Self::StagedIdentityUnverifiable { .. } => None,
             Self::TargetChanged { .. } => None,
+            Self::ParentChanged { .. } => None,
             Self::TargetIsNotARegularFile { .. } => None,
         }
     }
@@ -186,6 +206,72 @@ struct StagedFileIdentity {
     modified: std::time::SystemTime,
 }
 
+/// Identity evidence for the directory a staged replacement is
+/// committed into, captured when the replacement is staged and
+/// re-verified immediately before the final rename.
+///
+/// A pathname recheck (`canonicalize` + containment) cannot tell a
+/// renamed-away parent restored under the same name from the
+/// original, nor a same-name replacement, from the original. The
+/// canonical path plus the object identity closes the rename-away
+/// class on every platform (the path itself changes) and the
+/// same-path replacement class on Unix (device/inode change). What
+/// remains open: same-path replacement on targets without a stable
+/// file index (canonical path identical, length/mtime fallback is
+/// not identity), and a substitution landing between this check and
+/// the rename syscall (no `renameat` in std). Both are documented,
+/// not closed, by this check.
+#[derive(Clone, Eq, PartialEq)]
+struct ParentIdentity {
+    canonical: PathBuf,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+}
+
+/// Capture the identity of the directory `temporary` was staged
+/// into. The directory must be a real (non-link) directory; anything
+/// else fails the stage rather than staging unbound.
+fn capture_parent_identity(
+    directory: &Path,
+) -> std::io::Result<ParentIdentity> {
+    let metadata = symlink_metadata(directory)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(std::io::Error::other(
+            "staged parent is not a real directory",
+        ));
+    }
+    let canonical = std::fs::canonicalize(directory)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Ok(ParentIdentity {
+            canonical,
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        Ok(ParentIdentity { canonical })
+    }
+}
+
+/// Re-verify that `directory` is still the captured object.
+/// Any I/O failure, link, non-directory, path change, or (Unix)
+/// device/inode change refuses: the caller must not rename.
+fn verify_parent_identity(
+    directory: &Path,
+    expected: &ParentIdentity,
+) -> bool {
+    match capture_parent_identity(directory) {
+        Ok(identity) => identity == *expected,
+        Err(_) => false,
+    }
+}
+
 /// One staged replacement: the bytes are on disk, the target is untouched.
 ///
 /// Dropping the value attempts conditional cleanup only while an observed check
@@ -197,6 +283,7 @@ pub struct StagedWrite {
     staged_file: Option<File>,
     staged_identity: StagedFileIdentity,
     staged_sha256: String,
+    parent_identity: ParentIdentity,
     committed: bool,
 }
 
@@ -225,7 +312,7 @@ impl StagedWrite {
     /// The target must be absent, or a regular file that is not a symlink; a
     /// symlink or special file is refused and the staged file is removed. The staged
     /// pathname is also checked against the retained file identity evidence before
-    /// rename.
+    /// rename, as is the parent directory against its retained identity.
     /// Because the standard-library rename is still pathname-based, this check is
     /// not a complete defense against a same-user process that races the final
     /// rename. On non-Unix targets the retained check uses the portable
@@ -260,6 +347,23 @@ impl StagedWrite {
         expected_sha256: Option<&str>,
         require_absent: bool,
     ) -> Result<(), AtomicWriteFailure> {
+        // Final boundary first: the parent directory must still be the
+        // object observed at stage time. Namespace binding precedes
+        // every object check below — a moved parent makes the target
+        // and staged pathnames meaningless, so they are not consulted
+        // at all. Any mismatch refuses here, before the rename runs,
+        // with no retry into the substituted parent. What remains open
+        // on purpose: a swap landing between this check and the rename
+        // syscall (no `renameat` in std), and same-path replacement on
+        // targets without a stable file index.
+        let commit_parent = self.temporary.parent().ok_or_else(|| {
+            AtomicWriteFailure::ParentChanged { path: self.target.clone() }
+        })?;
+        if !verify_parent_identity(commit_parent, &self.parent_identity) {
+            return Err(AtomicWriteFailure::ParentChanged {
+                path: self.target.clone(),
+            });
+        }
         match symlink_metadata(&self.target) {
             Ok(metadata) => {
                 if metadata.file_type().is_symlink() || !metadata.is_file() {
@@ -486,6 +590,21 @@ pub fn stage_atomic(
                         });
                     }
                 };
+                let parent_identity = match capture_parent_identity(directory)
+                {
+                    Ok(identity) => identity,
+                    Err(source) => {
+                        drop(file);
+                        remove_staged_if_matching(
+                            &temporary,
+                            &staged_identity,
+                        );
+                        return Err(AtomicWriteFailure::Staged {
+                            path: temporary,
+                            source,
+                        });
+                    }
+                };
                 return Ok(StagedWrite {
                     temporary,
                     target,
@@ -494,6 +613,7 @@ pub fn stage_atomic(
                     staged_sha256: siralos_core::identity::sha256_hex(
                         contents,
                     ),
+                    parent_identity,
                     committed: false,
                 });
             }
@@ -903,5 +1023,158 @@ mod tests {
         let error = result
             .expect_err("a read-only directory must refuse a staged file");
         assert!(matches!(error, AtomicWriteFailure::Staged { .. }));
+    }
+
+    /// Renaming a directory that holds an open staged handle is
+    /// refused by Windows (Access denied, observed 0/1000 over ~2s),
+    /// so a mid-commit substitution cannot be staged deterministically
+    /// there; the comparator test below covers the mechanism on every
+    /// platform, and the race test covers engagement.
+    #[cfg(unix)]
+    #[test]
+    fn a_renamed_away_parent_refuses_commit() {
+        // Deterministic substitution: no threads. The parent moves
+        // between stage and commit; the rename boundary must refuse
+        // with the parent variant (not a generic replacement I/O
+        // error) and create nothing anywhere.
+        let scratch = Scratch::new("parent-moved");
+        let sub = scratch.path().join("sub");
+        fs::create_dir(&sub).expect("seed parent");
+        let staged = stage_atomic(&sub, "v.txt", ".tmp", b"payload", None)
+            .expect("stage");
+        // Renames can fail transiently under antivirus/file locks;
+        // retry boundedly — the security assertion below is exact
+        // once the swap has happened.
+        let parked = scratch.path().join("parked");
+        let mut swapped = false;
+        for _ in 0..100 {
+            if fs::rename(&sub, &parked).is_ok() {
+                swapped = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(swapped, "parent swap must happen for the test");
+        let error = staged.commit().expect_err("moved parent must refuse");
+        assert!(
+            matches!(error, AtomicWriteFailure::ParentChanged { .. }),
+            "typed refusal, got: {error:?}"
+        );
+        assert!(!scratch.path().join("sub/v.txt").exists());
+        assert!(!scratch.path().join("parked/v.txt").exists());
+    }
+
+    #[test]
+    fn parent_identity_detects_a_moved_parent_on_every_platform() {
+        // No open handles: the comparator itself, which is what the
+        // commit boundary consults. Renaming needs no privilege here,
+        // so this runs everywhere including Windows.
+        use super::{capture_parent_identity, verify_parent_identity};
+        let scratch = Scratch::new("parent-identity");
+        let sub = scratch.path().join("sub");
+        fs::create_dir(&sub).expect("seed parent");
+        let captured = capture_parent_identity(&sub).expect("capture parent");
+        assert!(verify_parent_identity(&sub, &captured));
+        let parked = scratch.path().join("parked");
+        fs::rename(&sub, &parked).expect("swap parent away");
+        assert!(
+            !verify_parent_identity(&sub, &captured),
+            "vanished parent must not verify"
+        );
+        assert!(
+            !verify_parent_identity(&parked, &captured),
+            "same object under a new path must not verify"
+        );
+        let fresh = capture_parent_identity(&parked).expect("capture moved");
+        assert!(verify_parent_identity(&parked, &fresh));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_swapped_parent_refuses_commit() {
+        // Same-name link substitution: the staged pathname still
+        // resolves (through the link, to the parked original), so
+        // only the retained parent identity can refuse. Pre-fix this
+        // commits successfully at the wrong path.
+        let scratch = Scratch::new("parent-link");
+        let sub = scratch.path().join("sub");
+        fs::create_dir(&sub).expect("seed parent");
+        let staged = stage_atomic(&sub, "v.txt", ".tmp", b"payload", None)
+            .expect("stage");
+        let parked = scratch.path().join("parked");
+        fs::rename(&sub, &parked).expect("swap parent away");
+        std::os::unix::fs::symlink(&parked, &sub).expect("plant link");
+        let error = staged.commit().expect_err("linked parent must refuse");
+        assert!(
+            matches!(error, AtomicWriteFailure::ParentChanged { .. }),
+            "typed refusal, got: {error:?}"
+        );
+        assert!(
+            !parked.join("v.txt").exists(),
+            "no misdirected write through the link"
+        );
+        assert!(!sub.join("v.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_recreated_parent_refuses_commit() {
+        // Same-path replacement: remove and recreate the directory so
+        // the canonical path is identical but the object (dev/ino) is
+        // not. Only the retained identity refuses.
+        let scratch = Scratch::new("parent-recreated");
+        let sub = scratch.path().join("sub");
+        fs::create_dir(&sub).expect("seed parent");
+        let staged = stage_atomic(&sub, "v.txt", ".tmp", b"payload", None)
+            .expect("stage");
+        // Move the staged file aside with its directory, then plant a
+        // fresh directory at the same path.
+        let parked = scratch.path().join("parked");
+        fs::rename(&sub, &parked).expect("swap parent away");
+        fs::create_dir(&sub).expect("plant replacement parent");
+        let error = staged.commit().expect_err("replaced parent must refuse");
+        assert!(
+            matches!(error, AtomicWriteFailure::ParentChanged { .. }),
+            "typed refusal, got: {error:?}"
+        );
+        assert!(!sub.join("v.txt").exists());
+        assert!(!parked.join("v.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_substituted_staged_path_refuses_commit() {
+        // Staged-path substitution with a special file: the staged
+        // temporary is unlinked and a FIFO is planted at its exact
+        // path. The commit must refuse on the staged-identity check
+        // (never a regular file) before any content read — opening a
+        // FIFO for reading would block — and commit nothing anywhere.
+        // FIFOs have no safe std constructor, so the POSIX `mkfifo`
+        // helper stages it; the refusal under test is ours, not its.
+        let scratch = Scratch::new("staged-fifo");
+        let sub = scratch.path().join("sub");
+        fs::create_dir(&sub).expect("seed parent");
+        let staged = stage_atomic(&sub, "v.txt", ".tmp", b"payload", None)
+            .expect("stage");
+        let temporary = staged.path().to_path_buf();
+        fs::remove_file(&temporary).expect("unlink staged temporary");
+        let planted = std::process::Command::new("mkfifo")
+            .arg(&temporary)
+            .status()
+            .expect("mkfifo helper runs on unix test hosts");
+        assert!(planted.success(), "mkfifo must plant the fifo");
+        let error = staged.commit().expect_err("fifo staged path must refuse");
+        assert!(
+            matches!(
+                error,
+                AtomicWriteFailure::StagedIdentityUnverifiable { .. }
+            ),
+            "typed refusal, got: {error:?}"
+        );
+        assert!(
+            !sub.join("v.txt").exists(),
+            "no commit through the substituted staged path"
+        );
+        fs::remove_file(&temporary).expect("remove planted fifo");
     }
 }

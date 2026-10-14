@@ -7,20 +7,23 @@
 //! deletes: undoing a creation stays unavailable (ADR 0038 D5).
 //!
 //! Every mutation runs the same host gate order: input validation,
-//! cancellation, containment-safe resolution, excluded-directory and
-//! protected-path refusal, contract bounds, checkpoint-before-mutation,
-//! parent revalidation, atomic compare-and-swap commit, post-commit
-//! verification (exact bytes, parent still contained, target not a
-//! link), and checkpoint state marking. A target or parent swapped
+//! cancellation, containment-safe resolution, requested-name
+//! stability, excluded-directory and protected-path refusal,
+//! contract bounds, checkpoint-before-mutation, parent revalidation,
+//! atomic compare-and-swap commit, post-commit verification (exact
+//! bytes, parent still contained, target not a link), and
+//! checkpoint state marking. A target or parent swapped
 //! outside the final rename and verify-then-report gaps is detected
 //! and refused (conflict, failure, or denial) with no success claim;
 //! the two residual gaps are pathname-inherent on this platform (no
 //! directory-relative primitives), so a swap landing inside them can
 //! only be bounded after the fact: the checkpoint stays prepared and
 //! reconciliation classifies the true state instead of recording a
-//! guess. Per-action approval is enforced by the application executor
-//! ([`Tool::requires_approval`]), never by these adapters: adapters
-//! never decide Host authorization.
+//! guess. The rename-inside-resolution gap is closed, not residual:
+//! the resolved path must still name the request, so an approval can
+//! never be evaded by a same-object rename. Per-action approval is
+//! enforced by the application executor ([`Tool::requires_approval`]),
+//! never by these adapters: adapters never decide Host authorization.
 
 use std::path::{Path, PathBuf};
 
@@ -28,7 +31,7 @@ use serde_json::{Value, json};
 use siralos_core::provider::{
     CancellationSignal, ToolDefinition, ToolExecutionResult,
 };
-use siralos_core::tool::{CapabilityId, Tool};
+use siralos_core::tool::{ApprovalPreview, CapabilityId, Tool};
 use siralos_core::workspace::bounds::WORKSPACE_LIMITS;
 
 use crate::atomic::{AtomicWriteFailure, stage_atomic};
@@ -40,6 +43,7 @@ use crate::workspace::checkpoint_lifecycle::{
 };
 use crate::workspace::fs::{
     BoundedFileRead, DEFAULT_EXCLUDED_DIRECTORIES, MUTATION_TEMP_PREFIX,
+    fold_path_component, is_case_insensitive_platform,
     is_model_protected_workspace_path, read_complete_file_bounded,
 };
 use crate::workspace::list::excluded_component;
@@ -116,13 +120,17 @@ fn checkpoint_failed(error: CheckpointStoreError) -> ToolExecutionResult {
 }
 
 /// Map an atomic commit failure: a lost compare-and-swap race is a
-/// conflict (newer work won); a symlink or special file at commit
-/// time is denied (never followed); every other failure is a failure.
+/// conflict (newer work won); a parent that moved under the write is
+/// a conflict (never retried into the substituted parent); a symlink
+/// or special file at commit time is denied (never followed); every
+/// other failure is a failure.
 fn commit_failed(error: AtomicWriteFailure) -> ToolExecutionResult {
     if matches!(error, AtomicWriteFailure::TargetChanged { .. }) {
         ToolExecutionResult::Conflict {
             message: "The file changed while it was being written.".to_owned(),
         }
+    } else if matches!(error, AtomicWriteFailure::ParentChanged { .. }) {
+        parent_moved()
     } else if matches!(
         error,
         AtomicWriteFailure::TargetIsNotARegularFile { .. }
@@ -150,20 +158,24 @@ fn resolve_existing(
 /// Re-check that a resolved parent directory still resolves inside
 /// the canonical workspace root.
 ///
-/// Resolution-time containment does not bind the later pathname
-/// operations against a same-user substitution, so every mutation
-/// revalidates its parent immediately before staging, again before
-/// committing, and once more during post-commit verification. Each
-/// recheck narrows the substitution window; the final rename and
-/// the verify-then-report gap remain pathname-based (see the module
-/// documentation), so a swap landing inside them can only be
-/// detected after the fact, never prevented on this platform.
-fn revalidate_parent(root: &Path, parent: &Path) -> Result<(), ()> {
-    let canonical = std::fs::canonicalize(parent).map_err(|_| ())?;
+/// A cheap containment pre-check before staging and committing: it
+/// refuses vanished or escaped parents early, before any temporary
+/// is created outside the workspace. It cannot see a same-name
+/// replacement, and it is not the authoritative gate — the commit
+/// itself re-verifies the retained parent identity immediately
+/// before the rename. Failures report the typed commit error (mapped
+/// to a refusal by the caller), never a stringly refusal.
+fn revalidate_parent(
+    root: &Path,
+    parent: &Path,
+) -> Result<(), AtomicWriteFailure> {
+    let canonical = std::fs::canonicalize(parent).map_err(|_| {
+        AtomicWriteFailure::ParentChanged { path: parent.to_path_buf() }
+    })?;
     if canonical == root || canonical.starts_with(root) {
         Ok(())
     } else {
-        Err(())
+        Err(AtomicWriteFailure::ParentChanged { path: parent.to_path_buf() })
     }
 }
 
@@ -172,6 +184,51 @@ fn parent_moved() -> ToolExecutionResult {
         message: "The target directory changed while it was being written."
             .to_owned(),
     }
+}
+
+/// Require the resolution to still name the requested path.
+///
+/// Windows canonicalization opens the target and queries its live
+/// name, so a parent renamed inside `canonicalize` resolves the
+/// same directory object under its NEW name (`hot` becomes
+/// `hot-parked`). Containment still passes (the object never left
+/// the root), but the approval bound the exact requested bytes to
+/// the REQUESTED path — staging or committing at the new name
+/// would evade the approval while honestly reporting a path the
+/// caller never asked for. Refuse unless the resolved absolute
+/// path still names the request (lexically normalized, case-folded
+/// on folding platforms). This is the name half of the
+/// substitution gate; the commit-time parent-identity check is the
+/// object half (same name, replaced object).
+fn require_requested_parent_name(
+    root: &Path,
+    requested: &str,
+    resolved: &Path,
+) -> Result<(), AtomicWriteFailure> {
+    let failed =
+        || AtomicWriteFailure::ParentChanged { path: resolved.to_path_buf() };
+    let fold = is_case_insensitive_platform();
+    let relative = resolved.strip_prefix(root).map_err(|_| failed())?;
+    let mut live = Vec::new();
+    for component in relative.components() {
+        match component {
+            std::path::Component::Normal(name) => {
+                live.push(fold_path_component(&name.to_string_lossy(), fold));
+            }
+            _ => return Err(failed()),
+        }
+    }
+    let mut asked = Vec::new();
+    for component in requested.split(['/', '\\']) {
+        match component {
+            "" | "." => {}
+            ".." => {
+                asked.pop();
+            }
+            name => asked.push(fold_path_component(name, fold)),
+        }
+    }
+    if asked == live { Ok(()) } else { Err(failed()) }
 }
 
 /// Read one complete text file for editing: regular file, bounded,
@@ -225,6 +282,90 @@ fn read_edit_target(
 
 fn preview_counts(removed_lines: u64, added_lines: u64) -> CheckpointPreview {
     CheckpointPreview { added_lines, removed_lines }
+}
+
+/// Maximum content lines carried by one approval preview. This is
+/// the content layer only: the render layer caps detail lines at
+/// `MAX_APPROVAL_PREVIEW_LINES` (24, core) and the modal fits 30
+/// lines including its framing, so the preview leaves room for both.
+const PREVIEW_MAX_LINES: usize = 20;
+/// Maximum characters per preview line (readable width; the modal
+/// truncates again at its own bound).
+const PREVIEW_MAX_LINE_CHARS: usize = 160;
+
+/// Truncate one preview line to the presentation bound.
+fn preview_line(text: &str) -> String {
+    if text.chars().count() > PREVIEW_MAX_LINE_CHARS {
+        let kept: String = text.chars().take(PREVIEW_MAX_LINE_CHARS).collect();
+        format!("{kept}…")
+    } else {
+        text.to_owned()
+    }
+}
+
+/// Bounded content lines with an exact omitted-line count.
+fn preview_content_lines(text: &str) -> Vec<String> {
+    let total = count_lines(text);
+    let mut lines: Vec<String> =
+        text.lines().take(PREVIEW_MAX_LINES).map(preview_line).collect();
+    if total > lines.len() as u64 {
+        lines.push(format!("… ({} more lines)", total - lines.len() as u64));
+    }
+    lines
+}
+
+/// Reviewable preview for a `write` proposal: exact target, byte
+/// identity, and bounded content. Read-only; a target that cannot
+/// be resolved is still previewed (execution will refuse it).
+fn write_preview(path: &str, content: &str) -> ApprovalPreview {
+    let bytes = content.as_bytes();
+    let total = count_lines(content);
+    let mut lines = vec![
+        format!("path: {path}"),
+        format!(
+            "create new file, {} bytes, sha256 {}",
+            bytes.len(),
+            sha256_hex(bytes)
+        ),
+        format!("content preview ({total} lines):"),
+    ];
+    lines.extend(preview_content_lines(content));
+    ApprovalPreview { title: format!("write {path}"), lines }
+}
+
+/// Reviewable preview for an `edit` proposal: exact target, current
+/// match count, and both bounded strings. The match count is
+/// advisory (the tool re-verifies exact-once at execution); an
+/// unreadable target is reported, not hidden.
+fn edit_preview(
+    root: &Path,
+    path: &str,
+    old_string: &str,
+    new_string: &str,
+) -> ApprovalPreview {
+    let mut lines = vec![format!("path: {path}")];
+    match resolve_workspace_path(root, path)
+        .ok()
+        .and_then(|resolved| read_edit_target(&resolved).ok())
+    {
+        Some((_, current)) => {
+            let matches = current.match_indices(old_string).count();
+            lines.push(format!(
+                "replace exactly once ({matches} match(es) in current content)"
+            ));
+        }
+        None => {
+            lines.push(
+                "current content unavailable (execution will refuse)"
+                    .to_owned(),
+            );
+        }
+    }
+    lines.push(format!("old ({} lines):", count_lines(old_string)));
+    lines.extend(preview_content_lines(old_string));
+    lines.push(format!("new ({} lines):", count_lines(new_string)));
+    lines.extend(preview_content_lines(new_string));
+    ApprovalPreview { title: format!("edit {path}"), lines }
 }
 
 fn count_lines(text: &str) -> u64 {
@@ -310,6 +451,15 @@ impl Tool for WriteTool {
         true
     }
 
+    /// Reviewable preview of a `write` proposal. Malformed input
+    /// yields no preview (the gate denies unreviewable calls; the
+    /// precise shape error stays with direct execution).
+    fn approval_preview(&self, input: &Value) -> Option<ApprovalPreview> {
+        let path = parse_string_field(input, "path").ok()?;
+        let content = parse_string_field(input, "content").ok()?;
+        Some(write_preview(&path, &content))
+    }
+
     fn execute(
         &self,
         input: &Value,
@@ -375,6 +525,20 @@ fn execute_write(
             };
         }
     };
+    // The parent may have been renamed inside resolution itself
+    // (same object, new name): refuse before any checkpoint exists
+    // so the approval stays bound to the requested path.
+    let requested_parent = match path.rfind('/') {
+        Some(index) => &path[..index],
+        None => ".",
+    };
+    if let Err(error) = require_requested_parent_name(
+        &backend.root,
+        requested_parent,
+        &target.parent,
+    ) {
+        return commit_failed(error);
+    };
     let relative =
         create_relative(&backend.root, &target.parent, &target.leaf);
     let Some(relative) = relative else {
@@ -429,11 +593,11 @@ fn execute_write(
     // The parent resolved inside the root above; recheck it
     // immediately before staging so a swapped parent refuses here
     // instead of staging outside the workspace.
-    if revalidate_parent(&backend.root, &target.parent).is_err() {
+    if let Err(error) = revalidate_parent(&backend.root, &target.parent) {
         let _ = backend
             .store
             .mark_state(&checkpoint.id, CheckpointTerminalState::Abandoned);
-        return parent_moved();
+        return commit_failed(error);
     }
     let staged = match stage_atomic(
         &target.parent,
@@ -457,11 +621,11 @@ fn execute_write(
     // Recheck again before the irreversible rename: staging took
     // observable time, and a parent swapped during it must refuse
     // rather than commit outside the workspace.
-    if revalidate_parent(&backend.root, &target.parent).is_err() {
+    if let Err(error) = revalidate_parent(&backend.root, &target.parent) {
         let _ = backend
             .store
             .mark_state(&checkpoint.id, CheckpointTerminalState::Abandoned);
-        return parent_moved();
+        return commit_failed(error);
     }
     if let Err(error) = staged.commit_if_absent() {
         // Best-effort (see above): the failed commit changed no
@@ -535,8 +699,8 @@ fn verify_committed(
         });
     }
     if let Some(parent) = absolute.parent() {
-        if revalidate_parent(root, parent).is_err() {
-            return Err(parent_moved());
+        if let Err(error) = revalidate_parent(root, parent) {
+            return Err(commit_failed(error));
         }
     }
     match read_complete_file_bounded(absolute, expected.len()) {
@@ -628,6 +792,15 @@ impl Tool for EditTool {
         true
     }
 
+    /// Reviewable preview of an `edit` proposal (match count is
+    /// advisory; malformed input yields no preview — see `write`).
+    fn approval_preview(&self, input: &Value) -> Option<ApprovalPreview> {
+        let path = parse_string_field(input, "path").ok()?;
+        let old_string = parse_string_field(input, "oldString").ok()?;
+        let new_string = parse_string_field(input, "newString").ok()?;
+        Some(edit_preview(&self.backend.root, &path, &old_string, &new_string))
+    }
+
     fn execute(
         &self,
         input: &Value,
@@ -681,6 +854,17 @@ fn execute_edit(
     let resolved = match resolve_existing(backend, &path) {
         Ok(resolved) => resolved,
         Err(result) => return result,
+    };
+    // Same rename-inside-resolution gate as creation: the resolved
+    // file must still carry the requested name, or the approval is
+    // evaded (the read below would otherwise inspect, and the
+    // commit would rewrite, a path the caller never named).
+    if let Err(error) = require_requested_parent_name(
+        &backend.root,
+        &path,
+        &resolved.absolute_path,
+    ) {
+        return commit_failed(error);
     };
     if let Some(denied) = backend.guarded(&resolved.workspace_relative_path) {
         return denied;
@@ -762,11 +946,11 @@ fn execute_edit(
     // The file content was read through this parent; recheck it
     // before staging so a swapped parent refuses here instead of
     // staging outside the workspace.
-    if revalidate_parent(&backend.root, &parent).is_err() {
+    if let Err(error) = revalidate_parent(&backend.root, &parent) {
         let _ = backend
             .store
             .mark_state(&checkpoint.id, CheckpointTerminalState::Abandoned);
-        return parent_moved();
+        return commit_failed(error);
     }
     let staged = match stage_atomic(
         &parent,
@@ -790,11 +974,11 @@ fn execute_edit(
     // Recheck again before the irreversible rename: staging took
     // observable time, and a parent swapped during it must refuse
     // rather than commit outside the workspace.
-    if revalidate_parent(&backend.root, &parent).is_err() {
+    if let Err(error) = revalidate_parent(&backend.root, &parent) {
         let _ = backend
             .store
             .mark_state(&checkpoint.id, CheckpointTerminalState::Abandoned);
-        return parent_moved();
+        return commit_failed(error);
     }
     if let Err(error) = staged.commit_if_digest(&current_sha256) {
         // Best-effort (see above): the failed commit changed no
@@ -908,6 +1092,63 @@ mod tests {
                 .to_string(),
             "Checkpoint store is bound to a different workspace."
         );
+    }
+
+    #[test]
+    fn write_preview_carries_identity_and_bounded_content() {
+        use super::PREVIEW_MAX_LINES;
+        use siralos_core::tool::Tool as _;
+        let fixture = Fixture::new();
+        let tool = fixture.write_tool();
+        let content = (0..PREVIEW_MAX_LINES + 5)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let preview = tool
+            .approval_preview(&json!({"path": "n.txt", "content": content}))
+            .expect("well-formed input previews");
+        assert_eq!(preview.title, "write n.txt");
+        assert!(
+            preview.lines.iter().any(|line| line.starts_with("path: n.txt"))
+        );
+        let digest = siralos_core::identity::sha256_hex(content.as_bytes());
+        assert!(preview.lines.iter().any(|line| line.contains(&digest)));
+        assert!(preview.lines.iter().any(|line| line.contains("more lines")));
+        assert!(preview.lines.len() <= PREVIEW_MAX_LINES + 4);
+        assert!(
+            tool.approval_preview(&json!({"path": "n.txt"})).is_none(),
+            "malformed input has no preview"
+        );
+    }
+
+    #[test]
+    fn edit_preview_reports_match_count_and_bounded_strings() {
+        use siralos_core::tool::Tool as _;
+        let fixture = Fixture::new();
+        fs::write(fixture.root.join("m.txt"), b"one two one").unwrap();
+        let tool = fixture.edit_tool();
+        let preview = tool
+            .approval_preview(&json!({
+                "path": "m.txt",
+                "oldString": "one",
+                "newString": "1\n2\n3"
+            }))
+            .expect("well-formed input previews");
+        assert_eq!(preview.title, "edit m.txt");
+        assert!(
+            preview.lines.iter().any(|line| line.contains("2 match(es)")),
+            "{preview:?}"
+        );
+        assert!(preview.lines.iter().any(|line| line == "old (1 lines):"));
+        assert!(preview.lines.iter().any(|line| line == "new (3 lines):"));
+        let missing = tool
+            .approval_preview(&json!({
+                "path": "ghost.txt",
+                "oldString": "a",
+                "newString": "b"
+            }))
+            .expect("unreadable target still previews");
+        assert!(missing.lines.iter().any(|line| line.contains("unavailable")));
     }
 
     #[test]
@@ -1861,6 +2102,106 @@ mod tests {
         let _ = fs::remove_dir_all(&outside);
     }
 
+    #[test]
+    fn requested_name_gate_accepts_a_stable_resolution() {
+        use super::require_requested_parent_name;
+        let fixture = Fixture::new();
+        let root = std::fs::canonicalize(&fixture.root).unwrap();
+        let hot = root.join("hot");
+        fs::create_dir_all(&hot).unwrap();
+        assert!(require_requested_parent_name(&root, "hot", &hot).is_ok());
+        assert!(require_requested_parent_name(&root, ".", &root).is_ok());
+        let nested = root.join("a").join("b");
+        fs::create_dir_all(&nested).unwrap();
+        assert!(require_requested_parent_name(&root, "a/b", &nested).is_ok());
+        // Lexical normalization matches the resolver's own: a
+        // dot-dot request that resolves inside still names itself
+        // (`a/../b` is `b`, the same normalization the join uses).
+        let bare = root.join("b");
+        fs::create_dir_all(&bare).unwrap();
+        assert!(require_requested_parent_name(&root, "a/../b", &bare).is_ok());
+    }
+
+    #[test]
+    fn requested_name_gate_refuses_a_renamed_parent() {
+        use super::require_requested_parent_name;
+        let fixture = Fixture::new();
+        let root = std::fs::canonicalize(&fixture.root).unwrap();
+        let parked = root.join("hot-parked");
+        fs::create_dir_all(&parked).unwrap();
+        // The exact rename-inside-canonicalize shape: the caller
+        // asked for `hot`, resolution returned the same object
+        // under its new name.
+        let refused = require_requested_parent_name(&root, "hot", &parked);
+        assert!(
+            matches!(
+                refused,
+                Err(crate::atomic::AtomicWriteFailure::ParentChanged { .. })
+            ),
+            "{refused:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_refuses_a_symlinked_parent_before_any_checkpoint() {
+        let fixture = Fixture::new();
+        let real = fixture.root.join("real");
+        fs::create_dir_all(&real).unwrap();
+        std::os::unix::fs::symlink(&real, fixture.root.join("link")).unwrap();
+        let write = fixture.write_tool();
+        let token = CancellationToken::new();
+        // Resolution lands inside the workspace (the link target is
+        // real), but under a name the caller never requested: the
+        // approval is bound to `link/...`, so the write must refuse
+        // rather than create `real/...`.
+        let refused = write.execute(
+            &json!({"path": "link/t.txt", "content": "payload"}),
+            token.signal(),
+        );
+        assert!(
+            matches!(
+                refused,
+                ToolExecutionResult::Conflict { message }
+                    if message
+                        == "The target directory changed while it was being written."
+            ),
+            "{refused:?}"
+        );
+        assert!(!real.join("t.txt").exists());
+        assert_eq!(fixture.checkpoint_count(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn edit_refuses_a_symlinked_parent_without_touching_bytes() {
+        let fixture = Fixture::new();
+        let real = fixture.root.join("real");
+        fs::create_dir_all(&real).unwrap();
+        fs::write(real.join("f.txt"), b"needle in hay").unwrap();
+        std::os::unix::fs::symlink(&real, fixture.root.join("link")).unwrap();
+        let edit = fixture.edit_tool();
+        let token = CancellationToken::new();
+        let refused = edit.execute(
+            &json!({
+                "path": "link/f.txt",
+                "oldString": "needle",
+                "newString": "thread"
+            }),
+            token.signal(),
+        );
+        assert!(
+            matches!(
+                refused,
+                ToolExecutionResult::Conflict { message }
+                    if message
+                        == "The target directory changed while it was being written."
+            ),
+            "{refused:?}"
+        );
+        assert_eq!(fs::read(real.join("f.txt")).unwrap(), b"needle in hay");
+    }
+
     #[cfg(unix)]
     #[test]
     fn verify_committed_detects_a_swapped_parent() {
@@ -1906,6 +2247,45 @@ mod tests {
         let absolute = sub.join("f.txt");
         fs::remove_dir_all(&sub).unwrap();
         assert!(verify_committed(&fixture.root, &absolute, b"data").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fifo_files_are_not_mutation_targets() {
+        // A named pipe at the target: create-only sees an existing
+        // entry (conflict, never opened), and edit refuses the
+        // non-regular target without reading it. FIFOs have no
+        // safe std constructor (`libc::mkfifo` is `unsafe`, which
+        // the workspace forbids), so the POSIX `mkfifo` helper
+        // stages it; the refusal under test is ours, not its.
+        let fixture = Fixture::new();
+        let fifo = fixture.root.join("pipe");
+        let staged = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("mkfifo helper runs on unix test hosts");
+        assert!(staged.success(), "mkfifo must stage the fifo");
+        let write = fixture.write_tool();
+        let edit = fixture.edit_tool();
+        let token = CancellationToken::new();
+        assert!(matches!(
+            write.execute(
+                &json!({"path": "pipe", "content": "x"}),
+                token.signal()
+            ),
+            ToolExecutionResult::Conflict { .. }
+        ));
+        assert!(matches!(
+            edit.execute(
+                &json!({
+                    "path": "pipe",
+                    "oldString": "a",
+                    "newString": "b"
+                }),
+                token.signal()
+            ),
+            ToolExecutionResult::Failed { .. }
+        ));
     }
 
     #[cfg(unix)]
@@ -2049,6 +2429,53 @@ mod tests {
                 "{name}"
             );
         }
+        // No file may land outside the requested set: walk the
+        // workspace and require every created-pattern file to sit at
+        // a path this test actually requested, carrying the exact
+        // payload bytes. This is schedule-independent: it catches a
+        // misdirected rename no matter what any single outcome
+        // claimed. Files at requested paths with exact bytes but no
+        // recorded Success are the documented verify-race aftermath
+        // (rename succeeded correctly, a later swap broke post-commit
+        // verification, the caller was honestly told Failed, the
+        // checkpoint stayed prepared for reconciliation to heal):
+        // coherent bytes, never misdirection, and tolerated here.
+        // (The per-Success `output["path"]` assert above catches a
+        // wrong-path claim at dispatch time.)
+        let mut stray_payloads = Vec::new();
+        let mut pending_dirs = vec![fixture.root.clone()];
+        while let Some(directory) = pending_dirs.pop() {
+            for entry in fs::read_dir(&directory).unwrap() {
+                let entry = entry.unwrap();
+                let path = entry.path();
+                if path.is_dir() {
+                    pending_dirs.push(path);
+                    continue;
+                }
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if !name.starts_with("t-") || !name.ends_with(".txt") {
+                    continue;
+                }
+                let relative = path
+                    .strip_prefix(&fixture.root)
+                    .expect("workspace-relative")
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let requested = relative
+                    .strip_prefix("hot/t-")
+                    .and_then(|tail| tail.strip_suffix(".txt"))
+                    .and_then(|number| number.parse::<u32>().ok())
+                    .is_some_and(|number| number < 200);
+                let exact = fs::read(&path).unwrap_or_default() == b"payload";
+                if !requested || !exact {
+                    stray_payloads.push(relative);
+                }
+            }
+        }
+        assert!(
+            stray_payloads.is_empty(),
+            "misdirected or corrupt writes: {stray_payloads:?}"
+        );
         let edit_bytes = fs::read(fixture.root.join("hot/e.txt")).unwrap();
         assert!(
             edit_bytes.windows(6).any(|w| w == b"thread")
