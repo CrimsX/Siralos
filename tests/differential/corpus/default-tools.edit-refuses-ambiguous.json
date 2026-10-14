@@ -1,0 +1,14 @@
+{
+  "env": {},
+  "id": "default-tools.edit-refuses-ambiguous",
+  "input": {
+    "calls": [
+      { "input": { "newString": "b", "oldString": "a", "path": "note.txt" }, "tool": "edit" }
+    ],
+    "files": [{ "content": "aaa", "path": "note.txt" }],
+    "verifyPaths": ["note.txt"]
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "default-tools"
+}

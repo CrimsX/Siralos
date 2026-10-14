@@ -218,6 +218,7 @@ fn run_scenario(
         | SUBJECT_WORKSPACE_SEARCH
         | SUBJECT_WORKSPACE_PREPARE
         | SUBJECT_WORKSPACE_APPLY
+        | SUBJECT_DEFAULT_TOOLS
         | SUBJECT_GIT_INSPECTION => {
             let input = scenario.input.as_ref().expect(
                 "workspace input was validated while loading the corpus",

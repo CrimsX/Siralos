@@ -1,0 +1,14 @@
+{
+  "env": {},
+  "id": "default-tools.edit-refuses-missing",
+  "input": {
+    "calls": [
+      { "input": { "newString": "b", "oldString": "a", "path": "ghost.txt" }, "tool": "edit" }
+    ],
+    "files": [],
+    "verifyPaths": []
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "default-tools"
+}

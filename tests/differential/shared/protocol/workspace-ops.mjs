@@ -376,9 +376,90 @@ function validateGitResult(record, label) {
   }
 }
 
+const DEFAULT_TOOLS_STATUSES = new Set([
+  "success",
+  "invalid_input",
+  "denied",
+  "conflict",
+  "failed",
+  "cancelled",
+  "timed_out",
+  "output_limit",
+  "sandbox_denied",
+  "sandbox_unavailable",
+  "workspace_violation",
+  "unavailable",
+]);
+
+function validateDefaultToolsResult(record, label) {
+  assertExactKeys(record.result, ["calls", "files", "checkpointCount"], `${label}.result`);
+  if (!Array.isArray(record.result.calls) || record.result.calls.length > 16) {
+    throw new Error(`${label}.result.calls must be a bounded array`);
+  }
+  for (const [index, entry] of record.result.calls.entries()) {
+    const entryLabel = `${label}.result.calls[${index}]`;
+    if (!isObject(entry)) {
+      throw new Error(`${entryLabel} must be an object`);
+    }
+    if (!["write", "edit", "bash"].includes(entry.tool)) {
+      throw new Error(`${entryLabel}.tool is invalid`);
+    }
+    if (!DEFAULT_TOOLS_STATUSES.has(entry.status)) {
+      throw new Error(`${entryLabel}.status is invalid`);
+    }
+    if (entry.status === "success") {
+      assertExactKeys(entry, ["tool", "status", "output"], entryLabel);
+      if (!isObject(entry.output)) {
+        throw new Error(`${entryLabel}.output must be an object`);
+      }
+      if (entry.output.sha256 !== undefined && !LOWER_SHA256.test(entry.output.sha256)) {
+        throw new Error(`${entryLabel}.output.sha256 is invalid`);
+      }
+      if (
+        entry.output.bytes !== undefined &&
+        (!Number.isSafeInteger(entry.output.bytes) || entry.output.bytes < 0)
+      ) {
+        throw new Error(`${entryLabel}.output.bytes is invalid`);
+      }
+      if (entry.output.path !== undefined && typeof entry.output.path !== "string") {
+        throw new Error(`${entryLabel}.output.path is invalid`);
+      }
+    } else {
+      assertExactKeys(entry, ["tool", "status", "message"], entryLabel);
+      if (
+        typeof entry.message !== "string" ||
+        entry.message.length === 0 ||
+        entry.message.length > 1024
+      ) {
+        throw new Error(`${entryLabel}.message is invalid`);
+      }
+    }
+  }
+  if (!Array.isArray(record.result.files)) {
+    throw new Error(`${label}.result.files must be an array`);
+  }
+  for (const [index, entry] of record.result.files.entries()) {
+    const entryLabel = `${label}.result.files[${index}]`;
+    assertExactKeys(entry, ["path", "sha256"], entryLabel);
+    if (typeof entry.path !== "string") {
+      throw new Error(`${entryLabel}.path is invalid`);
+    }
+    if (
+      entry.sha256 !== null &&
+      (typeof entry.sha256 !== "string" || !LOWER_SHA256.test(entry.sha256))
+    ) {
+      throw new Error(`${entryLabel}.sha256 is invalid`);
+    }
+  }
+  if (!Number.isSafeInteger(record.result.checkpointCount) || record.result.checkpointCount < 0) {
+    throw new Error(`${label}.result.checkpointCount is invalid`);
+  }
+}
+
 export {
   validateApplyResult,
   validateCheckpointResult,
+  validateDefaultToolsResult,
   validateGitResult,
   validateListResult,
   validatePrepareResult,

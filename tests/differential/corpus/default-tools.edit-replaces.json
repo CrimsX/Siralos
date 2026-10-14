@@ -1,0 +1,17 @@
+{
+  "env": {},
+  "id": "default-tools.edit-replaces",
+  "input": {
+    "calls": [
+      {
+        "input": { "newString": "thread", "oldString": "needle", "path": "note.txt" },
+        "tool": "edit"
+      }
+    ],
+    "files": [{ "content": "needle in hay", "path": "note.txt" }],
+    "verifyPaths": ["note.txt"]
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "default-tools"
+}

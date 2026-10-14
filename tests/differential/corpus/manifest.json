@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 84,
+  "corpusVersion": 85,
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -401,6 +401,34 @@
     {
       "file": "context-tool.json",
       "sha256": "5012c57af2c9eb68b390882ace6a9260c1c77d0fb4a349aacc0f8ede4274f4fc"
+    },
+    {
+      "file": "default-tools.bash-unavailable.json",
+      "sha256": "678964fe165fefba0cbe8786d3b316d6d0599a8b9dff6a3fc5ae5f7f4a14234d"
+    },
+    {
+      "file": "default-tools.edit-refuses-ambiguous.json",
+      "sha256": "32ecee87330c1bcdc8a0047d4af597a1f1639bd44027b4543bf2dd8fbf791418"
+    },
+    {
+      "file": "default-tools.edit-refuses-missing.json",
+      "sha256": "468ff8fd53509e9e36ade5d9a154c6c33a2386d7418ac74917a69adbb26f2512"
+    },
+    {
+      "file": "default-tools.edit-replaces.json",
+      "sha256": "2127167386c5cfc9fb2f9b6e34f1f977ca146523a77f7615066c99d769dd9114"
+    },
+    {
+      "file": "default-tools.write-creates.json",
+      "sha256": "eeab23de9f6a73884a71b5d5ec1671776db51e753732d2d4f64c9ef83656ea39"
+    },
+    {
+      "file": "default-tools.write-refuses-existing.json",
+      "sha256": "51b94455a902896d96ffbb9f8a98b03b2e9960cfff55e04d3584aad6a9c44f67"
+    },
+    {
+      "file": "default-tools.write-refuses-protected.json",
+      "sha256": "3194d22e366ba85c6f996e1deba9883f5e6f91eec425ba2874c031a818b8286d"
     },
     {
       "file": "determinism-replay.full.json",
@@ -1259,5 +1287,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "fcdc53d65a418fb6d59015f749142457bdca84f4c62e03c31a79e5a262101284"
+  "corpusSha256": "ca3c9b5cc184b5c1b51d99d7c1c3bcb5e7ce8317cba0f4b898458eb6765b5a4c"
 }

@@ -1,0 +1,12 @@
+{
+  "env": {},
+  "id": "default-tools.write-refuses-protected",
+  "input": {
+    "calls": [{ "input": { "content": "x", "path": "AGENTS.md" }, "tool": "write" }],
+    "files": [],
+    "verifyPaths": []
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "default-tools"
+}

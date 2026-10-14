@@ -758,6 +758,7 @@ pub(in crate::harness) fn workspace_record(
                 apply_record(root, input)
             })
         }
+        SUBJECT_DEFAULT_TOOLS => default_tools_record(scenario_id, input),
         SUBJECT_GIT_INSPECTION => Ok(git_record()),
         _ => Err(HarnessError::corpus(format!(
             "unsupported workspace subject {subject}"
@@ -1169,6 +1170,132 @@ pub(in crate::harness) fn checkpoint_record(
     let _ = std::fs::remove_dir_all(&workspace);
     let _ = std::fs::remove_dir_all(&store_root);
     Ok(json!({ "ops": ops }))
+}
+
+// Default-tools subject (ADR 0038): drive the `write` / `edit` /
+// `bash` Tool adapters directly under a fixture workspace. The
+// per-action approval gate is covered by the Rust adversarial
+// suite; the corpus pins tool outcomes. Records pin stable fields
+// only: statuses, relative paths, content identities, byte counts,
+// refusal messages (all platform-stable strings), verified file
+// identities, and the checkpoint count. Checkpoint ids are
+// sequential store state, never behavior: excluded.
+// ---------------------------------------------------------------------------
+
+/// Run one default-tools scenario: fixture files, tool calls in
+/// order, verified file identities, checkpoint count.
+pub(in crate::harness) fn default_tools_record(
+    scenario_id: &str,
+    input: &Value,
+) -> Result<Value, HarnessError> {
+    use siralos_adapters::tool::{BashTool, EditTool, WriteTool};
+    use siralos_adapters::workspace::checkpoint::open_checkpoint_store;
+    use siralos_core::identity::sha256_hex;
+    use siralos_core::tool::Tool;
+    with_fixture_workspace(scenario_id, input, |root| {
+        let store_root = std::env::temp_dir()
+            .join(format!("siralos-cand-dt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&store_root);
+        let token = CancellationToken::new();
+        let mut calls = Vec::new();
+        for entry in scenario_array(input, "calls")? {
+            let tool_name = scenario_string(entry, "tool")?;
+            let call_input =
+                entry.get("input").cloned().unwrap_or(Value::Null);
+            let result = match tool_name.as_str() {
+                "write" => {
+                    let store = open_checkpoint_store(root, &store_root)
+                        .map_err(|error| {
+                            HarnessError::new(
+                                HarnessErrorKind::ProbeSpawn,
+                                format!(
+                                    "cannot open fixture checkpoint store: {error}"
+                                ),
+                            )
+                        })?;
+                    let tool =
+                        WriteTool::new(root, store).map_err(|error| {
+                            HarnessError::new(
+                                HarnessErrorKind::ProbeSpawn,
+                                format!("cannot build write tool: {error}"),
+                            )
+                        })?;
+                    tool.execute(&call_input, token.signal())
+                }
+                "edit" => {
+                    let store = open_checkpoint_store(root, &store_root)
+                        .map_err(|error| {
+                            HarnessError::new(
+                                HarnessErrorKind::ProbeSpawn,
+                                format!(
+                                    "cannot open fixture checkpoint store: {error}"
+                                ),
+                            )
+                        })?;
+                    let tool =
+                        EditTool::new(root, store).map_err(|error| {
+                            HarnessError::new(
+                                HarnessErrorKind::ProbeSpawn,
+                                format!("cannot build edit tool: {error}"),
+                            )
+                        })?;
+                    tool.execute(&call_input, token.signal())
+                }
+                "bash" => BashTool::new().execute(&call_input, token.signal()),
+                other => {
+                    return Err(HarnessError::corpus(format!(
+                        "unknown default tool {other}"
+                    )));
+                }
+            };
+            calls.push(match result {
+                ToolExecutionResult::Success { output, .. } => {
+                    let mut detail =
+                        output.as_object().cloned().unwrap_or_default();
+                    detail.remove("checkpoint");
+                    json!({
+                        "tool": tool_name,
+                        "status": "success",
+                        "output": detail,
+                    })
+                }
+                other => json!({
+                    "tool": tool_name,
+                    "status": other.status_str(),
+                    "message": other.message(),
+                }),
+            });
+        }
+        let mut files = Vec::new();
+        for path in scenario_array(input, "verifyPaths")? {
+            let relative = path.as_str().ok_or_else(|| {
+                HarnessError::corpus(
+                    "verifyPaths entries must be strings".to_owned(),
+                )
+            })?;
+            let sha256 = std::fs::read(root.join(relative))
+                .ok()
+                .map(|bytes| sha256_hex(&bytes));
+            files.push(json!({
+                "path": relative,
+                "sha256": sha256,
+            }));
+        }
+        let store =
+            open_checkpoint_store(root, &store_root).map_err(|error| {
+                HarnessError::new(
+                    HarnessErrorKind::ProbeSpawn,
+                    format!("cannot open fixture checkpoint store: {error}"),
+                )
+            })?;
+        let checkpoint_count = store.list(None, None).len();
+        let _ = std::fs::remove_dir_all(&store_root);
+        Ok(json!({
+            "calls": calls,
+            "files": files,
+            "checkpointCount": checkpoint_count,
+        }))
+    })
 }
 // Stage 3R R5 subjects: language-diagnostics / language-structure /
 // language-definition (generic language intelligence parity).

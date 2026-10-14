@@ -1,0 +1,12 @@
+{
+  "env": {},
+  "id": "default-tools.write-creates",
+  "input": {
+    "calls": [{ "input": { "content": "hello", "path": "made.txt" }, "tool": "write" }],
+    "files": [],
+    "verifyPaths": ["made.txt"]
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "default-tools"
+}

@@ -83,6 +83,7 @@ import {
 import {
   validateApplyResult,
   validateCheckpointResult,
+  validateDefaultToolsResult,
   validateGitResult,
   validateListResult,
   validatePrepareResult,
@@ -131,6 +132,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "workspace-apply") {
     validateApplyResult(record, label);
+    return;
+  }
+  if (record.subject === "default-tools") {
+    validateDefaultToolsResult(record, label);
     return;
   }
   if (record.subject === "checkpoint") {

@@ -1,0 +1,12 @@
+{
+  "env": {},
+  "id": "default-tools.bash-unavailable",
+  "input": {
+    "calls": [{ "input": { "command": "echo never-runs" }, "tool": "bash" }],
+    "files": [],
+    "verifyPaths": []
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "default-tools"
+}

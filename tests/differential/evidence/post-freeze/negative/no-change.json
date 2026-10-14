@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "corpusVersion": 84,
-  "entriesSha256": "0f261e67b52b86b03d588f6a446d099c27a559dd1b81d51de1768119f8c4919b",
+  "corpusVersion": 85,
+  "entriesSha256": "134bd87f1ab3a1b0f3a002fdda8a51cd6de79a6284b78a963f6b2290f5adbe29",
   "supersessions": [
     {
       "scenarioId": "version.identity",
       "reason": "negative-evidence fixture",
-      "supersededIn": 84,
+      "supersededIn": 85,
       "decision": "1.0 release: workspace version identity",
       "oracleRecordSha256": "9e01915d839379a2f65a36d4d9be097222dda507a8a5ec542860810c4173d957",
       "record": {

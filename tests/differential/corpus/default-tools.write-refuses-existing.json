@@ -1,0 +1,12 @@
+{
+  "env": {},
+  "id": "default-tools.write-refuses-existing",
+  "input": {
+    "calls": [{ "input": { "content": "new", "path": "made.txt" }, "tool": "write" }],
+    "files": [{ "content": "old", "path": "made.txt" }],
+    "verifyPaths": ["made.txt"]
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "default-tools"
+}
