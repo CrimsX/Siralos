@@ -1241,7 +1241,14 @@ pub(in crate::harness) fn default_tools_record(
                         })?;
                     tool.execute(&call_input, token.signal())
                 }
-                "bash" => BashTool::new().execute(&call_input, token.signal()),
+                "bash" => BashTool::new(root)
+                    .map_err(|error| {
+                        HarnessError::new(
+                            HarnessErrorKind::ProbeSpawn,
+                            format!("cannot build bash tool: {error}"),
+                        )
+                    })?
+                    .execute(&call_input, token.signal()),
                 other => {
                     return Err(HarnessError::corpus(format!(
                         "unknown default tool {other}"

@@ -12,6 +12,8 @@
 //! probe does not prove enforcement — today that is every platform,
 //! because no enforcing backend is pinned in this repository.
 
+use std::path::{Path, PathBuf};
+
 use serde_json::{Value, json};
 use siralos_core::identity::sha256_hex;
 use siralos_core::provider::{
@@ -25,6 +27,7 @@ use siralos_core::tool::{
 use crate::process::sandbox_backend::{
     HostSandboxBackend, build_sandbox_env, truncate_bounded,
 };
+use crate::workspace::root::{WorkspaceRootError, resolve_workspace_root};
 
 /// Tool name bound into approvals, digests, and checkpoints.
 pub const BASH_TOOL_NAME: &str = "bash";
@@ -33,7 +36,24 @@ pub const BASH_CAPABILITY: &str = "process.execute";
 /// Maximum accepted command bytes: proposals are bounded before any
 /// approval, probe, or execution.
 pub const MAX_BASH_COMMAND_BYTES: usize = 32_768;
+/// Fixed shell program: the model supplies the command word, never
+/// the executable. The backend resolves the program; it never
+/// re-splits a shell string.
+#[cfg(windows)]
+const SHELL_PROGRAM: &str = "cmd";
+/// Shell flag taking the single command word.
+#[cfg(windows)]
+const SHELL_FLAG: &str = "/c";
+/// Fixed shell program: the model supplies the command word, never
+/// the executable. The backend resolves the program; it never
+/// re-splits a shell string.
+#[cfg(not(windows))]
+const SHELL_PROGRAM: &str = "sh";
+/// Shell flag taking the single command word.
+#[cfg(not(windows))]
+const SHELL_FLAG: &str = "-c";
 /// Maximum command characters shown in one preview line.
+/// (R6 unifies this with the mutation preview bound.)
 const BASH_PREVIEW_LINE_CHARS: usize = 160;
 
 fn bash_capability() -> CapabilityId {
@@ -105,14 +125,22 @@ pub struct BashTool {
     definition: ToolDefinition,
     capability: CapabilityId,
     backend: HostSandboxBackend,
+    workdir: PathBuf,
 }
 
 impl BashTool {
-    /// Construct the adapter. Infallible: the backend probes lazily
-    /// at execution, never at construction.
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
+    /// Construct the adapter over a canonicalized workspace root,
+    /// which becomes the confined working directory for commands
+    /// run under a future enforcing backend. Infallible execution
+    /// posture is unchanged: the backend probes lazily at
+    /// execution, never at construction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceRootError`] when the root cannot be
+    /// canonicalized.
+    pub fn new(root: &Path) -> Result<Self, WorkspaceRootError> {
+        Ok(Self {
             definition: ToolDefinition {
                 name: BASH_TOOL_NAME.to_owned(),
                 description:
@@ -132,13 +160,8 @@ impl BashTool {
             },
             capability: bash_capability(),
             backend: HostSandboxBackend,
-        }
-    }
-}
-
-impl Default for BashTool {
-    fn default() -> Self {
-        Self::new()
+            workdir: resolve_workspace_root(root)?,
+        })
     }
 }
 
@@ -168,7 +191,7 @@ impl Tool for BashTool {
         input: &Value,
         cancellation: CancellationSignal<'_>,
     ) -> ToolExecutionResult {
-        execute_bash(&self.backend, input, cancellation)
+        execute_bash(&self.backend, &self.workdir, input, cancellation)
     }
 }
 
@@ -176,6 +199,7 @@ impl Tool for BashTool {
 /// probe enforcement, and only then run bounded.
 fn execute_bash(
     backend: &dyn SandboxBackend,
+    workdir: &Path,
     input: &Value,
     cancellation: CancellationSignal<'_>,
 ) -> ToolExecutionResult {
@@ -204,7 +228,7 @@ fn execute_bash(
             // only under proven enforcement. It is implemented (not
             // stubbed) so the day a backend exists, the bounds
             // already hold.
-            run_bounded(backend, input, &command, cancellation)
+            run_bounded(backend, workdir, input, &command, cancellation)
         }
         SandboxAvailability::Unavailable(reason) => {
             ToolExecutionResult::SandboxUnavailable {
@@ -219,6 +243,7 @@ fn execute_bash(
 /// is recorded wins over completion.
 fn run_bounded(
     backend: &dyn SandboxBackend,
+    workdir: &Path,
     input: &Value,
     command: &str,
     cancellation: CancellationSignal<'_>,
@@ -232,10 +257,10 @@ fn run_bounded(
     let env = build_sandbox_env(&parent, &[]);
     let outcome = match backend.execute(
         &siralos_core::runtime::sandbox::SandboxCommand {
-            program: command.to_owned(),
-            args: Vec::new(),
+            program: SHELL_PROGRAM.to_owned(),
+            args: vec![SHELL_FLAG.to_owned(), command.to_owned()],
             env,
-            workdir: std::env::temp_dir(),
+            workdir: workdir.to_path_buf(),
         },
         &limits,
         cancellation,
@@ -297,7 +322,7 @@ mod tests {
     use siralos_core::tool::Tool;
 
     fn tool() -> BashTool {
-        BashTool::new()
+        BashTool::new(&std::env::temp_dir()).expect("test root resolves")
     }
 
     #[test]
@@ -447,6 +472,7 @@ mod tests {
                 timed_out: true,
                 cancelled: false,
             }),
+            &std::env::temp_dir(),
             &input,
             "echo hi",
             token.signal(),
@@ -466,6 +492,7 @@ mod tests {
                 timed_out: false,
                 cancelled: false,
             }),
+            &std::env::temp_dir(),
             &input,
             "echo hi",
             token.signal(),
@@ -485,6 +512,7 @@ mod tests {
                 timed_out: false,
                 cancelled: true,
             }),
+            &std::env::temp_dir(),
             &input,
             "echo hi",
             token.signal(),
@@ -493,5 +521,85 @@ mod tests {
             matches!(cancelled, ToolExecutionResult::Cancelled { .. }),
             "{cancelled:?}"
         );
+    }
+
+    #[test]
+    fn constructed_command_is_shell_shaped_with_confined_workdir() {
+        // The contract shape, asserted on the real construction
+        // path: the fixed shell is the program, the model command
+        // is one argument word (never a re-split shell string), and
+        // the workdir is the workspace root (never an unconfined
+        // host default). This code runs at the enforcement
+        // milestone; it must be right before then.
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        use siralos_core::runtime::sandbox::{
+            SandboxBackend, SandboxCommand, SandboxEnforcement, SandboxLimits,
+            SandboxOutput,
+        };
+        struct Capturing {
+            seen: Rc<RefCell<Option<SandboxCommand>>>,
+        }
+        impl SandboxBackend for Capturing {
+            fn probe(
+                &self,
+            ) -> siralos_core::runtime::sandbox::SandboxAvailability
+            {
+                siralos_core::runtime::sandbox::SandboxAvailability::Available(
+                    SandboxEnforcement::full(),
+                )
+            }
+            fn execute(
+                &self,
+                command: &SandboxCommand,
+                _limits: &SandboxLimits,
+                _cancellation: siralos_core::provider::CancellationSignal<'_>,
+            ) -> Result<
+                SandboxOutput,
+                siralos_core::runtime::sandbox::SandboxError,
+            > {
+                *self.seen.borrow_mut() = Some(command.clone());
+                Ok(SandboxOutput {
+                    status_code: Some(0),
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                    stdout_truncated: false,
+                    stderr_truncated: false,
+                    timed_out: false,
+                    cancelled: false,
+                })
+            }
+        }
+        let seen: Rc<RefCell<Option<SandboxCommand>>> =
+            Rc::new(RefCell::new(None));
+        let backend = Capturing { seen: Rc::clone(&seen) };
+        let root = std::env::temp_dir().join("siralos-bash-shape");
+        std::fs::create_dir_all(&root).expect("shape fixture");
+        let canonical =
+            std::fs::canonicalize(&root).expect("shape root resolves");
+        let token = CancellationToken::new();
+        let input = json!({"command": "echo hi"});
+        let outcome = super::run_bounded(
+            &backend,
+            &canonical,
+            &input,
+            "echo hi",
+            token.signal(),
+        );
+        assert!(
+            matches!(outcome, ToolExecutionResult::Success { .. }),
+            "{outcome:?}"
+        );
+        let command = seen.borrow().clone().expect("backend ran");
+        assert_eq!(command.program, super::SHELL_PROGRAM);
+        assert_eq!(
+            command.args,
+            vec![super::SHELL_FLAG.to_owned(), "echo hi".to_owned()]
+        );
+        assert_ne!(command.program, "echo hi");
+        assert_eq!(command.workdir, canonical);
+        assert_ne!(command.workdir, std::env::temp_dir());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

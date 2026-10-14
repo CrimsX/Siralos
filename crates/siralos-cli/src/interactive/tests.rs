@@ -5705,7 +5705,8 @@ fn bash_approval_for_one_command_never_authorizes_another() {
         ActionApproval, SharedApprovals, action_digest, canonical_input_json,
     };
     let root = temporary_directory("bash-digest-mismatch");
-    let tool = siralos_adapters::tool::BashTool::new();
+    let tool =
+        siralos_adapters::tool::BashTool::new(&root).expect("bash tool");
     let registry = siralos_core::tool::ToolRegistry::new(vec![
         Box::new(tool) as Box<dyn siralos_core::tool::Tool>
     ])
@@ -5770,7 +5771,8 @@ fn bash_approved_call_still_refuses_without_enforcement() {
     // still reports typed unavailability because no live probe
     // proves enforcement.
     let root = temporary_directory("bash-approved-unavailable");
-    let tool = siralos_adapters::tool::BashTool::new();
+    let tool =
+        siralos_adapters::tool::BashTool::new(&root).expect("bash tool");
     let registry = siralos_core::tool::ToolRegistry::new(vec![
         Box::new(tool) as Box<dyn siralos_core::tool::Tool>
     ])
