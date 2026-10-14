@@ -78,8 +78,12 @@ matches), or a stale revision refuses before any effect.
 ## 4. Checkpoint and undo lifecycle (D3)
 
 `write` and `edit` automatically checkpoint the target BEFORE
-mutation, which makes "safe undo" real and therefore flips the
-checkpoint-creation surface with it. The checkpoint lifecycle —
+mutation, which makes restore possible in principle and therefore
+flips the checkpoint-creation surface with it — but no undo
+surface is wired, so "safe undo" as a product capability stays
+closed (the `apply_undo` primitive is implemented and tested with
+no caller outside its own tests; see the deviation recorded in
+AGENTS.md and ROADMAP.md). The checkpoint lifecycle —
 creation, byte-bound accounting, retention/pruning policy, byte-exact
 restore wired from the pure undo planner — is implemented and tested
 as part of this change. Unverifiable or unexpected content blocks
@@ -122,12 +126,15 @@ change is DELIBERATE under the established discipline:
 ## 7. AGENTS.md posture flips
 
 These fail-closed bullets flip, each backed by its adversarial suite:
-workspace create/edit/delete application and safe undo; new checkpoint
+workspace create/edit application; new checkpoint
 creation and automatic checkpoint pruning. These stay exactly as
 strict: `node-script` and `npm-script` command execution, Git
 inspection, private run-directory creation or cleanup, Godot surfaces,
 executable caches, and repository-reference materialization — plus
-file deletion (D5), which stays typed `unavailable`.
+file deletion (D5), which stays typed `unavailable`, plus safe undo:
+auto-checkpoint plus the tested `apply_undo` primitive with no wired
+surface (deviation disclosed in AGENTS.md and ROADMAP.md rather than
+claimed as a flip).
 
 ## 8. Lean guardrails (unchanged)
 
@@ -174,6 +181,14 @@ rename-away deterministic cases are `cfg(unix)`-only; on non-Unix
 targets the gates degrade to canonical-path identity, under which
 a same-path object replacement is undetected. Unix-only rows are
 named, never passed by skip.
+
+Undo evidence row (disclosed, not flipped). `apply_undo`
+(`crates/siralos-adapters/src/workspace/checkpoint_lifecycle.rs`)
+is implemented and tested: hash-gated restore, `Conflict` never
+overwrites newer work, undo-of-create stays `DeleteUnavailable`
+(D5). It has no caller outside its own tests — no `/undo` command
+exists in `siralos-cli` — so the undo surface stays closed and
+§4/§7 claim no flip.
 
 `bash` adversarial inventory (2026-10-14, working tree at
 `9a9f47e`). The core port (`siralos-core::runtime::sandbox`:
