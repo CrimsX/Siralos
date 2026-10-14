@@ -473,7 +473,9 @@ pub(super) fn apply_reloaded_config(
 /// The session's Host rules — read-only workspace inspection,
 /// Allow; workspace mutation, Ask (ADR 0038: every mutation needs a
 /// one-time host approval for the exact action, and the approval gate
-/// holds even under an allow rule).
+/// holds even under an allow rule); command execution, Ask (the
+/// `bash` tool reports typed unavailability where no live probe
+/// proves enforcement, and profiles can only narrow toward deny).
 ///
 /// The ONE rule set `compose_session` composes the workspace profile
 /// against (R7.4 fail-closed posture; Stage 5.2 narrowing-only). `/reload`
@@ -494,6 +496,13 @@ pub(super) fn session_host_rules() -> Vec<PolicyRule> {
                 "workspace.write",
             )
             .expect("workspace.write is a valid capability id"),
+            rule: PermissionRule::Ask,
+        },
+        PolicyRule {
+            capability: siralos_core::tool::CapabilityId::parse(
+                "process.execute",
+            )
+            .expect("process.execute is a valid capability id"),
             rule: PermissionRule::Ask,
         },
     ]

@@ -119,8 +119,9 @@ fn bash_preview(command: &str) -> ApprovalPreview {
 ///
 /// Requires a one-time host approval for the exact command digest;
 /// reports typed `SandboxUnavailable` wherever enforcement is
-/// unproven. Never registered in the product registry before the
-/// digest-bound corpus amendment pins the surface (ADR 0038 C2).
+/// unproven. Registered in the interactive session tool set so the
+/// refusal is reachable; execution stays closed until a live probe
+/// passes.
 pub struct BashTool {
     definition: ToolDefinition,
     capability: CapabilityId,

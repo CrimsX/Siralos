@@ -3,7 +3,7 @@
 //! context audit the `/context` command reports.
 
 use super::{
-    ApplicationProjectionConfig, BTreeMap, ConfigurationError,
+    ApplicationProjectionConfig, BTreeMap, BashTool, ConfigurationError,
     ContextCapacity, ContextPolicy, ConversationItem,
     DEFAULT_REVIEW_PROVIDER_ID, EditTool, FlushError, FlushOutcome,
     HostCredential, HostProvider, InteractiveError, InteractiveOptions,
@@ -691,6 +691,11 @@ pub(crate) fn compose_session(
             );
         }
     }
+    // ADR 0038: the `bash` default tool joins the registry unconditionally
+    // (it needs no store). It reports typed `sandbox_unavailable`
+    // wherever no live probe proves enforcement — registration makes
+    // the refusal reachable, never execution.
+    tools.push(Box::new(BashTool::new(&workspace_root)?));
     // R7.4 profiles select the built-in fail-closed posture; they never
     // grant a Tool. Read-only workspace inspection is allowed and its
     // decision is still checked per call; workspace mutation defaults

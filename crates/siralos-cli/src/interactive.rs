@@ -32,7 +32,7 @@ use siralos_adapters::skills_loader::{
     SkillCatalogLoad, load_workspace_skills,
 };
 use siralos_adapters::tool::{
-    EditTool, ReadTool, WorkspaceListTool, WorkspaceReadTool,
+    BashTool, EditTool, ReadTool, WorkspaceListTool, WorkspaceReadTool,
     WorkspaceSearchTool, WriteTool,
 };
 use siralos_adapters::workspace::fs::{

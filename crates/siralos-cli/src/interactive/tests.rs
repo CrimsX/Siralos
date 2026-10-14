@@ -1826,7 +1826,7 @@ fn prompt_then_context_and_tools_render_the_current_projection() {
     assert!(output.contains("Pressure: normal ("));
     assert!(output.contains("Tool ABI: "));
     assert!(
-        output.contains("Tool projection: 4 available, 2 gated, 0 hidden")
+        output.contains("Tool projection: 4 available, 3 gated, 0 hidden")
     );
     let _ = remove_dir_all(root);
 }
@@ -1838,7 +1838,7 @@ fn tool_round_refreshes_the_projection_before_context_rendering() {
     assert!(output.contains("Siralos inspected 0 workspace entries."));
     assert!(output.contains("Context projection (mode generic)\n"));
     assert!(
-        output.contains("Tool projection: 4 available, 2 gated, 0 hidden")
+        output.contains("Tool projection: 4 available, 3 gated, 0 hidden")
     );
     let _ = remove_dir_all(root);
 }
@@ -2419,7 +2419,7 @@ fn t4_compose_session_is_the_single_shared_definition() {
         workspace_root: Some(&root),
     })
     .expect("compose");
-    // The composed tool definitions carry the six default tools in
+    // The composed tool definitions carry the seven default tools in
     // registration order (context tools absent OFF).
     let names: Vec<&str> = session
         .tool_definitions
@@ -2434,7 +2434,8 @@ fn t4_compose_session_is_the_single_shared_definition() {
             "workspace.search",
             "read",
             "write",
-            "edit"
+            "edit",
+            "bash"
         ]
     );
     // OFF: no context session, flag off.
@@ -2880,8 +2881,16 @@ fn reload_cannot_widen_session_authority() {
         &siralos_adapters::profile_config::load_workspace_profile(&root),
         &host_rules,
     );
+    // Order-insensitive: the property is set equality (no added or
+    // broadened rule), and composition order follows the declared
+    // profile, not the host list.
+    let mut before_rules = before.rules.clone();
+    let mut host = host_rules.clone();
+    before_rules
+        .sort_by(|a, b| a.capability.as_str().cmp(b.capability.as_str()));
+    host.sort_by(|a, b| a.capability.as_str().cmp(b.capability.as_str()));
     assert_eq!(
-        before.rules, host_rules,
+        before_rules, host,
         "a widening declaration must not add or broaden a rule"
     );
     assert!(
@@ -2925,8 +2934,11 @@ fn reload_cannot_widen_session_authority() {
         &host_rules,
     );
     assert_eq!(after, before, "a reload must not change composed authority");
+    let mut after_rules = after.rules.clone();
+    after_rules
+        .sort_by(|a, b| a.capability.as_str().cmp(b.capability.as_str()));
     assert_eq!(
-        after.rules, host_rules,
+        after_rules, host,
         "authority stays the Host's own after a reload"
     );
 }
