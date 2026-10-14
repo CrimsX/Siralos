@@ -290,6 +290,97 @@ impl Default for SharedApprovals {
     }
 }
 
+/// Reviewable preview of one proposed action, built read-only by
+/// the Tool itself.
+///
+/// The preview is advisory, never a promise: the tool re-verifies
+/// everything at execution, so content that shifts between preview
+/// and execution refuses there. Preview lines may carry
+/// model-proposed text, so frontends sanitize them at the single
+/// output boundary before display.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovalPreview {
+    /// One-line framing (tool name and target path).
+    pub title: String,
+    /// Detail lines (digests, sizes, diffs, match counts), bounded
+    /// by [`MAX_APPROVAL_PREVIEW_LINES`] at every frontend render.
+    pub lines: Vec<String>,
+}
+
+/// Maximum detail lines one approval render shows, before the
+/// truncation marker. Bounds the terminal output of a mistaken or
+/// hostile preview; fits the TUI modal line cap with room for its
+/// framing.
+pub const MAX_APPROVAL_PREVIEW_LINES: usize = 24;
+
+/// One synchronous approval request for a proposed action.
+///
+/// The executor computes the action digest itself and never hands
+/// it out: the frontend sees the human-readable preview and returns
+/// a verdict, and only an approve verdict mints the ledger approval
+/// for the exact computed digest. The frontend can therefore neither
+/// forge nor broaden an approval.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovalRequest {
+    /// Exact tool name of the proposed call.
+    pub tool_name: String,
+    /// Task revision the machine carries.
+    pub task_revision: Option<u64>,
+    /// Read-only preview built by the Tool.
+    pub preview: ApprovalPreview,
+}
+
+/// Verdict on one approval request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalVerdict {
+    /// Record a one-time approval for the exact requested action
+    /// and proceed with this dispatch.
+    Approve,
+    /// Deny without execution.
+    Deny,
+}
+
+/// Shared resolver behavior: prompt synchronously for one request,
+/// return its verdict.
+type ResolverFn = dyn FnMut(&ApprovalRequest) -> ApprovalVerdict;
+
+/// Host-owned synchronous approval resolver shared with per-round
+/// executors.
+///
+/// The resolver runs inside the dispatch it authorizes, so the same
+/// call proceeds under a freshly recorded approval with no second
+/// prompt and no re-proposal. Sharing follows the ledger's
+/// justification: the round runner owns its executor by value
+/// across pull steps, so a borrow cannot span the round; the handle
+/// is single-threaded and never crosses threads.
+#[derive(Clone)]
+pub struct SharedApprovalResolver(Rc<RefCell<ResolverFn>>);
+
+impl SharedApprovalResolver {
+    /// Build one resolver from the frontend's prompt behavior.
+    pub fn new(
+        resolve: impl FnMut(&ApprovalRequest) -> ApprovalVerdict + 'static,
+    ) -> Self {
+        Self(Rc::new(RefCell::new(resolve)))
+    }
+
+    /// Resolve one request (panics only on reentrant resolution,
+    /// which the single-threaded pull machine never performs: the
+    /// resolver never runs while itself is running).
+    pub fn resolve(&self, request: &ApprovalRequest) -> ApprovalVerdict {
+        (self.0.borrow_mut())(request)
+    }
+}
+
+impl std::fmt::Debug for SharedApprovalResolver {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        formatter.write_str("SharedApprovalResolver(..)")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

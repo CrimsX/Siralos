@@ -25,9 +25,11 @@ use crate::provider::{
     open_provider_turn,
 };
 use crate::tool::approval::{
+    ActionApproval, ApprovalRequest, ApprovalVerdict, SharedApprovalResolver,
     SharedApprovals, action_digest, canonical_input_json,
 };
 use crate::tool::budget::RoundBudget;
+use crate::tool::capability::CapabilityId;
 use crate::tool::events::ToolLoopEvent;
 use crate::tool::permission::{
     PermissionDecision, PermissionPolicy, evaluate_permission,
@@ -74,6 +76,15 @@ impl fmt::Display for PromptStartError {
 
 impl std::error::Error for PromptStartError {}
 
+/// Denial text for a call whose action cannot be presented for
+/// review. Shared by the gate and the plain-tool Ask arm so the
+/// frozen wording lives once.
+fn unreviewable_denial(capability: &CapabilityId) -> String {
+    format!(
+        "Capability {capability} requires approval, but this tool does not support a reviewable preparation protocol; the call was denied without execution."
+    )
+}
+
 /// Host Tool-call executor: the exact per-call authorization gate order
 /// plus guarded `Tool::execute`.
 #[derive(Clone)]
@@ -90,6 +101,10 @@ struct HostToolExecutor<'a> {
     /// configuration revision; `None` on the direct R7.2 path).
     /// Approval records must carry the same revision.
     task_revision: Option<u64>,
+    /// Synchronous approval resolver for the interactive frontends
+    /// (see [`SharedApprovalResolver`]). `None` everywhere else:
+    /// headless, harness, and evaluation deny without asking.
+    resolver: Option<SharedApprovalResolver>,
 }
 
 impl HostToolExecutor<'_> {
@@ -107,6 +122,82 @@ impl HostToolExecutor<'_> {
             })
             .map(|info| info.definition)
             .collect()
+    }
+
+    /// The per-action approval gate for one `requires_approval` call.
+    ///
+    /// Returns `None` when execution may proceed, or the exact denial
+    /// message when it may not (the caller pairs it with the already
+    /// emitted `ToolStarted`). Order: recorded approval first, then
+    /// the synchronous resolver (which mints at most one approval for
+    /// the exact computed digest), then denial. A tool without a
+    /// reviewable preview cannot be presented and is denied without
+    /// consulting any resolver.
+    ///
+    /// Denial wording distinguishes the three refusals: nothing was
+    /// recorded and nobody was asked (`missing`), the host was asked
+    /// and denied (`denied`), and the action could not be presented
+    /// at all (`unreviewable`).
+    fn approval_gate(
+        &mut self,
+        tool: &dyn Tool,
+        capability: &CapabilityId,
+        call: ExecutableToolCall<'_>,
+    ) -> Option<String> {
+        let digest = action_digest(
+            call.tool_name,
+            &canonical_input_json(call.input),
+            self.task_revision,
+        );
+        if self
+            .approvals
+            .take(call.tool_name, &digest, self.task_revision)
+            .is_some()
+        {
+            return None;
+        }
+        let missing = || {
+            format!(
+                "Capability {capability} requires a one-time host approval for this exact action; no matching approval was recorded, so the call was denied without execution."
+            )
+        };
+        let denied = || {
+            format!(
+                "Capability {capability} requires a one-time host approval for this exact action; the host denied the request, so the call was denied without execution."
+            )
+        };
+        let unreviewable = || unreviewable_denial(capability);
+        let Some(preview) = tool.approval_preview(call.input) else {
+            return Some(unreviewable());
+        };
+        let Some(resolver) = &self.resolver else {
+            return Some(missing());
+        };
+        match resolver.resolve(&ApprovalRequest {
+            tool_name: call.tool_name.to_owned(),
+            task_revision: self.task_revision,
+            preview,
+        }) {
+            ApprovalVerdict::Deny => Some(denied()),
+            ApprovalVerdict::Approve => {
+                let Ok(approval) = ActionApproval::new(
+                    call.tool_name,
+                    digest.clone(),
+                    self.task_revision,
+                ) else {
+                    return Some(unreviewable());
+                };
+                self.approvals.approve(approval);
+                if self
+                    .approvals
+                    .take(call.tool_name, &digest, self.task_revision)
+                    .is_none()
+                {
+                    return Some(missing());
+                }
+                None
+            }
+        }
     }
 }
 
@@ -163,28 +254,25 @@ impl ToolCallExecutor for HostToolExecutor<'_> {
                 };
             }
             PermissionDecision::Ask { .. } => {
-                let digest = action_digest(
-                    call.tool_name,
-                    &canonical_input_json(call.input),
-                    self.task_revision,
-                );
-                if self
-                    .approvals
-                    .take(call.tool_name, &digest, self.task_revision)
-                    .is_none()
-                {
-                    // Tools with their own reviewable protocol report
-                    // the missing approval truthfully; plain tools
-                    // keep the exact frozen refusal.
-                    let message = if tool.requires_approval() {
-                        format!(
-                            "Capability {capability} requires a one-time host approval for this exact action; no matching approval was recorded, so the call was denied without execution."
-                        )
-                    } else {
-                        format!(
-                            "Capability {capability} requires approval, but this tool does not support a reviewable preparation protocol; the call was denied without execution."
-                        )
-                    };
+                if tool.requires_approval() {
+                    if let Some(message) =
+                        self.approval_gate(tool, capability, call)
+                    {
+                        events.push(failure_event(
+                            call.call_id,
+                            call.tool_name,
+                            &message,
+                        ));
+                        return ToolCallExecution {
+                            events,
+                            result: ToolExecutionResult::Denied { message },
+                        };
+                    }
+                } else {
+                    // A plain tool can never present its action, so the
+                    // ledger is never consulted for it: denial is by
+                    // kind, not by lookup.
+                    let message = unreviewable_denial(capability);
                     events.push(failure_event(
                         call.call_id,
                         call.tool_name,
@@ -202,19 +290,9 @@ impl ToolCallExecutor for HostToolExecutor<'_> {
                 // require per-action approval never execute on a
                 // permission rule alone.
                 if tool.requires_approval() {
-                    let digest = action_digest(
-                        call.tool_name,
-                        &canonical_input_json(call.input),
-                        self.task_revision,
-                    );
-                    if self
-                        .approvals
-                        .take(call.tool_name, &digest, self.task_revision)
-                        .is_none()
+                    if let Some(message) =
+                        self.approval_gate(tool, capability, call)
                     {
-                        let message = format!(
-                            "Capability {capability} requires a one-time host approval for this exact action; no matching approval was recorded, so the call was denied without execution."
-                        );
                         events.push(failure_event(
                             call.call_id,
                             call.tool_name,
@@ -790,6 +868,10 @@ pub struct SiralosApplication<'a, P: ModelProvider> {
     /// host records an approval. Shared with every response machine,
     /// so consumption is visible across prompts and rounds.
     approvals: SharedApprovals,
+    /// Synchronous approval resolver for the interactive frontends.
+    /// `None` everywhere else: without it, approval-gated calls are
+    /// denied without asking (headless, harness, evaluation).
+    approval_resolver: Option<SharedApprovalResolver>,
 }
 
 impl<'a, P: ModelProvider> SiralosApplication<'a, P> {
@@ -818,6 +900,7 @@ impl<'a, P: ModelProvider> SiralosApplication<'a, P> {
             projection_config: ApplicationProjectionConfig::default(),
             progress_ticks: false,
             approvals: SharedApprovals::new(),
+            approval_resolver: None,
         }
     }
 
@@ -835,6 +918,23 @@ impl<'a, P: ModelProvider> SiralosApplication<'a, P> {
     ) -> Self {
         self.approvals = approvals;
         self
+    }
+
+    /// Install the synchronous approval resolver (interactive
+    /// frontends only).
+    ///
+    /// Without a resolver the application denies approval-gated
+    /// calls without asking; that is the headless, harness, and
+    /// evaluation behavior and it never changes implicitly.
+    pub fn set_approval_resolver(
+        &mut self,
+        resolver: SharedApprovalResolver,
+    ) -> Result<(), PromptStartError> {
+        if matches!(&self.state, AppState::Responding(_)) {
+            return Err(PromptStartError::AlreadyResponding);
+        }
+        self.approval_resolver = Some(resolver);
+        Ok(())
     }
 
     /// Configure R7.3 projection for this application.
@@ -919,6 +1019,7 @@ impl<'a, P: ModelProvider> SiralosApplication<'a, P> {
             },
             approvals: self.approvals.clone(),
             task_revision: self.projection_config.task_revision,
+            resolver: self.approval_resolver.clone(),
         };
         let mut machine =
             ResponseMachine::new(self.provider, host, self.max_tool_rounds);

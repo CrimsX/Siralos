@@ -15,7 +15,8 @@ use crate::provider::{
     ToolCallInput, ToolDefinition, ToolExecutionResult,
 };
 use crate::tool::approval::{
-    ActionApproval, ActionApprovals, action_digest, canonical_input_json,
+    ActionApproval, ActionApprovals, ApprovalPreview, ApprovalVerdict,
+    SharedApprovalResolver, action_digest, canonical_input_json,
 };
 use crate::tool::capability::CapabilityId;
 use crate::tool::events::ToolLoopEvent;
@@ -998,22 +999,25 @@ fn ask_policy() -> PermissionPolicy {
 
 #[test]
 fn ask_with_matching_approval_executes_once_then_replay_is_denied() {
-    let tool = FixedTool::new("plain.tool", success_result());
+    // The approval path requires a reviewable tool: a plain tool
+    // without a preview can never present its action, so the ledger
+    // only authorizes tools that opt into per-action approval.
+    let tool = ApprovalStubTool::new(Some(stub_preview()));
     let calls = tool.calls.clone();
     let input = json!({"path": "a.txt"});
     let digest =
-        action_digest("plain.tool", &canonical_input_json(&input), None);
+        action_digest("gated.tool", &canonical_input_json(&input), None);
     let approvals = ActionApprovals::new().into_shared();
     assert!(
-        approvals.take("plain.tool", &digest, None).is_none(),
+        approvals.take("gated.tool", &digest, None).is_none(),
         "empty ledger matches nothing"
     );
     approvals
-        .approve(ActionApproval::new("plain.tool", digest, None).unwrap());
+        .approve(ActionApproval::new("gated.tool", digest, None).unwrap());
     let registry = registry(vec![boxed(tool)]);
     let provider = TurnScriptProvider::new(vec![
-        vec![tool_call("c1", "plain.tool", input.clone()), completed()],
-        vec![tool_call("c2", "plain.tool", input.clone()), completed()],
+        vec![tool_call("c1", "gated.tool", input.clone()), completed()],
+        vec![tool_call("c2", "gated.tool", input.clone()), completed()],
         vec![text("done"), completed()],
     ]);
     let mut app = SiralosApplication::new(
@@ -1034,7 +1038,7 @@ fn ask_with_matching_approval_executes_once_then_replay_is_denied() {
     assert!(matches!(
         result_in_history(app.history(), "c2"),
         Some(ToolExecutionResult::Denied { message })
-            if message == "Capability workspace.read requires approval, but this tool does not support a reviewable preparation protocol; the call was denied without execution."
+            if message == "Capability workspace.read requires a one-time host approval for this exact action; no matching approval was recorded, so the call was denied without execution."
     ));
     assert!(events.iter().any(|event| matches!(
         event,
@@ -1085,4 +1089,186 @@ fn ask_with_stale_revision_approval_is_denied_without_execution() {
         ToolLoopEvent::ToolFailed { call_id, .. } if call_id == "c1"
     )));
     assert_eq!(events.last(), Some(&ToolLoopEvent::ResponseCompleted));
+}
+
+#[derive(Clone)]
+struct ApprovalStubTool {
+    calls: Rc<Cell<usize>>,
+    preview: Option<ApprovalPreview>,
+}
+
+impl ApprovalStubTool {
+    fn new(preview: Option<ApprovalPreview>) -> Self {
+        Self { calls: Rc::new(Cell::new(0)), preview }
+    }
+}
+
+impl Tool for ApprovalStubTool {
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "gated.tool".to_owned(),
+            description: "approval-gated stub".to_owned(),
+            input_schema: json!({}),
+        }
+    }
+
+    fn capability(&self) -> &CapabilityId {
+        static_workspace_read()
+    }
+
+    fn requires_approval(&self) -> bool {
+        true
+    }
+
+    fn approval_preview(&self, _input: &Value) -> Option<ApprovalPreview> {
+        self.preview.clone()
+    }
+
+    fn execute(
+        &self,
+        _input: &Value,
+        _cancellation: crate::provider::CancellationSignal<'_>,
+    ) -> ToolExecutionResult {
+        self.calls.set(self.calls.get() + 1);
+        success_result()
+    }
+}
+
+fn stub_preview() -> ApprovalPreview {
+    ApprovalPreview {
+        title: "gated.tool preview".to_owned(),
+        lines: vec!["line one".to_owned()],
+    }
+}
+
+fn gated_app(
+    tool: ApprovalStubTool,
+    turns: Vec<Vec<ProviderEvent>>,
+) -> (SiralosApplication<'static, TurnScriptProvider>, Rc<Cell<usize>>) {
+    // The application borrows its provider and registry; leaking
+    // both keeps this helper total without lifetime plumbing in
+    // every caller.
+    let calls = tool.calls.clone();
+    let registry = registry(vec![boxed(tool)]);
+    let provider = TurnScriptProvider::new(turns);
+    let registry_static: &'static ToolRegistry = Box::leak(Box::new(registry));
+    let provider_static: &'static TurnScriptProvider =
+        Box::leak(Box::new(provider));
+    let app = SiralosApplication::new(
+        provider_static,
+        registry_static,
+        ask_policy(),
+        None,
+        None,
+    );
+    (app, calls)
+}
+
+#[test]
+fn resolver_approve_proceeds_in_the_same_dispatch() {
+    let tool = ApprovalStubTool::new(Some(stub_preview()));
+    let input = json!({"path": "a.txt"});
+    let (mut app, calls) = gated_app(
+        tool,
+        vec![
+            vec![tool_call("c1", "gated.tool", input), completed()],
+            vec![text("done"), completed()],
+        ],
+    );
+    let prompts = Rc::new(Cell::new(0));
+    let prompts_moved = prompts.clone();
+    app.set_approval_resolver(SharedApprovalResolver::new(move |_| {
+        prompts_moved.set(prompts_moved.get() + 1);
+        ApprovalVerdict::Approve
+    }))
+    .unwrap();
+    app.send_prompt("hello".to_owned()).unwrap();
+    run_to_end(&mut app);
+    assert_eq!(calls.get(), 1, "approved dispatch executes once");
+    assert_eq!(prompts.get(), 1, "exactly one prompt per dispatch");
+    assert!(matches!(
+        result_in_history(app.history(), "c1"),
+        Some(ToolExecutionResult::Success { .. })
+    ));
+}
+
+#[test]
+fn resolver_deny_denies_without_execution() {
+    let tool = ApprovalStubTool::new(Some(stub_preview()));
+    let input = json!({"path": "a.txt"});
+    let (mut app, calls) = gated_app(
+        tool,
+        vec![
+            vec![tool_call("c1", "gated.tool", input), completed()],
+            vec![text("done"), completed()],
+        ],
+    );
+    app.set_approval_resolver(SharedApprovalResolver::new(|_| {
+        ApprovalVerdict::Deny
+    }))
+    .unwrap();
+    app.send_prompt("hello".to_owned()).unwrap();
+    run_to_end(&mut app);
+    assert_eq!(calls.get(), 0, "denied dispatch never executes");
+    assert!(matches!(
+        result_in_history(app.history(), "c1"),
+        Some(ToolExecutionResult::Denied { message })
+            if message == "Capability workspace.read requires a one-time host approval for this exact action; the host denied the request, so the call was denied without execution."
+    ));
+}
+
+#[test]
+fn unreviewable_gated_tool_denies_without_consulting_resolver() {
+    let tool = ApprovalStubTool::new(None);
+    let input = json!({"path": "a.txt"});
+    let (mut app, calls) = gated_app(
+        tool,
+        vec![
+            vec![tool_call("c1", "gated.tool", input), completed()],
+            vec![text("done"), completed()],
+        ],
+    );
+    let prompts = Rc::new(Cell::new(0));
+    let prompts_moved = prompts.clone();
+    app.set_approval_resolver(SharedApprovalResolver::new(move |_| {
+        prompts_moved.set(prompts_moved.get() + 1);
+        ApprovalVerdict::Approve
+    }))
+    .unwrap();
+    app.send_prompt("hello".to_owned()).unwrap();
+    run_to_end(&mut app);
+    assert_eq!(calls.get(), 0);
+    assert_eq!(prompts.get(), 0, "unreviewable tools never prompt");
+    assert!(matches!(
+        result_in_history(app.history(), "c1"),
+        Some(ToolExecutionResult::Denied { message })
+            if message == "Capability workspace.read requires approval, but this tool does not support a reviewable preparation protocol; the call was denied without execution."
+    ));
+}
+
+#[test]
+fn hook_approval_is_one_time_per_dispatch() {
+    // Approving once authorizes one dispatch: an identical second
+    // dispatch prompts again instead of reusing the first approval.
+    let tool = ApprovalStubTool::new(Some(stub_preview()));
+    let input = json!({"path": "a.txt"});
+    let (mut app, calls) = gated_app(
+        tool,
+        vec![
+            vec![tool_call("c1", "gated.tool", input.clone()), completed()],
+            vec![tool_call("c2", "gated.tool", input), completed()],
+            vec![text("done"), completed()],
+        ],
+    );
+    let prompts = Rc::new(Cell::new(0));
+    let prompts_moved = prompts.clone();
+    app.set_approval_resolver(SharedApprovalResolver::new(move |_| {
+        prompts_moved.set(prompts_moved.get() + 1);
+        ApprovalVerdict::Approve
+    }))
+    .unwrap();
+    app.send_prompt("hello".to_owned()).unwrap();
+    run_to_end(&mut app);
+    assert_eq!(calls.get(), 2, "each dispatch executes on its own approval");
+    assert_eq!(prompts.get(), 2, "each dispatch prompts exactly once");
 }

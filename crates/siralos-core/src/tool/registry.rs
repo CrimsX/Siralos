@@ -16,6 +16,7 @@ use serde_json::Value;
 use crate::provider::{
     CancellationSignal, ToolDefinition, ToolExecutionResult,
 };
+use crate::tool::approval::ApprovalPreview;
 use crate::tool::capability::CapabilityId;
 
 /// One generic callable Tool.
@@ -42,6 +43,17 @@ pub trait Tool {
     /// grant implicitly (ADR 0038 D4).
     fn requires_approval(&self) -> bool {
         false
+    }
+
+    /// Build the reviewable preview for one proposed call.
+    ///
+    /// Read-only: the preview inspects state but performs no effect,
+    /// so the frontend can show the exact action before authorizing
+    /// it. Tools that require approval and return `None` here cannot
+    /// be reviewed and are denied without execution. The default is
+    /// `None` (plain tools are never approval-gated).
+    fn approval_preview(&self, _input: &Value) -> Option<ApprovalPreview> {
+        None
     }
 
     /// Execute one call under the current Host authorization.
