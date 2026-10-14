@@ -12,6 +12,7 @@
 //! C2's wiring (the worker loop, the cancel flag, the single replay flush) is
 //! written against it.
 
+use crate::interactive::ApprovalExchange;
 use crate::sanitize::{TerminalSanitizer, sanitize_for_display};
 use siralos_core::tool::ToolLoopEvent;
 
@@ -109,6 +110,20 @@ pub enum WorkerEvent {
     /// starts and again whenever the composition moves under it (`SetModel`,
     /// `Reload`), because only the session can derive it.
     Ready(SessionStatus),
+    /// A tool approval request from the worker thread (Part B). Data
+    /// only: the frontend presents `lines` in the approval modal and
+    /// delivers the verdict straight into the shared exchange (never
+    /// as a command — the worker is blocked in the hook and cannot
+    /// serve its command queue). Never transcript: only the verdict
+    /// line is recorded.
+    ApprovalRequest {
+        /// Exchange id the verdict delivery references.
+        id: u64,
+        /// Tool name of the proposed call.
+        tool_name: String,
+        /// Sanitized request lines for the modal.
+        lines: Vec<String>,
+    },
     /// The worker is exiting. A replay-persistence failure is also sent as
     /// `Failed`; the typed join result is authoritative for shutdown callers.
     Stopped,
@@ -842,6 +857,7 @@ pub struct WorkerHandle {
     cancel: CancelFlag,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     join: Option<std::thread::JoinHandle<WorkerStopOutcome>>,
+    approval_exchange: crate::interactive::ApprovalExchange,
 }
 
 impl WorkerHandle {
@@ -1078,6 +1094,14 @@ impl WorkerSource {
         self.handle.cancel_flag()
     }
 
+    /// The approval exchange the worker side shares: the UI thread
+    /// delivers modal verdicts straight into it (the worker is
+    /// blocked in the hook and serves no command queue).
+    #[must_use]
+    pub(crate) fn approval_exchange(&self) -> &ApprovalExchange {
+        &self.handle.approval_exchange
+    }
+
     /// Wait up to `timeout` for the next worker event (C2 step 3).
     ///
     /// `drain_events` keeps its non-blocking `poll_event`; a frontend that owns
@@ -1293,6 +1317,14 @@ pub fn spawn_worker(
     let thread_cancel = cancel.clone();
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let thread_stop = std::sync::Arc::clone(&stop);
+    // The approval exchange is shared before the thread starts: the
+    // worker side blocks in the hook on it, the UI side delivers
+    // verdicts into it, and shutdown unblocks it through `stop`.
+    let approval_exchange = crate::interactive::ApprovalExchange::new(
+        event_tx.clone(),
+        std::sync::Arc::clone(&stop),
+    );
+    let thread_exchange = approval_exchange.clone();
     let join = std::thread::spawn(move || {
         let options = crate::interactive::InteractiveOptions {
             config_path: config_path.as_deref(),
@@ -1301,6 +1333,18 @@ pub fn spawn_worker(
         match crate::interactive::compose_session(options) {
             Ok(mut session) => {
                 session.enable_progress_ticks();
+                if let Err(error) = session.set_approval_resolver(
+                    crate::interactive::exchange_resolver(thread_exchange),
+                ) {
+                    // Unreachable for a fresh composition (it is
+                    // idle by construction), but a silenced approval
+                    // path would be a security-relevant swallow, so a
+                    // failure here fails the whole composition loudly.
+                    let _ =
+                        event_tx.send(WorkerEvent::Failed(error.to_string()));
+                    let _ = event_tx.send(WorkerEvent::Stopped);
+                    return WorkerStopOutcome::AlreadyStopped;
+                }
                 run_worker_loop_with_stop(
                     &command_rx,
                     &event_tx,
@@ -1322,6 +1366,7 @@ pub fn spawn_worker(
         cancel,
         stop,
         join: Some(join),
+        approval_exchange,
     }
 }
 
@@ -1388,6 +1433,17 @@ pub fn apply_worker_event<W: std::io::Write>(
             let safe = crate::sanitize::sanitize_for_display(&text);
             writer.write_all(safe.as_bytes())?;
         }
+        WorkerEvent::ApprovalRequest { tool_name, .. } => {
+            // The shared bridge never drives modals: relays divert
+            // approval requests before they arrive here. This arm is
+            // the fail-loud fallback (and the test seam), never a
+            // silent drop.
+            writer.write_all(sanitizer.flush().as_bytes())?;
+            let safe = crate::sanitize::sanitize_for_display(&format!(
+                "approval requested for {tool_name} (no frontend claimed it)\n"
+            ));
+            writer.write_all(safe.as_bytes())?;
+        }
         WorkerEvent::Failed(message) => {
             writer.write_all(sanitizer.flush().as_bytes())?;
             let safe = crate::sanitize::sanitize_for_display(&message);
@@ -1408,8 +1464,8 @@ pub fn apply_worker_event<W: std::io::Write>(
 #[cfg(test)]
 pub(crate) mod worker_source_tests {
     use super::{
-        CancelFlag, EventSource, WorkerCommand, WorkerEvent, WorkerHandle,
-        WorkerSource,
+        ApprovalExchange, CancelFlag, EventSource, WorkerCommand, WorkerEvent,
+        WorkerHandle, WorkerSource,
     };
     use siralos_core::tool::ToolLoopEvent;
 
@@ -1439,6 +1495,7 @@ pub(crate) mod worker_source_tests {
                 false,
             )),
             join: None,
+            approval_exchange: ApprovalExchange::detached(),
         };
         Scripted {
             source: WorkerSource::new(handle),
@@ -1816,9 +1873,10 @@ mod loop_tests {
     }
 
     use super::{
-        CancelFlag, FlushError, FlushOutcome, SessionStatus, WorkerCommand,
-        WorkerEvent, WorkerHandle, WorkerSession, WorkerStopOutcome,
-        run_worker_loop, run_worker_loop_typed, run_worker_loop_with_stop,
+        ApprovalExchange, CancelFlag, FlushError, FlushOutcome, SessionStatus,
+        WorkerCommand, WorkerEvent, WorkerHandle, WorkerSession,
+        WorkerStopOutcome, run_worker_loop, run_worker_loop_typed,
+        run_worker_loop_with_stop,
     };
     use siralos_core::tool::ToolLoopEvent;
 
@@ -2441,6 +2499,7 @@ mod loop_tests {
             cancel,
             stop,
             join: Some(join),
+            approval_exchange: ApprovalExchange::detached(),
         };
 
         assert!(matches!(

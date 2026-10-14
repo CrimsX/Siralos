@@ -23,6 +23,28 @@ struct FakeSource {
     cancels: usize,
 }
 
+/// Shared session output: the interactive loop shares its writer with
+/// the approval hook, so tests observe it through the same shared
+/// handle the loop hands the hook.
+#[derive(Clone, Default)]
+struct SharedOutput(Rc<RefCell<Vec<u8>>>);
+
+impl SharedOutput {
+    fn bytes(&self) -> Vec<u8> {
+        self.0.borrow().clone()
+    }
+}
+
+impl Write for SharedOutput {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.borrow_mut().write(bytes)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.borrow_mut().flush()
+    }
+}
+
 impl crate::session_worker::EventSource for FakeSource {
     fn poll_event(&mut self) -> Option<ToolLoopEvent> {
         if self.events.is_empty() { None } else { Some(self.events.remove(0)) }
@@ -43,11 +65,11 @@ fn drain_events_reads_the_source_seam_and_cancels_on_request() {
         ],
         cancels: 0,
     };
-    let mut out: Vec<u8> = Vec::new();
+    let out = RefCell::new(Vec::new());
     let mut ticks = 0usize;
     super::drain_events(
         &mut source,
-        &mut out,
+        &out,
         &mut || {
             ticks += 1;
             ticks == 2
@@ -57,7 +79,7 @@ fn drain_events_reads_the_source_seam_and_cancels_on_request() {
     .expect("drain");
 
     assert_eq!(
-        String::from_utf8(out).expect("utf8"),
+        String::from_utf8(out.into_inner()).expect("utf8"),
         "hi\n",
         "the drain still forwards text through the terminal sanitizer"
     );
@@ -1214,18 +1236,18 @@ fn drain_events_reads_a_worker_backed_source() {
         worker.events.send(event).expect("send");
     }
 
-    let mut out: Vec<u8> = Vec::new();
+    let out = RefCell::new(Vec::new());
     let mut thinking = String::new();
     super::drain_events(
         &mut worker.source,
-        &mut out,
+        &out,
         &mut || false,
         &mut |text| thinking.push_str(text),
     )
     .expect("drain");
 
     assert_eq!(
-        String::from_utf8(out).expect("utf8"),
+        String::from_utf8(out.into_inner()).expect("utf8"),
         "hi",
         "answer text streams through the terminal sanitizer"
     );
@@ -1766,17 +1788,17 @@ fn run(
             None
         }
     };
-    let mut output = Vec::new();
+    let output = SharedOutput::default();
     run_interactive_session_with_options(
-        Cursor::new(lines.as_bytes()),
-        &mut output,
+        Cursor::new(lines.as_bytes().to_vec()),
+        output.clone(),
         InteractiveOptions {
             config_path: effective_config,
             workspace_root: Some(root),
         },
     )
     .expect("interactive session");
-    String::from_utf8(output).expect("utf8 output")
+    String::from_utf8(output.bytes()).expect("utf8 output")
 }
 
 #[test]
@@ -5363,4 +5385,849 @@ fn model_switch_rejects_aba_after_exact_record_observation() {
     );
     assert!(mutation_temps(&root).is_empty());
     let _ = remove_dir_all(root);
+}
+
+/// A proposing provider for the approval end-to-end tests: one
+/// scripted turn per request, then silence.
+struct ApprovalScriptProvider {
+    turns: Vec<Vec<siralos_core::provider::ProviderEvent>>,
+    next: std::cell::Cell<usize>,
+}
+
+impl siralos_core::provider::ModelProvider for ApprovalScriptProvider {
+    type Stream<'a>
+        = std::vec::IntoIter<siralos_core::provider::ProviderEvent>
+    where
+        Self: 'a;
+
+    fn id(&self) -> &str {
+        "approval-script"
+    }
+
+    fn stream<'a>(
+        &'a self,
+        _request: &'a siralos_core::provider::ModelRequest,
+        _cancellation: siralos_core::provider::CancellationSignal<'a>,
+    ) -> Self::Stream<'a> {
+        let index = self.next.get().min(self.turns.len().saturating_sub(1));
+        self.next.set(index + 1);
+        self.turns[index].clone().into_iter()
+    }
+}
+
+fn approval_call(
+    call_id: &str,
+    tool_name: &str,
+    input: serde_json::Value,
+) -> siralos_core::provider::ProviderEvent {
+    use siralos_core::provider::{ModelEvent, ProviderEvent, ToolCallInput};
+    ProviderEvent::Event(ModelEvent::ToolCall {
+        call_id: call_id.to_owned(),
+        tool_name: tool_name.to_owned(),
+        input: ToolCallInput::from_value(input),
+    })
+}
+
+fn approval_completed() -> siralos_core::provider::ProviderEvent {
+    use siralos_core::provider::{ModelEvent, ProviderEvent};
+    ProviderEvent::Event(ModelEvent::Completed)
+}
+
+fn write_ask_policy() -> siralos_core::tool::PermissionPolicy {
+    use siralos_core::tool::{PermissionPolicy, PermissionRule, PolicyRule};
+    PermissionPolicy::from_rules([PolicyRule {
+        capability: siralos_core::tool::CapabilityId::parse("workspace.write")
+            .expect("workspace.write is a valid capability id"),
+        rule: PermissionRule::Ask,
+    }])
+}
+
+fn dispatch_prompt(
+    root: &Path,
+    application: &mut siralos_core::tool::SiralosApplication<
+        '_,
+        ApprovalScriptProvider,
+    >,
+    writer: &Rc<RefCell<SharedOutput>>,
+    reader: &Rc<RefCell<Cursor<Vec<u8>>>>,
+    live_provider: &super::SessionProvider,
+    prompt: &str,
+) -> bool {
+    use std::collections::BTreeMap;
+    let mut hosts: BTreeMap<String, super::ModuleHost> = BTreeMap::new();
+    let mut manifests: BTreeMap<String, super::ModuleManifest> =
+        BTreeMap::new();
+    let mut applied_model = None;
+    let mut applied_model_display_name = None;
+    let mut applied_credential_raw = None;
+    let mut applied_endpoint = None;
+    let mut applied_credential = None;
+    let mut applied_protocol_str = String::new();
+    let mut authority_revoked = false;
+    let mut applied_non_live_digest = None;
+    let mut session_holder = None;
+    let mut history_len = 0usize;
+    super::stdio::dispatch_stdio_command(
+        &super::SlashCommand::Prompt(prompt),
+        root,
+        // The Prompt arm never renders tool definitions; an empty
+        // slice keeps the test honest about what it exercises.
+        &[],
+        &write_ask_policy(),
+        application,
+        writer,
+        reader,
+        &mut hosts,
+        &mut manifests,
+        None,
+        None,
+        false,
+        &mut session_holder,
+        &mut history_len,
+        None,
+        live_provider,
+        &mut applied_model,
+        &mut applied_model_display_name,
+        &mut applied_credential_raw,
+        &mut applied_endpoint,
+        &mut applied_credential,
+        root,
+        &mut applied_protocol_str,
+        &mut authority_revoked,
+        &mut applied_non_live_digest,
+    )
+    .expect("dispatch")
+}
+
+#[test]
+fn stdio_prompter_approves_denies_and_fails_closed() {
+    use super::StdioApprovalPrompter;
+    use siralos_core::tool::{ApprovalPreview, ApprovalRequest};
+    let request = ApprovalRequest {
+        tool_name: "write".to_owned(),
+        task_revision: None,
+        preview: ApprovalPreview {
+            title: "write n.txt".to_owned(),
+            lines: vec!["path: n.txt".to_owned()],
+        },
+    };
+    let decide = |input: &[u8]| {
+        let reader: Rc<RefCell<Cursor<Vec<u8>>>> =
+            Rc::new(RefCell::new(Cursor::new(input.to_vec())));
+        let writer: Rc<RefCell<SharedOutput>> =
+            Rc::new(RefCell::new(SharedOutput::default()));
+        let verdict = StdioApprovalPrompter::resolver(
+            Rc::clone(&reader),
+            Rc::clone(&writer),
+        );
+        let outcome = verdict.resolve(&request);
+        let text = String::from_utf8(writer.borrow().bytes()).expect("utf8");
+        (outcome, text)
+    };
+    let (outcome, text) = decide(b"y\n");
+    assert_eq!(outcome, siralos_core::tool::ApprovalVerdict::Approve);
+    assert!(text.contains("write n.txt"));
+    assert!(text.contains("Approve? (y/N)"));
+    let (outcome, _) = decide(b"n\n");
+    assert_eq!(outcome, siralos_core::tool::ApprovalVerdict::Deny);
+    let (outcome, _) = decide(b"");
+    assert_eq!(outcome, siralos_core::tool::ApprovalVerdict::Deny);
+    // Hostile preview text crosses the same sanitizer as the modal.
+    let hostile = ApprovalRequest {
+        tool_name: "write".to_owned(),
+        task_revision: None,
+        preview: ApprovalPreview {
+            title: "write n.txt".to_owned(),
+            lines: vec!["content: \u{1b}]0;evil\u{07}plain".to_owned()],
+        },
+    };
+    let reader: Rc<RefCell<Cursor<Vec<u8>>>> =
+        Rc::new(RefCell::new(Cursor::new(b"y\n".to_vec())));
+    let writer: Rc<RefCell<SharedOutput>> =
+        Rc::new(RefCell::new(SharedOutput::default()));
+    let verdict = StdioApprovalPrompter::resolver(reader, writer.clone());
+    assert_eq!(
+        verdict.resolve(&hostile),
+        siralos_core::tool::ApprovalVerdict::Approve
+    );
+    let text = String::from_utf8(writer.borrow().bytes()).expect("utf8");
+    assert!(!text.contains('\u{1b}'));
+    assert!(text.contains("plain"));
+}
+
+#[test]
+fn stdio_prompt_approves_write_end_to_end() {
+    let root = temporary_directory("stdio-approve-write");
+    let store_root = temporary_directory("stdio-approve-store");
+    let store =
+        siralos_adapters::workspace::checkpoint::open_checkpoint_store(
+            &root,
+            &store_root,
+        )
+        .unwrap();
+    let tool = super::WriteTool::new(&root, store).expect("write tool");
+    let registry = siralos_core::tool::ToolRegistry::new(vec![
+        Box::new(tool) as Box<dyn siralos_core::tool::Tool>
+    ])
+    .unwrap();
+    let input = serde_json::json!({"path": "made.txt", "content": "live"});
+    let provider = ApprovalScriptProvider {
+        turns: vec![
+            vec![approval_call("c1", "write", input), approval_completed()],
+            vec![approval_completed()],
+        ],
+        next: std::cell::Cell::new(0),
+    };
+    let mut application = siralos_core::tool::SiralosApplication::new(
+        &provider,
+        &registry,
+        write_ask_policy(),
+        None,
+        None,
+    );
+    let reader: Rc<RefCell<Cursor<Vec<u8>>>> =
+        Rc::new(RefCell::new(Cursor::new(b"y\n".to_vec())));
+    let writer: Rc<RefCell<SharedOutput>> =
+        Rc::new(RefCell::new(SharedOutput::default()));
+    application
+        .set_approval_resolver(super::StdioApprovalPrompter::resolver(
+            Rc::clone(&reader),
+            Rc::clone(&writer),
+        ))
+        .expect("idle session accepts a resolver");
+    let live_provider = super::SessionProvider::Replay(
+        siralos_adapters::provider::replay::RecordedReplayProvider::new(
+            "test".to_owned(),
+            "test".to_owned(),
+            Vec::new(),
+        ),
+    );
+    let exit = dispatch_prompt(
+        &root,
+        &mut application,
+        &writer,
+        &reader,
+        &live_provider,
+        "create the file",
+    );
+    assert!(!exit);
+    assert_eq!(read(root.join("made.txt")).expect("file"), b"live");
+    let text = String::from_utf8(writer.borrow().bytes()).expect("utf8");
+    assert!(text.contains("write made.txt"));
+    assert!(text.contains("Approve? (y/N)"));
+    assert!(
+        !text.contains("approval delivery failed"),
+        "one delivery per verdict: {text:?}"
+    );
+    let _ = remove_dir_all(&root);
+    let _ = remove_dir_all(store_root);
+}
+
+#[test]
+fn stdio_prompt_deny_leaves_the_workspace_untouched() {
+    let root = temporary_directory("stdio-deny-write");
+    let store_root = temporary_directory("stdio-deny-store");
+    let store =
+        siralos_adapters::workspace::checkpoint::open_checkpoint_store(
+            &root,
+            &store_root,
+        )
+        .unwrap();
+    let tool = super::WriteTool::new(&root, store).expect("write tool");
+    let registry = siralos_core::tool::ToolRegistry::new(vec![
+        Box::new(tool) as Box<dyn siralos_core::tool::Tool>
+    ])
+    .unwrap();
+    let input = serde_json::json!({"path": "never.txt", "content": "live"});
+    let provider = ApprovalScriptProvider {
+        turns: vec![
+            vec![approval_call("c1", "write", input), approval_completed()],
+            vec![approval_completed()],
+        ],
+        next: std::cell::Cell::new(0),
+    };
+    let mut application = siralos_core::tool::SiralosApplication::new(
+        &provider,
+        &registry,
+        write_ask_policy(),
+        None,
+        None,
+    );
+    let reader: Rc<RefCell<Cursor<Vec<u8>>>> =
+        Rc::new(RefCell::new(Cursor::new(b"n\n".to_vec())));
+    let writer: Rc<RefCell<SharedOutput>> =
+        Rc::new(RefCell::new(SharedOutput::default()));
+    application
+        .set_approval_resolver(super::StdioApprovalPrompter::resolver(
+            Rc::clone(&reader),
+            Rc::clone(&writer),
+        ))
+        .expect("idle session accepts a resolver");
+    let live_provider = super::SessionProvider::Replay(
+        siralos_adapters::provider::replay::RecordedReplayProvider::new(
+            "test".to_owned(),
+            "test".to_owned(),
+            Vec::new(),
+        ),
+    );
+    let exit = dispatch_prompt(
+        &root,
+        &mut application,
+        &writer,
+        &reader,
+        &live_provider,
+        "create the file",
+    );
+    assert!(!exit);
+    assert!(!root.join("never.txt").exists());
+    let text = String::from_utf8(writer.borrow().bytes()).expect("utf8");
+    assert!(text.contains("requires a one-time host approval"));
+    let _ = remove_dir_all(&root);
+    let _ = remove_dir_all(store_root);
+}
+
+fn bash_ask_policy() -> siralos_core::tool::PermissionPolicy {
+    use siralos_core::tool::{PermissionPolicy, PermissionRule, PolicyRule};
+    PermissionPolicy::from_rules([PolicyRule {
+        capability: siralos_core::tool::CapabilityId::parse("process.execute")
+            .expect("process.execute is a valid capability id"),
+        rule: PermissionRule::Ask,
+    }])
+}
+
+#[test]
+fn bash_approval_for_one_command_never_authorizes_another() {
+    // Digest mismatch end to end: the host approved `echo approved`
+    // but the provider proposes `echo mutated`. The gate must deny
+    // before the tool runs, and the recorded approval stays
+    // unconsumed for its own exact call.
+    use siralos_core::tool::{
+        ActionApproval, SharedApprovals, action_digest, canonical_input_json,
+    };
+    let root = temporary_directory("bash-digest-mismatch");
+    let tool = siralos_adapters::tool::BashTool::new();
+    let registry = siralos_core::tool::ToolRegistry::new(vec![
+        Box::new(tool) as Box<dyn siralos_core::tool::Tool>
+    ])
+    .unwrap();
+    let approved_input = serde_json::json!({"command": "echo approved"});
+    let proposed_input = serde_json::json!({"command": "echo mutated"});
+    let digest =
+        action_digest("bash", &canonical_input_json(&approved_input), None);
+    let approvals = SharedApprovals::new();
+    approvals.approve(
+        ActionApproval::new("bash", digest, None).expect("approval mints"),
+    );
+    let held = approvals.clone();
+    let provider = ApprovalScriptProvider {
+        turns: vec![
+            vec![
+                approval_call("c1", "bash", proposed_input),
+                approval_completed(),
+            ],
+            vec![approval_completed()],
+        ],
+        next: std::cell::Cell::new(0),
+    };
+    let mut application = siralos_core::tool::SiralosApplication::new(
+        &provider,
+        &registry,
+        bash_ask_policy(),
+        None,
+        None,
+    )
+    .with_action_approvals(approvals);
+    let reader: Rc<RefCell<Cursor<Vec<u8>>>> =
+        Rc::new(RefCell::new(Cursor::new(Vec::new())));
+    let writer: Rc<RefCell<SharedOutput>> =
+        Rc::new(RefCell::new(SharedOutput::default()));
+    let live_provider = super::SessionProvider::Replay(
+        siralos_adapters::provider::replay::RecordedReplayProvider::new(
+            "test".to_owned(),
+            "test".to_owned(),
+            Vec::new(),
+        ),
+    );
+    let exit = dispatch_prompt(
+        &root,
+        &mut application,
+        &writer,
+        &reader,
+        &live_provider,
+        "run the command",
+    );
+    assert!(!exit);
+    let text = String::from_utf8(writer.borrow().bytes()).expect("utf8");
+    assert!(text.contains("requires a one-time host approval"), "{text:?}");
+    assert_eq!(held.len(), 1, "the mismatched call consumes nothing");
+    let _ = remove_dir_all(&root);
+}
+
+#[test]
+fn bash_approved_call_still_refuses_without_enforcement() {
+    // Approval is not execution: the host approves the exact
+    // command through the resolver, the gate passes, and the tool
+    // still reports typed unavailability because no live probe
+    // proves enforcement.
+    let root = temporary_directory("bash-approved-unavailable");
+    let tool = siralos_adapters::tool::BashTool::new();
+    let registry = siralos_core::tool::ToolRegistry::new(vec![
+        Box::new(tool) as Box<dyn siralos_core::tool::Tool>
+    ])
+    .unwrap();
+    let input = serde_json::json!({"command": "echo approved"});
+    let provider = ApprovalScriptProvider {
+        turns: vec![
+            vec![approval_call("c1", "bash", input), approval_completed()],
+            vec![approval_completed()],
+        ],
+        next: std::cell::Cell::new(0),
+    };
+    let mut application = siralos_core::tool::SiralosApplication::new(
+        &provider,
+        &registry,
+        bash_ask_policy(),
+        None,
+        None,
+    );
+    let reader: Rc<RefCell<Cursor<Vec<u8>>>> =
+        Rc::new(RefCell::new(Cursor::new(b"y\n".to_vec())));
+    let writer: Rc<RefCell<SharedOutput>> =
+        Rc::new(RefCell::new(SharedOutput::default()));
+    application
+        .set_approval_resolver(super::StdioApprovalPrompter::resolver(
+            Rc::clone(&reader),
+            Rc::clone(&writer),
+        ))
+        .expect("idle session accepts a resolver");
+    let live_provider = super::SessionProvider::Replay(
+        siralos_adapters::provider::replay::RecordedReplayProvider::new(
+            "test".to_owned(),
+            "test".to_owned(),
+            Vec::new(),
+        ),
+    );
+    let exit = dispatch_prompt(
+        &root,
+        &mut application,
+        &writer,
+        &reader,
+        &live_provider,
+        "run the command",
+    );
+    assert!(!exit);
+    let text = String::from_utf8(writer.borrow().bytes()).expect("utf8");
+    assert!(text.contains("bash execution is unavailable"), "{text:?}");
+    let _ = remove_dir_all(&root);
+}
+
+// --- Part B3: approval UI-seam adversarial coverage ---
+
+#[test]
+fn render_approval_request_sanitizes_preview_text() {
+    use siralos_core::tool::{ApprovalPreview, ApprovalRequest};
+    let request = ApprovalRequest {
+        tool_name: "write".to_owned(),
+        task_revision: None,
+        preview: ApprovalPreview {
+            title: "write \u{1b}]0;evil\u{07}n.txt".to_owned(),
+            lines: vec![
+                "content: \u{1b}[31mred".to_owned(),
+                "plain".to_owned(),
+            ],
+        },
+    };
+    let lines = super::render_approval_request(&request);
+    let joined = lines.join("\n");
+    assert!(!joined.contains('\u{1b}'), "no escape survives: {joined:?}");
+    assert!(joined.contains("plain"));
+    assert!(joined.contains("n.txt"));
+}
+
+#[test]
+fn exchange_delivers_verdict_to_a_blocked_hook() {
+    use super::ApprovalExchange;
+    use siralos_core::tool::ApprovalVerdict;
+    let (events, event_rx) = std::sync::mpsc::sync_channel(8);
+    let exchange = ApprovalExchange::new(
+        events,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
+    let worker = exchange.clone();
+    let handle = std::thread::spawn(move || {
+        worker.request_blocking("write", vec!["write n.txt".to_owned()])
+    });
+    // The hook registers before it blocks; poll boundedly rather
+    // than assuming scheduling.
+    let mut spins = 0;
+    while exchange.pending_count() == 0 && spins < 1000 {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        spins += 1;
+    }
+    assert_eq!(exchange.pending_count(), 1);
+    // The table insert precedes the announcement send, so poll
+    // boundedly for the event itself.
+    let mut announced = None;
+    for _ in 0..1000 {
+        if let Ok(event) = event_rx.try_recv() {
+            announced = Some(event);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert!(matches!(
+        announced,
+        Some(crate::session_worker::WorkerEvent::ApprovalRequest {
+            id: 0,
+            ..
+        })
+    ));
+    assert!(exchange.deliver(0, ApprovalVerdict::Approve));
+    assert_eq!(
+        handle.join().expect("hook thread joins"),
+        ApprovalVerdict::Approve
+    );
+    assert_eq!(exchange.pending_count(), 0, "resolved entries leave");
+    // Stale ids stay silent.
+    assert!(!exchange.deliver(0, ApprovalVerdict::Deny));
+}
+
+#[test]
+fn exchange_detached_denies_and_stop_unblocks() {
+    use super::ApprovalExchange;
+    use siralos_core::tool::ApprovalVerdict;
+    let detached = ApprovalExchange::detached();
+    assert_eq!(
+        detached.request_blocking("write", vec!["x".to_owned()]),
+        ApprovalVerdict::Deny,
+        "no frontend means no approval"
+    );
+    let (events, _) = std::sync::mpsc::sync_channel(8);
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let exchange = ApprovalExchange::new(events, stop);
+    // Pre-set stop unblocks without a verdict (shutdown path).
+    assert_eq!(
+        exchange.request_blocking("write", vec!["x".to_owned()]),
+        ApprovalVerdict::Deny
+    );
+}
+
+#[test]
+fn pump_diverts_approval_request_from_answers_and_transcript() {
+    use super::{Until, pump_worker};
+    let mut tui = ScriptedTui::new();
+    tui.answer(vec![crate::session_worker::WorkerEvent::ApprovalRequest {
+        id: 7,
+        tool_name: "write".to_owned(),
+        lines: vec!["write \u{1b}[31mn.txt".to_owned()],
+    }]);
+    let mut progress = || false;
+    let mut reasoning = |_: &str| {};
+    let effects = pump_worker(
+        &mut tui.worker.source,
+        &mut tui.sink,
+        &tui.state,
+        &tui.pane,
+        &mut progress,
+        &mut reasoning,
+        Until::Answer,
+    )
+    .expect("pump");
+    // Diverted: modal armed (re-sanitized), pending id recorded, NOT
+    // consumed as the request command's answer, NOT transcripted.
+    assert_eq!(effects.approval_pending, Some(7));
+    assert!(effects.answer.is_none(), "request must not answer");
+    let state = tui.state.borrow();
+    let modal = state.pending_approval.as_ref().expect("modal armed");
+    assert!(modal.lines.iter().any(|line| line.contains("n.txt")));
+    assert!(
+        !modal.lines.iter().any(|line| line.contains('\u{1b}')),
+        "modal lines re-sanitized: {:?}",
+        modal.lines
+    );
+    assert_eq!(state.pending_tool_approval, Some(7));
+    assert!(
+        !state.transcript_lines.iter().any(|line| line.contains("n.txt")),
+        "request itself is never transcript"
+    );
+}
+
+#[test]
+fn dispatch_suspends_turn_on_tool_approval() {
+    let root = temporary_directory("tui-approval-suspend");
+    let mut tui = ScriptedTui::new();
+    tui.answer(vec![crate::session_worker::WorkerEvent::ApprovalRequest {
+        id: 9,
+        tool_name: "edit".to_owned(),
+        lines: vec!["edit a.txt".to_owned()],
+    }]);
+    let mut ticks = 0usize;
+    let exit = tui.dispatch(
+        &super::SlashCommand::Prompt("change it"),
+        &root,
+        &mut ticks,
+    );
+    assert!(!exit, "suspension is not an exit");
+    assert!(tui.state.borrow().pending_approval.is_some());
+    assert_eq!(tui.state.borrow().pending_tool_approval, Some(9));
+    let _ = remove_dir_all(root);
+}
+
+#[test]
+fn tool_modal_keys_cannot_bypass_the_exchange() {
+    use super::handle_pending_approval_key;
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+    fn press(code: KeyCode) -> KeyEvent {
+        KeyEvent::new_with_kind(code, KeyModifiers::NONE, KeyEventKind::Press)
+    }
+    let root = temporary_directory("tui-approval-keys");
+    // The handler resolves keys but never touches the exchange:
+    // delivery is the main loop's separate step.
+    let tui_state = Rc::new(RefCell::new(crate::tui::TuiState::new()));
+    tui_state.borrow_mut().pending_approval =
+        Some(crate::tui::ApprovalModal::new(vec!["req".to_owned()]));
+    tui_state.borrow_mut().pending_tool_approval = Some(3);
+    let mut sink = crate::tui::TuiSink::new(tui_state.clone());
+    assert!(
+        !handle_pending_approval_key(
+            &tui_state,
+            press(KeyCode::Char('a')),
+            &root,
+            &mut sink
+        ),
+        "non-modal key must not decide"
+    );
+    assert!(tui_state.borrow().pending_approval.is_some());
+    assert_eq!(tui_state.borrow().pending_tool_approval, Some(3));
+    assert!(
+        handle_pending_approval_key(
+            &tui_state,
+            press(KeyCode::Char('y')),
+            &root,
+            &mut sink
+        ),
+        "modal key must decide"
+    );
+    assert!(tui_state.borrow().pending_approval.is_none());
+    assert_eq!(
+        tui_state.borrow().pending_tool_approval,
+        Some(3),
+        "the handler clears the modal, never the exchange id"
+    );
+    let _ = remove_dir_all(root);
+}
+
+#[test]
+fn deliver_and_resume_complete_a_suspended_turn() {
+    use super::{deliver_tool_approval_verdict, resume_suspended_turn};
+    // A blocked hook plus a verdict delivery.
+    let (events, _event_rx) = std::sync::mpsc::sync_channel(8);
+    let exchange = super::ApprovalExchange::new(
+        events,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
+    let worker_exchange = exchange.clone();
+    let hook = std::thread::spawn(move || {
+        worker_exchange.request_blocking("write", vec!["req".to_owned()])
+    });
+    let mut spins = 0;
+    while exchange.pending_count() == 0 && spins < 1000 {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        spins += 1;
+    }
+    let state = Rc::new(RefCell::new(crate::tui::TuiState::new()));
+    state.borrow_mut().pending_tool_approval = Some(0);
+    let sink_state = Rc::new(RefCell::new(crate::tui::TuiState::new()));
+    let mut sink = crate::tui::TuiSink::new(Rc::clone(&sink_state));
+    assert!(
+        deliver_tool_approval_verdict(
+            &state,
+            &exchange,
+            &mut sink,
+            crate::tui::ApprovalDecision::Approve
+        ),
+        "live id delivers"
+    );
+    assert_eq!(
+        hook.join().expect("hook joins"),
+        siralos_core::tool::ApprovalVerdict::Approve
+    );
+    // Unknown ids stay silent (and loud in the transcript).
+    assert!(
+        !deliver_tool_approval_verdict(
+            &state,
+            &exchange,
+            &mut sink,
+            crate::tui::ApprovalDecision::Deny
+        ),
+        "consumed id must not deliver twice"
+    );
+    // Resume against a scripted completed turn ends it.
+    let mut tui = ScriptedTui::new();
+    tui.answer(vec![crate::session_worker::WorkerEvent::TurnFinished]);
+    tui.state.borrow_mut().pending_tool_approval = Some(11);
+    tui.state.borrow_mut().begin_turn(std::time::Instant::now());
+    let mut progress = || false;
+    let mut reasoning = |_: &str| {};
+    resume_suspended_turn(
+        &mut tui.worker.source,
+        &mut tui.sink,
+        &tui.state,
+        &tui.pane,
+        &mut progress,
+        &mut reasoning,
+    )
+    .expect("resume");
+    assert!(tui.state.borrow().pending_tool_approval.is_none());
+    assert!(
+        tui.state.borrow().busy_since.is_none(),
+        "completed resume ends the turn"
+    );
+}
+
+#[test]
+fn shown_preview_and_executed_bytes_stay_bound() {
+    // Show-then-mutate through the prompter seam: the user is shown
+    // the preview for input A (asserted below), an approval for A is
+    // recorded, then input B is dispatched. The gate must consult
+    // the resolver again for B — never silently reuse A's approval —
+    // and a denying verdict must refuse without effect.
+    use siralos_core::tool::{
+        ActionApproval, ActionApprovals, action_digest, canonical_input_json,
+    };
+    let root = temporary_directory("stdio-shown-mutated");
+    let store_root = temporary_directory("stdio-shown-store");
+    let store =
+        siralos_adapters::workspace::checkpoint::open_checkpoint_store(
+            &root,
+            &store_root,
+        )
+        .unwrap();
+    let tool = super::WriteTool::new(&root, store).expect("write tool");
+    let input_a =
+        serde_json::json!({"path": "shown.txt", "content": "approved"});
+    let input_b =
+        serde_json::json!({"path": "shown.txt", "content": "mutated"});
+    // What the user would have been shown for A.
+    use siralos_core::tool::Tool as _;
+    let shown =
+        super::render_approval_request(&siralos_core::tool::ApprovalRequest {
+            tool_name: "write".to_owned(),
+            task_revision: None,
+            preview: tool
+                .approval_preview(&input_a)
+                .expect("well-formed input previews"),
+        });
+    let shown_text = shown.join("\n");
+    assert!(shown_text.contains("approved"), "{shown_text:?}");
+    assert!(!shown_text.contains("mutated"), "{shown_text:?}");
+    // The recorded approval binds A only.
+    let digest_a =
+        action_digest("write", &canonical_input_json(&input_a), None);
+    let mut ledger = ActionApprovals::new();
+    ledger.approve(
+        ActionApproval::new("write", digest_a, None)
+            .expect("computed digest is valid"),
+    );
+    let registry = siralos_core::tool::ToolRegistry::new(vec![
+        Box::new(tool) as Box<dyn siralos_core::tool::Tool>
+    ])
+    .unwrap();
+    let provider = ApprovalScriptProvider {
+        turns: vec![
+            vec![approval_call("c1", "write", input_b), approval_completed()],
+            vec![approval_completed()],
+        ],
+        next: std::cell::Cell::new(0),
+    };
+    let mut application = siralos_core::tool::SiralosApplication::new(
+        &provider,
+        &registry,
+        write_ask_policy(),
+        None,
+        None,
+    )
+    .with_action_approvals(ledger.into_shared());
+    // The resolver denies and records what it was shown: the prompt
+    // must describe B (the dispatched bytes), never the approved A.
+    let seen: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    let seen_moved = Rc::clone(&seen);
+    let prompts = Rc::new(std::cell::Cell::new(0));
+    let prompts_moved = Rc::clone(&prompts);
+    application
+        .set_approval_resolver(
+            siralos_core::tool::SharedApprovalResolver::new(move |request| {
+                prompts_moved.set(prompts_moved.get() + 1);
+                seen_moved
+                    .borrow_mut()
+                    .extend(super::render_approval_request(request));
+                siralos_core::tool::ApprovalVerdict::Deny
+            }),
+        )
+        .expect("idle session accepts a resolver");
+    let reader: Rc<RefCell<Cursor<Vec<u8>>>> =
+        Rc::new(RefCell::new(Cursor::new(b"".to_vec())));
+    let writer: Rc<RefCell<SharedOutput>> =
+        Rc::new(RefCell::new(SharedOutput::default()));
+    let live_provider = super::SessionProvider::Replay(
+        siralos_adapters::provider::replay::RecordedReplayProvider::new(
+            "test".to_owned(),
+            "test".to_owned(),
+            Vec::new(),
+        ),
+    );
+    let exit = dispatch_prompt(
+        &root,
+        &mut application,
+        &writer,
+        &reader,
+        &live_provider,
+        "create the file",
+    );
+    assert!(!exit);
+    assert_eq!(prompts.get(), 1, "B must prompt anew, never reuse A's grant");
+    let prompted = seen.borrow().join("\n");
+    assert!(prompted.contains("mutated"), "{prompted:?}");
+    assert!(!prompted.contains("approved"), "{prompted:?}");
+    assert!(!root.join("shown.txt").exists());
+    let text = String::from_utf8(writer.borrow().bytes()).expect("utf8");
+    assert!(text.contains("host denied the request"), "{text:?}");
+    let _ = remove_dir_all(&root);
+    let _ = remove_dir_all(store_root);
+}
+
+#[test]
+fn prompter_truncates_oversized_previews_with_a_count() {
+    use super::StdioApprovalPrompter;
+    use siralos_core::tool::{
+        ApprovalPreview, ApprovalRequest, MAX_APPROVAL_PREVIEW_LINES,
+    };
+    let lines: Vec<String> = (0..MAX_APPROVAL_PREVIEW_LINES + 40)
+        .map(|n| format!("line {n}"))
+        .collect();
+    let request = ApprovalRequest {
+        tool_name: "write".to_owned(),
+        task_revision: None,
+        preview: ApprovalPreview { title: "write big.txt".to_owned(), lines },
+    };
+    let reader: Rc<RefCell<Cursor<Vec<u8>>>> =
+        Rc::new(RefCell::new(Cursor::new(b"n\n".to_vec())));
+    let writer: Rc<RefCell<SharedOutput>> =
+        Rc::new(RefCell::new(SharedOutput::default()));
+    let verdict = StdioApprovalPrompter::resolver(
+        Rc::clone(&reader),
+        Rc::clone(&writer),
+    );
+    assert_eq!(
+        verdict.resolve(&request),
+        siralos_core::tool::ApprovalVerdict::Deny
+    );
+    let text = String::from_utf8(writer.borrow().bytes()).expect("utf8");
+    assert!(text.contains("line 0"), "{text:?}");
+    let tail = format!("line {}", MAX_APPROVAL_PREVIEW_LINES + 39);
+    assert!(
+        !text.contains(tail.as_str()),
+        "tail lines must not render: {text:?}"
+    );
+    assert!(text.contains("40 more lines"), "{text:?}");
 }

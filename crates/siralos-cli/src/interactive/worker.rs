@@ -53,7 +53,7 @@ pub(super) enum Until {
 #[derive(Debug, Default)]
 pub(super) struct ReplyEffects {
     /// The answer event, when the caller asked for one.
-    answer: Option<WorkerEvent>,
+    pub(super) answer: Option<WorkerEvent>,
     /// The worker stopped before the wait was satisfied.
     stopped: bool,
     /// The stop was observed as the worker's terminal `Stopped` event, not
@@ -61,6 +61,11 @@ pub(super) struct ReplyEffects {
     /// real stop can become a frontend error while a scripted/closed channel
     /// remains quiet.
     pub(super) stopped_event: bool,
+    /// A tool approval request suspended the turn: the exchange id the
+    /// dispatcher's modal verdict must be delivered to. Set with the
+    /// modal; the dispatcher pumps the modal, delivers, and re-enters
+    /// for the remainder of the turn.
+    pub(super) approval_pending: Option<u64>,
 }
 
 /// Apply the worker's header snapshot to the frontend's own state (C2 step 3).
@@ -227,6 +232,34 @@ pub(super) fn pump_worker(
                         .map_err(InteractiveError::Io)?;
                 }
             }
+            // A tool approval suspends the turn mid-round: arm the
+            // modal and yield to the dispatcher, which pumps the
+            // modal keys, delivers the verdict straight into the
+            // exchange, and re-enters for the remainder. Never an
+            // answer (it must not satisfy a request command) and
+            // never transcript (only the verdict line is recorded).
+            // This diverts under every `Until` mode on purpose: a
+            // frame Drain sweep can only meet a request the turn
+            // relay already suspended on (the worker blocks until
+            // its verdict), and arming the modal there too keeps the
+            // main-loop key branch as the single verdict path.
+            // Lines are re-sanitized at this boundary: the producer
+            // sanitizes, and this second pass keeps that true for any
+            // future producer that forgets.
+            WorkerEvent::ApprovalRequest { id, lines, .. } => {
+                let lines = lines
+                    .iter()
+                    .map(|line| sanitize_for_display(line))
+                    .collect();
+                {
+                    let mut state = state.borrow_mut();
+                    state.pending_approval =
+                        Some(crate::tui::ApprovalModal::new(lines));
+                    state.pending_tool_approval = Some(id);
+                }
+                effects.approval_pending = Some(id);
+                stop = true;
+            }
             // One answer, handed back UNRENDERED: the caller owns the wording.
             // A TURN and a DRAIN have no caller to hand one to, so their
             // answers fall through to the shared bridge below and are rendered:
@@ -331,7 +364,8 @@ pub(super) fn drain_pending_worker(
 ///
 /// Six dispatcher arms are exactly this shape: send, relay, render whatever
 /// comes back. The relay is where the tick, the pane cache and the sanitizer
-/// boundary live, so the arms stay one line of intent each.
+/// boundary live, so the arms stay one line of intent each. Implemented over
+/// [`ask_worker_effects`]; only the answer crosses this seam.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn ask_worker(
     worker: &mut WorkerSource,
@@ -343,6 +377,29 @@ pub(super) fn ask_worker(
     command: WorkerCommand,
     until: Until,
 ) -> Result<Option<WorkerEvent>, InteractiveError> {
+    Ok(ask_worker_effects(
+        worker, sink, state, pane, progress, reasoning, command, until,
+    )?
+    .answer)
+}
+
+/// Ask the worker one request command and return the full relay
+/// effects (C2 step 3, Part B).
+///
+/// Same behavior as [`ask_worker`], but the caller also sees
+/// `approval_pending`: a suspended tool-approval turn the caller
+/// resumes after the modal verdict is delivered.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn ask_worker_effects(
+    worker: &mut WorkerSource,
+    sink: &mut crate::tui::TuiSink,
+    state: &Rc<RefCell<TuiState>>,
+    pane: &Rc<RefCell<Option<crate::tui::ContextPaneData>>>,
+    progress: &mut dyn FnMut() -> bool,
+    reasoning: &mut dyn FnMut(&str),
+    command: WorkerCommand,
+    until: Until,
+) -> Result<ReplyEffects, InteractiveError> {
     if !worker.send(command) {
         return Err(InteractiveError::Worker(
             "worker is unavailable; command was not applied".to_owned(),
@@ -355,7 +412,39 @@ pub(super) fn ask_worker(
             "worker stopped before it finished".to_owned(),
         ));
     }
-    Ok(effects.answer)
+    Ok(effects)
+}
+
+/// Resume a tool-approval-suspended turn after its verdict was
+/// delivered (Part B).
+///
+/// No command is sent: the turn is still running on the worker,
+/// unblocked by the verdict. Returns the relay effects; a fresh
+/// `approval_pending` means the turn suspended again on a later
+/// action, and the caller routes its modal the same way.
+pub(super) fn relay_suspended_turn(
+    worker: &mut WorkerSource,
+    sink: &mut crate::tui::TuiSink,
+    state: &Rc<RefCell<TuiState>>,
+    pane: &Rc<RefCell<Option<crate::tui::ContextPaneData>>>,
+    progress: &mut dyn FnMut() -> bool,
+    reasoning: &mut dyn FnMut(&str),
+) -> Result<ReplyEffects, InteractiveError> {
+    let effects = pump_worker(
+        worker,
+        sink,
+        state,
+        pane,
+        progress,
+        reasoning,
+        Until::TurnFinished,
+    )?;
+    if effects.stopped {
+        return Err(InteractiveError::Worker(
+            "worker stopped before it finished".to_owned(),
+        ));
+    }
+    Ok(effects)
 }
 
 /// Bare `/model`: ask the worker for the provider's models and open the
@@ -520,7 +609,7 @@ pub(super) fn switch_model_via_worker(
 
 pub(super) fn drain_events<S, W>(
     application: &mut S,
-    writer: &mut W,
+    writer: &RefCell<W>,
     // S2 chunk 4b: called for EVERY drained event. A frontend that can
     // repaint uses the keep-alive ticks to draw, to collect what the user
     // typed while the model works, and to report an interrupt request;
@@ -534,6 +623,9 @@ where
     S: crate::session_worker::EventSource,
     W: Write,
 {
+    // The writer is shared with the approval hook (which prompts while
+    // the drain is blocked inside a tool call), so every use is one
+    // brief borrow; nothing here holds it across `poll_event`.
     let mut sanitizer = TerminalSanitizer::new();
     while let Some(event) = application.poll_event() {
         if progress() {
@@ -542,39 +634,50 @@ where
         match event {
             ToolLoopEvent::TextDelta { text } => {
                 writer
+                    .borrow_mut()
                     .write_all(sanitizer.push(&text).as_bytes())
                     .map_err(InteractiveError::Io)?;
             }
             ToolLoopEvent::ResponseCompleted => {
                 // Drain any dangling escape that never terminated.
                 writer
+                    .borrow_mut()
                     .write_all(sanitizer.flush().as_bytes())
                     .map_err(InteractiveError::Io)?;
-                writer.write_all(b"\n").map_err(InteractiveError::Io)?;
+                writer
+                    .borrow_mut()
+                    .write_all(b"\n")
+                    .map_err(InteractiveError::Io)?;
             }
             ToolLoopEvent::ResponseCancelled => {
                 writer
+                    .borrow_mut()
                     .write_all(sanitizer.flush().as_bytes())
                     .map_err(InteractiveError::Io)?;
                 writer
+                    .borrow_mut()
                     .write_all(b"Response cancelled.\n")
                     .map_err(InteractiveError::Io)?;
             }
             ToolLoopEvent::ResponseFailed { message } => {
                 writer
+                    .borrow_mut()
                     .write_all(sanitizer.flush().as_bytes())
                     .map_err(InteractiveError::Io)?;
                 let safe = crate::sanitize::sanitize_for_display(&message);
                 writer
+                    .borrow_mut()
                     .write_all(format!("Response failed: {safe}\n").as_bytes())
                     .map_err(InteractiveError::Io)?;
             }
             ToolLoopEvent::ToolFailed { message, .. } => {
                 writer
+                    .borrow_mut()
                     .write_all(sanitizer.flush().as_bytes())
                     .map_err(InteractiveError::Io)?;
                 let safe = crate::sanitize::sanitize_for_display(&message);
                 writer
+                    .borrow_mut()
                     .write_all(format!("Tool failed: {safe}\n").as_bytes())
                     .map_err(InteractiveError::Io)?;
             }
@@ -685,6 +788,9 @@ pub(super) fn await_worker_ready(
                     WorkerEvent::Failed(_) => "a failure",
                     WorkerEvent::Models(_) => "a model list",
                     WorkerEvent::Ready(_) => "a header",
+                    WorkerEvent::ApprovalRequest { .. } => {
+                        "an approval request"
+                    }
                 };
                 let detail = match worker
                     .shutdown_bounded(std::time::Duration::from_secs(2))

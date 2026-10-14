@@ -565,9 +565,11 @@ fn write_profile_config_at_after_consumption(
         staged.commit_if_absent()
     };
     commit_result.map_err(|error| match error {
-        siralos_adapters::atomic::AtomicWriteFailure::TargetChanged { .. } =>
-            "siralos.toml changed concurrently; reload before retrying"
-                .to_owned(),
+        siralos_adapters::atomic::AtomicWriteFailure::TargetChanged { .. }
+        | siralos_adapters::atomic::AtomicWriteFailure::ParentChanged {
+            ..
+        } => "siralos.toml changed concurrently; reload before retrying"
+            .to_owned(),
         siralos_adapters::atomic::AtomicWriteFailure::TargetIsNotARegularFile {
             ..
         } => "siralos.toml must be a regular file; refusing symlink or special file"
@@ -964,9 +966,11 @@ pub fn remove_profile_config_at(
     };
     let commit_result = staged.commit_if_digest(&observed_digest);
     commit_result.map_err(|error| match error {
-        siralos_adapters::atomic::AtomicWriteFailure::TargetChanged { .. } =>
-            "siralos.toml changed concurrently; reload before retrying"
-                .to_owned(),
+        siralos_adapters::atomic::AtomicWriteFailure::TargetChanged { .. }
+        | siralos_adapters::atomic::AtomicWriteFailure::ParentChanged {
+            ..
+        } => "siralos.toml changed concurrently; reload before retrying"
+            .to_owned(),
         siralos_adapters::atomic::AtomicWriteFailure::TargetIsNotARegularFile {
             ..
         } => "siralos.toml must be a regular file; refusing symlink or special file"

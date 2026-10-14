@@ -3,27 +3,29 @@
 use super::{
     BTreeMap, BufRead, ContextPolicy, HostCredential, InteractiveError,
     InteractiveOptions, ModelListingGate, ModuleHost, ModuleManifest, Path,
-    PermissionPolicy, ReloadAuthorityEvidence, SessionComposition,
-    SessionProvider, SiralosApplication, SlashCommand, WorkspaceProfileLoad,
-    Write, apply_model_switch, apply_provider_remove_confirmation_at,
-    apply_reloaded_config, approve_workspace_profile, compose_session,
-    drain_events, drive_context_demand, flush_record_replay, io,
-    is_unknown_slash_command, load_user_configuration,
-    load_workspace_profile_snapshot, model_listing_diagnostic,
-    model_listing_gate, non_live_state_digest, parse_slash_command,
-    read_approval_via_input_queue, reload_authority_is_revalidated,
-    reload_report_from_load, render_activate_module, render_add_module,
-    render_context_segment, render_enable_module, render_evolve_lines,
-    render_model_line, render_modules, render_provider_line,
-    render_startup_notices, render_tools_segment, safe_alias_for_display,
-    sanitize_for_display, slash_command_catalog,
+    PermissionPolicy, Rc, RefCell, ReloadAuthorityEvidence,
+    SessionComposition, SessionProvider, SiralosApplication, SlashCommand,
+    StdioApprovalPrompter, WorkspaceProfileLoad, Write, apply_model_switch,
+    apply_provider_remove_confirmation_at, apply_reloaded_config,
+    approve_workspace_profile, compose_session, drain_events,
+    drive_context_demand, flush_record_replay, io, is_unknown_slash_command,
+    load_user_configuration, load_workspace_profile_snapshot,
+    model_listing_diagnostic, model_listing_gate, non_live_state_digest,
+    parse_slash_command, read_approval_via_input_queue,
+    reload_authority_is_revalidated, reload_report_from_load,
+    render_activate_module, render_add_module, render_context_segment,
+    render_enable_module, render_evolve_lines, render_model_line,
+    render_modules, render_provider_line, render_startup_notices,
+    render_tools_segment, safe_alias_for_display, sanitize_for_display,
+    slash_command_catalog,
 };
 
 /// Run the default interactive session over process stdin/stdout.
 pub fn run_interactive_stdio() -> Result<(), InteractiveError> {
-    let stdin = io::stdin();
-    let stdout = io::stdout();
-    run_interactive_session(stdin.lock(), stdout.lock())
+    // Owned buffered handles (not held locks): the approval hook
+    // shares these same objects, so reads and writes stay ordered on
+    // the one queue in every configuration.
+    run_interactive_session(io::BufReader::new(io::stdin()), io::stdout())
 }
 
 /// Run a synchronous interactive session with the default composition.
@@ -32,8 +34,8 @@ pub fn run_interactive_session<R, W>(
     writer: W,
 ) -> Result<(), InteractiveError>
 where
-    R: BufRead,
-    W: Write,
+    R: BufRead + 'static,
+    W: Write + 'static,
 {
     run_interactive_session_with_options(
         reader,
@@ -106,15 +108,30 @@ fn read_bounded_input_line<R: BufRead>(
 /// return bundle carries everything both loops need and each loop wires
 /// only its own frontend.
 pub fn run_interactive_session_with_options<R, W>(
-    mut reader: R,
-    mut writer: W,
+    reader: R,
+    writer: W,
     options: InteractiveOptions<'_>,
 ) -> Result<(), InteractiveError>
 where
-    R: BufRead,
-    W: Write,
+    R: BufRead + 'static,
+    W: Write + 'static,
 {
-    let session = compose_session(options)?;
+    let mut session = compose_session(options)?;
+    // The approval hook runs inside the turn drain while the loop is
+    // blocked in it, so the loop's reader and writer are shared
+    // (never doubly borrowed: every use is one brief borrow, and the
+    // hook never runs while the loop holds one).
+    let reader: Rc<RefCell<R>> = Rc::new(RefCell::new(reader));
+    let writer: Rc<RefCell<W>> = Rc::new(RefCell::new(writer));
+    session
+        .application
+        .set_approval_resolver(StdioApprovalPrompter::resolver(
+            Rc::clone(&reader),
+            Rc::clone(&writer),
+        ))
+        .map_err(|error| {
+            InteractiveError::Io(io::Error::other(error.to_string()))
+        })?;
     let SessionComposition {
         workspace_root,
         tool_definitions,
@@ -148,6 +165,7 @@ where
     // owned writer before the first prompt (composition owns no
     // writer, so it returns them instead of printing them).
     writer
+        .borrow_mut()
         .write_all(render_startup_notices(&startup_notices).as_bytes())
         .map_err(InteractiveError::Io)?;
 
@@ -158,13 +176,18 @@ where
     // cannot bypass the single replay-store flush below.
     let loop_result = (|| -> Result<(), InteractiveError> {
         loop {
-            writer.write_all(b"> ").map_err(InteractiveError::Io)?;
-            writer.flush().map_err(InteractiveError::Io)?;
-            let Some(bounded) = read_bounded_input_line(&mut reader)? else {
+            writer
+                .borrow_mut()
+                .write_all(b"> ")
+                .map_err(InteractiveError::Io)?;
+            writer.borrow_mut().flush().map_err(InteractiveError::Io)?;
+            let Some(bounded) =
+                read_bounded_input_line(&mut *reader.borrow_mut())?
+            else {
                 break;
             };
             if bounded.overlong {
-                writer
+                writer.borrow_mut()
                 .write_all(
                     b"input line exceeded the 64 KiB bound; line discarded\n",
                 )
@@ -192,6 +215,7 @@ where
                     format!("unknown command - available: {catalog_names}\n");
                 let sanitized = sanitize_for_display(&msg);
                 writer
+                    .borrow_mut()
                     .write_all(sanitized.as_bytes())
                     .map_err(InteractiveError::Io)?;
                 continue;
@@ -203,8 +227,8 @@ where
                 &tool_definitions,
                 &policy,
                 &mut application,
-                &mut writer,
-                &mut reader,
+                &writer,
+                &reader,
                 &mut hosts,
                 &mut manifests,
                 profile_modules.as_deref(),
@@ -259,8 +283,8 @@ pub(super) fn dispatch_stdio_command<P, W, R>(
     tool_definitions: &[siralos_core::tool::registry::RegisteredToolInfo],
     policy: &PermissionPolicy,
     application: &mut SiralosApplication<'_, P>,
-    writer: &mut W,
-    reader: &mut R,
+    writer: &Rc<RefCell<W>>,
+    reader: &Rc<RefCell<R>>,
     hosts: &mut BTreeMap<String, ModuleHost>,
     manifests: &mut BTreeMap<String, ModuleManifest>,
     profile_modules: Option<&[String]>,
@@ -296,6 +320,7 @@ where
                 context_session_holder,
             );
             writer
+                .borrow_mut()
                 .write_all(sanitized.as_bytes())
                 .map_err(InteractiveError::Io)?;
         }
@@ -303,6 +328,7 @@ where
             let rendered =
                 render_tools_segment(tool_definitions, policy, application);
             writer
+                .borrow_mut()
                 .write_all(rendered.as_bytes())
                 .map_err(InteractiveError::Io)?;
         }
@@ -310,6 +336,7 @@ where
             let rendered =
                 sanitize_for_display(&render_modules(workspace_root));
             writer
+                .borrow_mut()
                 .write_all(rendered.as_bytes())
                 .map_err(InteractiveError::Io)?;
         }
@@ -322,6 +349,7 @@ where
                 manifests,
             ));
             writer
+                .borrow_mut()
                 .write_all(rendered.as_bytes())
                 .map_err(InteractiveError::Io)?;
         }
@@ -334,6 +362,7 @@ where
                 profile_modules,
             ));
             writer
+                .borrow_mut()
                 .write_all(rendered.as_bytes())
                 .map_err(InteractiveError::Io)?;
         }
@@ -346,6 +375,7 @@ where
                 profile_modules,
             ));
             writer
+                .borrow_mut()
                 .write_all(rendered.as_bytes())
                 .map_err(InteractiveError::Io)?;
         }
@@ -356,6 +386,7 @@ where
                 applied_credential.as_ref(),
             ));
             writer
+                .borrow_mut()
                 .write_all(rendered.as_bytes())
                 .map_err(InteractiveError::Io)?;
         }
@@ -372,6 +403,7 @@ where
                         "no provider configured - nothing to remove\n",
                     );
                     writer
+                        .borrow_mut()
                         .write_all(rendered.as_bytes())
                         .map_err(InteractiveError::Io)?;
                 }
@@ -381,6 +413,7 @@ where
                             "provider removal failed (details hidden)\n",
                         );
                         writer
+                            .borrow_mut()
                             .write_all(rendered.as_bytes())
                             .map_err(InteractiveError::Io)?;
                         return Ok(false);
@@ -389,10 +422,16 @@ where
                         "remove the configured provider from siralos.toml? (y/N)\n",
                     );
                     writer
+                        .borrow_mut()
                         .write_all(prompt.as_bytes())
                         .map_err(InteractiveError::Io)?;
-                    writer.flush().map_err(InteractiveError::Io)?;
-                    let decision = read_approval_via_input_queue(reader)?;
+                    writer
+                        .borrow_mut()
+                        .flush()
+                        .map_err(InteractiveError::Io)?;
+                    let decision = read_approval_via_input_queue(
+                        &mut *reader.borrow_mut(),
+                    )?;
                     let removal_report = apply_provider_remove_confirmation_at(
                         workspace_root,
                         &observed,
@@ -410,6 +449,7 @@ where
                     }
                     let rendered = sanitize_for_display(&removal_report);
                     writer
+                        .borrow_mut()
                         .write_all(rendered.as_bytes())
                         .map_err(InteractiveError::Io)?;
                 }
@@ -430,12 +470,13 @@ where
                     );
                     let rendered = sanitize_for_display(&out);
                     writer
+                        .borrow_mut()
                         .write_all(rendered.as_bytes())
                         .map_err(InteractiveError::Io)?;
                 }
                 Some(id) => {
                     if *authority_revoked {
-                        writer
+                        writer.borrow_mut()
                             .write_all(
                                 b"session authority was revoked; restart required\n",
                             )
@@ -455,12 +496,14 @@ where
                         Ok(message) => {
                             let rendered = sanitize_for_display(&message);
                             writer
+                                .borrow_mut()
                                 .write_all(rendered.as_bytes())
                                 .map_err(InteractiveError::Io)?;
                         }
                         Err(reason) => {
                             let rendered = sanitize_for_display(&reason);
                             writer
+                                .borrow_mut()
                                 .write_all(rendered.as_bytes())
                                 .map_err(InteractiveError::Io)?;
                         }
@@ -484,6 +527,7 @@ where
             if gate != ModelListingGate::Ready {
                 let line = model_listing_diagnostic(gate);
                 writer
+                    .borrow_mut()
                     .write_all(sanitize_for_display(line).as_bytes())
                     .map_err(InteractiveError::Io)?;
             } else {
@@ -492,6 +536,7 @@ where
                         if models.is_empty() {
                             let line = "no models returned\n";
                             writer
+                                .borrow_mut()
                                 .write_all(
                                     sanitize_for_display(line).as_bytes(),
                                 )
@@ -504,6 +549,7 @@ where
                                 );
                                 let sanitized = sanitize_for_display(&line);
                                 writer
+                                    .borrow_mut()
                                     .write_all(sanitized.as_bytes())
                                     .map_err(InteractiveError::Io)?;
                             }
@@ -513,6 +559,7 @@ where
                         let line = "models fetch error (details hidden)\n";
                         let sanitized = sanitize_for_display(line);
                         writer
+                            .borrow_mut()
                             .write_all(sanitized.as_bytes())
                             .map_err(InteractiveError::Io)?;
                     }
@@ -535,6 +582,7 @@ where
             // is never silently reused for edited bytes.
             if *authority_revoked {
                 writer
+                    .borrow_mut()
                     .write_all(
                         b"session authority was revoked; restart required\n",
                     )
@@ -651,12 +699,14 @@ where
             }
             let rendered = sanitize_for_display(&report);
             writer
+                .borrow_mut()
                 .write_all(rendered.as_bytes())
                 .map_err(InteractiveError::Io)?;
         }
         SlashCommand::Evolve => {
             let rendered = sanitize_for_display(&render_evolve_lines());
             writer
+                .borrow_mut()
                 .write_all(rendered.as_bytes())
                 .map_err(InteractiveError::Io)?;
         }
@@ -669,12 +719,14 @@ where
                 crate::tui::MOUSE_STDIO_MESSAGE
             ));
             writer
+                .borrow_mut()
                 .write_all(rendered.as_bytes())
                 .map_err(InteractiveError::Io)?;
         }
         SlashCommand::Prompt(prompt) => {
             if *authority_revoked {
                 writer
+                    .borrow_mut()
                     .write_all(
                         b"session authority was revoked; restart required\n",
                     )

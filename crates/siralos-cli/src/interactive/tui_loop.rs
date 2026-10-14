@@ -4,11 +4,12 @@
 use super::{
     InteractiveError, InteractiveOptions, ModelListingGate, Path, Rc, RefCell,
     SlashCommand, TuiState, Until, VecDeque, WorkerCommand, WorkerEvent,
-    WorkerGuard, WorkerSource, Write, ask_worker, await_worker_ready,
-    drain_pending_worker, handle_pending_approval_key_outcome,
-    handle_tui_mouse, io, is_unknown_slash_command,
-    load_workspace_profile_write_token, model_listing_diagnostic,
-    model_listing_gate, open_model_picker_via_worker, parse_slash_command,
+    WorkerGuard, WorkerSource, Write, ask_worker, ask_worker_effects,
+    await_worker_ready, drain_pending_worker,
+    handle_pending_approval_key_outcome, handle_tui_mouse, io,
+    is_unknown_slash_command, load_workspace_profile_write_token,
+    model_listing_diagnostic, model_listing_gate,
+    open_model_picker_via_worker, parse_slash_command, relay_suspended_turn,
     render_answer, render_evolve_lines, render_model_line, render_modules,
     render_provider_line_display, resolve_workspace_root,
     safe_alias_for_display, sanitize_for_display, slash_command_catalog,
@@ -256,7 +257,11 @@ pub(super) fn dispatch_tui_command(
             // The turn runs where the session is. The relay renders the whole
             // turn -- deltas through the sanitizer, the thinking to its sink,
             // the pane snapshots, the demand tick's effect and the end signal.
-            let _ = ask_worker(
+            // A tool approval suspends the turn mid-round instead of ending
+            // it: the relay arms the modal (with the exchange id in
+            // `pending_tool_approval`) and the main loop below routes its
+            // keys, delivers the verdict, and resumes the turn.
+            let _ = ask_worker_effects(
                 worker,
                 sink,
                 state,
@@ -269,6 +274,72 @@ pub(super) fn dispatch_tui_command(
         }
     }
     Ok(false)
+}
+
+/// Deliver one tool-approval modal verdict straight into the shared
+/// exchange (Part B).
+///
+/// Provider-removal confirmations resolve locally and never reach
+/// here (their `pending_tool_approval` stays `None`). Returns
+/// whether a verdict was delivered: `false` means no tool approval
+/// was pending (nothing to do) or the exchange no longer holds the
+/// id (stale double keypress after a shutdown unblocked the hook —
+/// loud, since the worker may still be waiting on the stop flag).
+pub(super) fn deliver_tool_approval_verdict(
+    state: &Rc<RefCell<TuiState>>,
+    exchange: &super::ApprovalExchange,
+    sink: &mut crate::tui::TuiSink,
+    decision: crate::tui::ApprovalDecision,
+) -> bool {
+    let Some(id) = state.borrow().pending_tool_approval else {
+        return false;
+    };
+    let verdict = match decision {
+        crate::tui::ApprovalDecision::Approve => {
+            siralos_core::tool::ApprovalVerdict::Approve
+        }
+        crate::tui::ApprovalDecision::Deny => {
+            siralos_core::tool::ApprovalVerdict::Deny
+        }
+    };
+    if !exchange.deliver(id, verdict) {
+        let _ = sink.write_all(
+            sanitize_for_display(
+                "approval delivery failed (details hidden)\n",
+            )
+            .as_bytes(),
+        );
+        return false;
+    }
+    true
+}
+
+/// Resume a verdict-delivered tool-approval turn (Part B).
+///
+/// Clears the exchange id first (a fresh suspension re-arms it),
+/// re-enters the still-running turn, and ends it when it completes.
+/// A re-suspension leaves the turn open for the main loop's next
+/// verdict; the `working` clock and thinking anchor stay armed
+/// across the whole suspension. A relay error propagates (the loop
+/// exits and the worker is shut down; the clock stays armed on that
+/// dead session, which is benign because nothing renders it again).
+pub(super) fn resume_suspended_turn(
+    worker: &mut WorkerSource,
+    sink: &mut crate::tui::TuiSink,
+    state: &Rc<RefCell<TuiState>>,
+    pane: &Rc<RefCell<Option<crate::tui::ContextPaneData>>>,
+    progress: &mut dyn FnMut() -> bool,
+    reasoning: &mut dyn FnMut(&str),
+) -> Result<(), InteractiveError> {
+    state.borrow_mut().pending_tool_approval = None;
+    relay_suspended_turn(worker, sink, state, pane, progress, reasoning)?;
+    // A fresh suspension re-arms the exchange id above; only a
+    // completed turn ends (ending a re-suspended turn would stop the
+    // `working` clock and disarm the thinking anchor mid-turn).
+    if state.borrow().pending_tool_approval.is_none() {
+        state.borrow_mut().end_turn();
+    }
+    Ok(())
 }
 
 /// Run the TUI shell session (the default frontend when stdout is a TTY;
@@ -609,13 +680,27 @@ pub fn run_interactive_tui_with_options(
                                         outcome.decision
                                             == crate::tui::ApprovalDecision::Approve
                                             && outcome.removal_committed
-                                        && !worker
-                                            .source()
-                                            .send(WorkerCommand::Reload)
+                                            && !worker
+                                                .source()
+                                                .send(WorkerCommand::Reload)
                                     })
                                 {
                                     let _ = sink.write_all(
                                         b"profile reload request failed (details hidden)\n",
+                                    );
+                                }
+                                // A tool-approval verdict goes straight
+                                // into the exchange (never a command: the
+                                // worker is blocked in the hook and serves
+                                // no queue). Provider removal leaves
+                                // `pending_tool_approval` clear and never
+                                // reaches here.
+                                if let Some(outcome) = outcome {
+                                    deliver_tool_approval_verdict(
+                                        &tui_state,
+                                        worker.source().approval_exchange(),
+                                        &mut sink,
+                                        outcome.decision,
                                     );
                                 }
                             } else {
@@ -701,6 +786,24 @@ pub fn run_interactive_tui_with_options(
             }
             if should_exit_outer {
                 break;
+            }
+            // Part B: a delivered tool-approval verdict resumes the
+            // suspended turn. The modal is closed (verdict above) but
+            // the exchange id is still armed; the resume helper clears
+            // it, re-enters the still-running turn, and ends it on
+            // completion. A Ctrl+C exit above skips this (the worker
+            // shutdown unblocks the hook through the stop flag).
+            if tui_state.borrow().pending_tool_approval.is_some()
+                && tui_state.borrow().pending_approval.is_none()
+            {
+                resume_suspended_turn(
+                    worker.source(),
+                    &mut sink,
+                    &tui_state,
+                    &pane_cache,
+                    &mut progress,
+                    &mut reasoning_sink,
+                )?;
             }
             // C1/C2: handle completed add-flow form (atomically write profile).
             let completed_opt = {
@@ -980,9 +1083,15 @@ pub fn run_interactive_tui_with_options(
                     )?;
                     // The turn is over: the indicator above the input stops, and
                     // the thinking block stays where this turn anchored it.
+                    // A tool-approval suspension is not over (the resume
+                    // block ends it): ending it here would stop the
+                    // `working` clock and disarm the thinking anchor
+                    // mid-turn.
                     command_exit = should_exit;
                 }
-                tui_state.borrow_mut().end_turn();
+                if tui_state.borrow().pending_tool_approval.is_none() {
+                    tui_state.borrow_mut().end_turn();
+                }
                 if command_exit {
                     break;
                 }

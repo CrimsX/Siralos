@@ -66,6 +66,13 @@ pub struct TuiState {
     /// `/provider remove`): `y` removes via `remove_profile_config_at`,
     /// `n`/`Esc` cancels. `false` for ordinary tool approvals.
     pub confirming_provider_removal: bool,
+    /// Exchange id of a suspended tool-approval turn (Part B). Set
+    /// with the modal when a worker approval request suspends the
+    /// turn; the main loop delivers the modal verdict into the
+    /// exchange under this id and resumes the turn. `None` for
+    /// provider-removal confirmations (which resolve locally) and
+    /// whenever no approval suspends a turn.
+    pub pending_tool_approval: Option<u64>,
     /// Secret-free profile revision observed when provider removal was armed.
     /// It keeps a confirmation prompt from turning into a stale merge.
     pub pending_profile_write_token: Option<WorkspaceProfileWriteToken>,
@@ -214,6 +221,7 @@ impl Default for TuiState {
             scroll_offset: 0,
             pending_approval: None,
             confirming_provider_removal: false,
+            pending_tool_approval: None,
             pending_profile_write_token: None,
             palette: None,
             palette_selected: None,

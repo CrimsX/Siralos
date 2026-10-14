@@ -585,6 +585,17 @@ impl SessionComposition<'_> {
         flush_record_replay(recorder, &self.replay_store_path)
     }
 
+    /// Install the synchronous approval resolver (worker thread setup
+    /// only: stdio installs its own prompter around its owned reader
+    /// and writer). Fails when a response is already active, exactly
+    /// like projection setup.
+    pub(crate) fn set_approval_resolver(
+        &mut self,
+        resolver: siralos_core::tool::SharedApprovalResolver,
+    ) -> Result<(), siralos_core::tool::PromptStartError> {
+        self.application.set_approval_resolver(resolver)
+    }
+
     /// Ticket 135: provider-reported usage totalled over this session's
     /// recordings.
     ///

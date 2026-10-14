@@ -107,6 +107,7 @@ mod stdio;
 mod tui_loop;
 mod worker;
 
+use approval::StdioApprovalPrompter;
 pub use approval::apply_provider_remove_confirmation;
 pub use approval::apply_provider_remove_confirmation_at;
 pub use approval::build_approval_modal;
@@ -115,6 +116,7 @@ use approval::handle_pending_approval_key_outcome;
 pub use approval::handle_tui_mouse;
 pub use approval::read_approval_via_input_queue;
 pub use approval::shared_evaluate_approval;
+pub(crate) use approval::{ApprovalExchange, exchange_resolver};
 use commands::SlashCommand;
 pub use commands::is_unknown_slash_command;
 use commands::parse_slash_command;
@@ -142,6 +144,7 @@ use display::model_listing_gate;
 use display::redacted_credential_display;
 use display::redacted_credential_token;
 use display::render_answer;
+use display::render_approval_request;
 use display::render_context_segment;
 use display::render_model_line;
 use display::render_provider_line;
@@ -180,17 +183,23 @@ pub use stdio::run_interactive_session;
 pub use stdio::run_interactive_session_with_options;
 pub use stdio::run_interactive_stdio;
 #[cfg(test)]
+use tui_loop::deliver_tool_approval_verdict;
+#[cfg(test)]
 use tui_loop::dispatch_tui_command;
+#[cfg(test)]
+use tui_loop::resume_suspended_turn;
 pub use tui_loop::run_interactive_tui_stdio;
 pub use tui_loop::run_interactive_tui_with_options;
 use worker::Until;
 use worker::ask_worker;
+use worker::ask_worker_effects;
 use worker::await_worker_ready;
 use worker::drain_events;
 use worker::drain_pending_worker;
 use worker::open_model_picker_via_worker;
 #[cfg(test)]
 use worker::pump_worker;
+use worker::relay_suspended_turn;
 use worker::spawn_tui_worker;
 use worker::switch_model_via_worker;
 

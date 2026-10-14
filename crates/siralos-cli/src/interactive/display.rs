@@ -26,6 +26,37 @@ pub(crate) fn render_startup_notices(notices: &[String]) -> String {
     out
 }
 
+/// Render one approval request as sanitized content lines, shared
+/// by both frontends (each adds its own chrome: the stdio verdict
+/// prompt, the TUI modal frame).
+///
+/// Preview text is model-proposed and therefore untrusted: every
+/// line crosses the sanitizer here, so ANSI/OSC injection in file
+/// content, paths, or diffs cannot survive to either frontend.
+/// Detail lines are bounded by `MAX_APPROVAL_PREVIEW_LINES` (core)
+/// with an exact omitted-line count (the TUI modal truncates again
+/// at its own cap); the title always renders.
+pub(super) fn render_approval_request(
+    request: &siralos_core::tool::ApprovalRequest,
+) -> Vec<String> {
+    use siralos_core::tool::MAX_APPROVAL_PREVIEW_LINES;
+    let mut lines = vec![sanitize_for_display(&request.preview.title)];
+    let shown = request
+        .preview
+        .lines
+        .iter()
+        .take(MAX_APPROVAL_PREVIEW_LINES)
+        .map(|line| sanitize_for_display(line));
+    lines.extend(shown);
+    if request.preview.lines.len() > MAX_APPROVAL_PREVIEW_LINES {
+        lines.push(format!(
+            "… ({} more lines)",
+            request.preview.lines.len() - MAX_APPROVAL_PREVIEW_LINES
+        ));
+    }
+    lines
+}
+
 /// Host-generated provider line from the composed profile (U7) — redacted (G1).
 pub(super) fn render_provider_line(
     provider: Option<&str>,
