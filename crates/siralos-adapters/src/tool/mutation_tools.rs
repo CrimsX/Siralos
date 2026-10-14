@@ -40,6 +40,7 @@ use crate::workspace::checkpoint::{
 };
 use crate::workspace::checkpoint_lifecycle::{
     CheckpointCreation, create_checkpoint, resolve_create_target,
+    split_requested_parent,
 };
 use crate::workspace::fs::{
     BoundedFileRead, DEFAULT_EXCLUDED_DIRECTORIES, MUTATION_TEMP_PREFIX,
@@ -131,6 +132,9 @@ fn commit_failed(error: AtomicWriteFailure) -> ToolExecutionResult {
         }
     } else if matches!(error, AtomicWriteFailure::ParentChanged { .. }) {
         parent_moved()
+    } else if matches!(error, AtomicWriteFailure::RequestedNameMismatch { .. })
+    {
+        name_mismatch()
     } else if matches!(
         error,
         AtomicWriteFailure::TargetIsNotARegularFile { .. }
@@ -186,6 +190,18 @@ fn parent_moved() -> ToolExecutionResult {
     }
 }
 
+/// A naming refusal: resolution returned a path that does not name
+/// the request. Unlike [`parent_moved`], this never claims a
+/// directory changed — the object may be untouched under a new
+/// name. Still a conflict: a concurrent rename won the race, and
+/// the approval stays bound to the requested path.
+fn name_mismatch() -> ToolExecutionResult {
+    ToolExecutionResult::Conflict {
+        message: "The target path changed while it was being written."
+            .to_owned(),
+    }
+}
+
 /// Require the resolution to still name the requested path.
 ///
 /// Windows canonicalization opens the target and queries its live
@@ -205,8 +221,9 @@ fn require_requested_parent_name(
     requested: &str,
     resolved: &Path,
 ) -> Result<(), AtomicWriteFailure> {
-    let failed =
-        || AtomicWriteFailure::ParentChanged { path: resolved.to_path_buf() };
+    let failed = || AtomicWriteFailure::RequestedNameMismatch {
+        path: resolved.to_path_buf(),
+    };
     let fold = is_case_insensitive_platform();
     let relative = resolved.strip_prefix(root).map_err(|_| failed())?;
     let mut live = Vec::new();
@@ -527,11 +544,10 @@ fn execute_write(
     };
     // The parent may have been renamed inside resolution itself
     // (same object, new name): refuse before any checkpoint exists
-    // so the approval stays bound to the requested path.
-    let requested_parent = match path.rfind('/') {
-        Some(index) => &path[..index],
-        None => ".",
-    };
+    // so the approval stays bound to the requested path. The parent
+    // derivation shares the resolver's own split, so both agree on
+    // what was asked regardless of separator style.
+    let (requested_parent, _) = split_requested_parent(&path);
     if let Err(error) = require_requested_parent_name(
         &backend.root,
         requested_parent,
@@ -2136,7 +2152,78 @@ mod tests {
         assert!(
             matches!(
                 refused,
-                Err(crate::atomic::AtomicWriteFailure::ParentChanged { .. })
+                Err(
+                    crate::atomic::AtomicWriteFailure::RequestedNameMismatch { .. }
+                )
+            ),
+            "{refused:?}"
+        );
+    }
+
+    #[test]
+    fn backslash_paths_behave_like_forward_slash_twins() {
+        // Backslashes are separators everywhere in this
+        // repository, so a backslash path must behave exactly like
+        // its forward-slash twin: same outcome, same message, never
+        // a substitution conflict for a naming difference.
+        let fixture = Fixture::new();
+        fs::create_dir_all(fixture.root.join("sub")).unwrap();
+        let tool = fixture.write_tool();
+        let token = CancellationToken::new();
+        // Refusal twins under a missing parent refuse identically.
+        let forward = tool.execute(
+            &json!({"path": "missing/nested.txt", "content": "x"}),
+            token.signal(),
+        );
+        let back = tool.execute(
+            &json!({"path": "missing\\nested.txt", "content": "x"}),
+            token.signal(),
+        );
+        assert_eq!(forward, back, "refusal twins must match");
+        // Success twins under an existing parent both succeed with
+        // workspace-relative paths (checkpoint ids differ by
+        // construction, so compare status, bytes, and paths).
+        let forward = tool.execute(
+            &json!({"path": "sub/a.txt", "content": "x"}),
+            token.signal(),
+        );
+        let back = tool.execute(
+            &json!({"path": "sub\\b.txt", "content": "x"}),
+            token.signal(),
+        );
+        match (forward, back) {
+            (
+                ToolExecutionResult::Success { output: first, .. },
+                ToolExecutionResult::Success { output: second, .. },
+            ) => {
+                assert_eq!(first["bytes"], second["bytes"]);
+                assert_eq!(first["path"], "sub/a.txt");
+                assert_eq!(second["path"], "sub/b.txt");
+            }
+            (first, second) => {
+                panic!(
+                    "success twins must both succeed: {first:?} vs {second:?}"
+                )
+            }
+        }
+    }
+
+    #[test]
+    fn name_mismatch_refusal_names_the_path_not_the_directory() {
+        // A naming refusal must never claim a directory changed:
+        // the object may be untouched under a new name.
+        use super::commit_failed;
+        let refused = commit_failed(
+            crate::atomic::AtomicWriteFailure::RequestedNameMismatch {
+                path: std::path::PathBuf::from("hot-parked"),
+            },
+        );
+        assert!(
+            matches!(
+                refused,
+                ToolExecutionResult::Conflict { ref message }
+                    if message.as_str()
+                        == "The target path changed while it was being written."
             ),
             "{refused:?}"
         );
@@ -2164,7 +2251,7 @@ mod tests {
                 refused,
                 ToolExecutionResult::Conflict { message }
                     if message
-                        == "The target directory changed while it was being written."
+                        == "The target path changed while it was being written."
             ),
             "{refused:?}"
         );
@@ -2195,7 +2282,7 @@ mod tests {
                 refused,
                 ToolExecutionResult::Conflict { message }
                     if message
-                        == "The target directory changed while it was being written."
+                        == "The target path changed while it was being written."
             ),
             "{refused:?}"
         );

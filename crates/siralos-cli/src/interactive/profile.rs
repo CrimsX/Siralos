@@ -568,6 +568,9 @@ fn write_profile_config_at_after_consumption(
         siralos_adapters::atomic::AtomicWriteFailure::TargetChanged { .. }
         | siralos_adapters::atomic::AtomicWriteFailure::ParentChanged {
             ..
+        }
+        | siralos_adapters::atomic::AtomicWriteFailure::RequestedNameMismatch {
+            ..
         } => "siralos.toml changed concurrently; reload before retrying"
             .to_owned(),
         siralos_adapters::atomic::AtomicWriteFailure::TargetIsNotARegularFile {
@@ -968,6 +971,9 @@ pub fn remove_profile_config_at(
     commit_result.map_err(|error| match error {
         siralos_adapters::atomic::AtomicWriteFailure::TargetChanged { .. }
         | siralos_adapters::atomic::AtomicWriteFailure::ParentChanged {
+            ..
+        }
+        | siralos_adapters::atomic::AtomicWriteFailure::RequestedNameMismatch {
             ..
         } => "siralos.toml changed concurrently; reload before retrying"
             .to_owned(),

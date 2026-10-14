@@ -791,6 +791,20 @@ pub(crate) struct PendingTarget {
     pub(crate) leaf: String,
 }
 
+/// Split one requested workspace path into parent and leaf on
+/// either separator. Backslashes are separators everywhere in this
+/// repository, so the split must see both: a `/`-only split
+/// disagrees with the name gate (which normalizes both separators)
+/// about what was asked, turning a naming difference into a
+/// substitution conflict.
+pub(crate) fn split_requested_parent(requested: &str) -> (&str, &str) {
+    let index = requested.rfind(['/', '\\']);
+    match index {
+        Some(index) => (&requested[..index], &requested[index + 1..]),
+        None => (".", requested),
+    }
+}
+
 /// Resolve a target that must NOT exist yet (creation path).
 ///
 /// The parent directory must resolve inside the canonical workspace
@@ -813,10 +827,7 @@ pub(crate) fn resolve_create_target(
     if siralos_core::workspace::path::is_absolute_pattern(requested) {
         return Err(PathRejection::Absolute);
     }
-    let (parent, leaf) = match requested.rfind('/') {
-        Some(index) => (&requested[..index], &requested[index + 1..]),
-        None => (".", requested),
-    };
+    let (parent, leaf) = split_requested_parent(requested);
     if leaf.is_empty()
         || leaf == "."
         || leaf == ".."

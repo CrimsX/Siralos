@@ -84,6 +84,17 @@ pub enum AtomicWriteFailure {
         /// The target whose parent directory changed.
         path: PathBuf,
     },
+    /// Resolution returned a path that no longer names the request:
+    /// the same directory object under a new name (a rename landing
+    /// inside canonicalization) or a link whose inside-workspace
+    /// target carries another name. The mutation is refused before
+    /// staging so the approval stays bound to the requested path.
+    /// Unlike [`AtomicWriteFailure::ParentChanged`], this never
+    /// claims a directory changed: the object may be untouched.
+    RequestedNameMismatch {
+        /// The resolved path that failed to name the request.
+        path: PathBuf,
+    },
     /// The target's metadata could not be read.
     TargetUnreadable {
         /// The unreadable target.
@@ -122,6 +133,9 @@ impl std::fmt::Debug for AtomicWriteFailure {
             }
             Self::TargetChanged { .. } => formatter.write_str("TargetChanged"),
             Self::ParentChanged { .. } => formatter.write_str("ParentChanged"),
+            Self::RequestedNameMismatch { .. } => {
+                formatter.write_str("RequestedNameMismatch")
+            }
             Self::TargetUnreadable { source, .. } => formatter
                 .debug_struct("TargetUnreadable")
                 .field("source_kind", &source.kind())
@@ -165,6 +179,12 @@ impl std::fmt::Display for AtomicWriteFailure {
                     "atomic parent directory changed while it was being replaced"
                 )
             }
+            Self::RequestedNameMismatch { .. } => {
+                write!(
+                    formatter,
+                    "atomic resolved path does not name the requested path"
+                )
+            }
             Self::TargetUnreadable { .. } => {
                 write!(formatter, "atomic target is unreadable")
             }
@@ -184,6 +204,7 @@ impl std::error::Error for AtomicWriteFailure {
             Self::StagedIdentityUnverifiable { .. } => None,
             Self::TargetChanged { .. } => None,
             Self::ParentChanged { .. } => None,
+            Self::RequestedNameMismatch { .. } => None,
             Self::TargetIsNotARegularFile { .. } => None,
         }
     }
@@ -784,6 +805,12 @@ mod tests {
                     path: PathBuf::from(&sentinel),
                 },
                 "TargetChanged",
+            ),
+            (
+                AtomicWriteFailure::RequestedNameMismatch {
+                    path: PathBuf::from(&sentinel),
+                },
+                "RequestedNameMismatch",
             ),
             (
                 AtomicWriteFailure::TargetUnreadable {
