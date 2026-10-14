@@ -17,6 +17,8 @@
 //! - [`faults`] — deterministic fake-process fault scripts
 //! - [`identity`] — causal run/operation ids and trace refs
 //! - [`readiness`] — fail-closed readiness manifests
+//! - [`sandbox`] — sandboxed command-execution port (ADR 0038; the
+//!   port launches nothing, only an adapter implements it)
 //! - [`supervision`] — pure supervisor transitions and run outcomes
 //!
 //! Scope boundaries (decision 16): side-effect policies and run-owned
@@ -37,6 +39,7 @@ pub mod interaction;
 pub mod profiling;
 pub mod qa;
 pub mod readiness;
+pub mod sandbox;
 pub mod supervision;
 pub mod visual;
 

@@ -208,6 +208,17 @@ mod tests {
         assert_eq!(sanitize_for_display("a\u{1b}"), "a");
     }
     #[test]
+    fn hostile_command_output_survives_only_as_text() {
+        // The bash boundary row: a child injecting terminal escapes
+        // into its stdout reaches the display as inert text only.
+        let hostile = "ok\n\u{1b}]0;pwned\u{07}\u{1b}[2J\u{1b}]8;;https://evil.example\u{07}click\u{1b}[0m";
+        let shown = sanitize_for_display(hostile);
+        assert!(!shown.contains('\u{1b}'), "{shown:?}");
+        assert!(!shown.contains('\u{07}'), "{shown:?}");
+        assert!(shown.contains("ok"), "{shown:?}");
+        assert!(shown.contains("click"), "{shown:?}");
+    }
+    #[test]
     fn csi_split_across_pushes_is_still_stripped() {
         let mut s = TerminalSanitizer::new();
         let a = s.push("\u{1b}[");
