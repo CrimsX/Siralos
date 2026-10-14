@@ -148,3 +148,60 @@ The live interactive approval prompt is in flight (owner-approved);
 `bash`, the corpus v84→v85 amendment, and the AGENTS.md/SECURITY.md
 posture flips stay closed until the digest-bound amendment lands
 with its printed audit.
+
+## 10. Adversarial evidence (2026-10-13, working tree at `9a9f47e`)
+
+Before/after for the parent-substitution race fix. Pre-fix,
+`rename_substitution_race_never_misdirects`
+(`crates/siralos-adapters/src/tool/mutation_tools.rs`) FAILED with
+`left: String("hot-parked/t-8.txt"), right: "hot/t-8.txt"`
+(observed in the gate run 2026-10-10, round 2): a parent renamed
+inside Windows `canonicalize` resolves the same directory object
+under its NEW name, containment still passes, and the write lands
+(and truthfully reports) a path the approval never bound. Post-fix
+the resolution must still name the request
+(`require_requested_parent_name`, the name half) and the commit
+re-verifies the retained parent identity (the object half); the
+race passes 25/25 runs and the full `npm run check` chain is exit 0. `ParentChanged` covers both halves: a same-object rename and a
+same-name object replacement refuse with the same typed conflict.
+
+Platform rows, stated as unknown where unobserved. The Windows
+0/1000 substitution observation lives in `atomic.rs` (renaming a
+directory that holds an open staged handle is refused with Access
+denied, so mid-commit substitution cannot be staged
+deterministically there). The symlink, socket, FIFO, and
+rename-away deterministic cases are `cfg(unix)`-only; on non-Unix
+targets the gates degrade to canonical-path identity, under which
+a same-path object replacement is undetected. Unix-only rows are
+named, never passed by skip.
+
+`bash` adversarial inventory (2026-10-14, working tree at
+`9a9f47e`). The core port (`siralos-core::runtime::sandbox`:
+backend trait, typed reasons, availability report, bounded
+command/limits/outcome types) launches nothing; the adapter
+(`process::sandbox_backend`: honest probe, allowlist builder,
+truncation flags) never spawns; the tool (`tool::bash_tool`)
+probes before running and reports typed `SandboxUnavailable`
+wherever enforcement is unproven — today every platform, because
+no enforcing backend is pinned. Rows, each green: malformed and
+oversize inputs invalid before any probe; approval preview binds
+the exact command bytes; approval for one command never
+authorizes another (end-to-end mismatch denial, recorded approval
+unconsumed); an approved call still refuses without enforcement;
+cancelled calls refuse before any probe; the credential-contract
+deny names hold (suffix, prefix, and exact); the builder keeps
+allowlist names, drops secrets, applies controlled overrides, and
+lets fixed values win; truncation flags every cut; `execute`
+without proven enforcement spawns nothing (the would-be-spawned
+marker file stays absent); outcome mapping (timeout wins,
+nonzero fails, boundary cancellation wins); hostile child output
+survives the terminal sanitizer as inert text only. Platform
+rows: the refusal string itself is platform-stable by
+construction (the corpus pins it byte-exactly on every host);
+the Windows per-execution-grant/host-read gap lives in §2 and
+the probe reason, asserted by the backend unit tests. Live
+timeout-kill, grandchild reaping, and mid-run cancellation have
+no live row anywhere by construction (no spawn exists to
+observe); they are contract-level (limits/timeout/timeout-flag/
+cancel-flag types and their mappings), and a backend milestone
+must add live rows before claiming enforcement.

@@ -14,6 +14,17 @@ and the number does not change any of it.
 
 ### Added
 
+- **Default mutation and execution tools** (owner-directed, 2026-10-13,
+  [ADR 0038](docs/adr/0038-default-mutable-execution-tools.md)).
+  `read`/`write`/`edit` are live behind their gates (containment,
+  protected paths, atomic writers, auto-checkpoint, one-time
+  digest-bound per-action approval with a live interactive prompt);
+  `bash` reports typed `sandbox_unavailable` (no enforcing backend is
+  pinned). File deletion stays unavailable and no undo surface is
+  wired. The corpus moved to v85 with seven new `default-tools`
+  subjects pinned by candidate-authored expectation records and a
+  printed audit; the frozen oracle bundle is byte-identical.
+
 - **Headless mode.** `siralos --print "<prompt>" [--json] [--cwd <dir>]` answers
   one prompt with no interactive frontend, which is what makes scripted and CI
   use possible. The grammar refuses a repeated flag instead of silently taking
