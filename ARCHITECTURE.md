@@ -135,10 +135,12 @@ TypeScript-era oracle is retained only as digest-bound evidence.
 ## Fail-closed posture
 
 Several surfaces intentionally report a typed `unavailable` and perform no
-filesystem mutation or process launch: workspace create/edit/delete application
-and safe undo, new checkpoint creation and pruning, private run-directory
+filesystem mutation or process launch: workspace delete application
+and safe undo (no delete tool exists; `apply_undo` is a tested primitive
+with no wired surface), private run-directory
 creation or cleanup, command execution, Git inspection, and every engine or
-language-server probe.
+language-server probe. Checkpoint creation happens automatically on the
+approved `write`/`edit` path, with capacity-driven pruning.
 
 **Why they are closed is a ported-parity decision, not a language limitation.**
 The Rust implementation was ported to byte-match a frozen TypeScript oracle that

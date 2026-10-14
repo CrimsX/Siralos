@@ -31,6 +31,7 @@
   recorded only in [ROADMAP.md](ROADMAP.md), the canonical status source. This
   file states rules; it does not restate status.
 - Working read-only surfaces include the deterministic fake provider, bounded workspace list/read/search, local-directory references, denied-by-default bounded research adapters, self-reference, capability diagnostics, and the interactive CLI.
+- Default mutation and execution tools are live behind their gates: `read`/`write`/`edit` (containment, protected paths, atomic writers, auto-checkpoint, per-action approval; amended corpus) while `bash` reports typed `sandbox_unavailable` (no enforcing backend is pinned); file deletion stays unavailable (D5).
 - Task contracts, snapshots, plans, evidence, provider requests, tool definitions, and public result values must be detached from caller-owned mutable data. Task state is host-owned; model completion is only a request evaluated by host gates.
 - Provider streams and tool loops are bounded, protocol-checked, cancellation-aware, transcript-paired, and sanitized at the terminal boundary. Provider output and external content are always untrusted data.
 - Planning is host-routed and structurally read-only. Plan approval binds only to the exact plan and task revisions and never grants edit, command, checkpoint, sandbox, or research authority.
@@ -40,15 +41,14 @@
 
 The following surfaces intentionally report `unavailable` and perform no filesystem mutation or process launch:
 
-- workspace create/edit/delete application and safe undo;
-- new checkpoint creation and automatic checkpoint pruning;
+- workspace delete application and safe undo (no delete tool exists by D5; `apply_undo` is a tested primitive with no wired surface);
 - private run-directory creation or cleanup;
 - `node-script` and `npm-script` command execution;
 - Git inspection;
 - Godot engine probes, API-dump generation, recovery project probes, GDScript check-only diagnostics, and GDScript LSP startup: surfaces absent from this repository entirely (out, not unavailable) since the siralos-godot decoupling — there is no runner to refuse;
 - executable caches and repository-reference materialization.
 
-These capabilities remain unavailable by a **ported-parity decision**, not by a language limitation. The Rust implementation was ported to byte-match a frozen TypeScript oracle that also lacked an identity-bound commit primitive, and the differential corpus **pins that outcome**: `tests/differential/corpus/workspace-apply.apply-unavailable.json` and `tests/differential/corpus/workspace-prepare.unavailable.json` are among the scenarios asserting a typed `unavailable`. Flipping any of these capabilities is therefore a deliberate, reviewed oracle amendment — never a code change alone. The earlier rationale in this file blamed Node; that was true of the removed TypeScript tree and is obsolete. Static preparation contracts and truthful diagnostics may exist, but they must refuse before approval, checkpoint creation, mirror/cache creation, deletion, or spawn.
+These capabilities remain unavailable by a **ported-parity decision**, not by a language limitation. The Rust implementation was ported to byte-match a frozen TypeScript oracle that also lacked an identity-bound commit primitive, and the differential corpus **pins that outcome**: `tests/differential/corpus/workspace-apply.apply-unavailable.json` and `tests/differential/corpus/workspace-prepare.unavailable.json` are among the scenarios asserting a typed `unavailable`. Flipping any of these capabilities is therefore a deliberate, reviewed oracle amendment — never a code change alone. The v85 amendment is the worked example: new `default-tools` subjects with candidate-authored expectation records and a printed audit, no frozen record edited. The earlier rationale in this file blamed Node; that was true of the removed TypeScript tree and is obsolete. Static preparation contracts and truthful diagnostics may exist, but they must refuse before approval, mirror/cache creation, deletion, or spawn. Checkpoint creation now happens on the approved `write`/`edit` path only.
 
 Do not weaken this posture with another pathname recheck, hashing window, private filename, monkey patch, comment, warning, or documentation claim. A capability becomes available only when its security property is mechanically enforceable and covered by adversarial tests.
 

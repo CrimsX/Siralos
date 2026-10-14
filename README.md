@@ -244,7 +244,8 @@ config change does not need a restart.
 | `... --stdio`                                            | interactive stdio frontend             |
 
 Effects that cannot be enforced are reported as a typed `unavailable` before
-execution, approval, checkpoint creation, or cleanup — never after. The closed
+execution, approval, or cleanup — never after. Approved `write`/`edit`
+mutations create their checkpoint automatically first. The closed
 surfaces are listed in [ARCHITECTURE.md](ARCHITECTURE.md) and
 [SECURITY.md](SECURITY.md).
 

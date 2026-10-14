@@ -483,11 +483,13 @@ inspect exact revision
 ```
 
 Approval binds exact prepared content; changing content invalidates approval.
-Git is not transactional authority. Current Node-based workspace mutation,
-checkpoint creation, undo, private run-directory management, and process launch
-remain unavailable where same-user pathname substitution cannot be defeated by
-mechanical primitives. Another pathname recheck, hash window, warning, or
-private filename is not a fix.
+Git is not transactional authority. The default `write`/`edit` tools
+mutate behind per-action approval with auto-checkpoint (amended corpus,
+ADR 0038); file deletion, undo surfaces, private run-directory
+management, and process launch remain unavailable where same-user
+pathname substitution cannot be defeated by mechanical primitives
+(`bash` reports typed `sandbox_unavailable`). Another pathname
+recheck, hash window, warning, or private filename is not a fix.
 
 ## 9. Context model
 
