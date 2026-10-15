@@ -27,65 +27,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-/// Filesystem identity evidence captured with one profile revision.
-///
-/// Content hashes cannot distinguish an A→B→A sequence when a filesystem
-/// restores the same bytes. The portable evidence below is deliberately
-/// fail-closed: when the platform cannot provide it, the snapshot is not
-/// bindable and cannot authorize a write. Unix adds the stable device/inode
-/// pair and change times; other targets use the strongest stable std metadata
-/// available without enabling an unstable platform API.
-#[derive(Clone, PartialEq, Eq)]
-struct ProfileFileIdentity {
-    length: u64,
-    #[cfg(unix)]
-    device: u64,
-    #[cfg(unix)]
-    inode: u64,
-    #[cfg(unix)]
-    modified_seconds: i64,
-    #[cfg(unix)]
-    modified_nanoseconds: i64,
-    #[cfg(unix)]
-    changed_seconds: i64,
-    #[cfg(unix)]
-    changed_nanoseconds: i64,
-    #[cfg(not(unix))]
-    modified: Option<std::time::SystemTime>,
-    #[cfg(not(unix))]
-    created: Option<std::time::SystemTime>,
-}
-
-fn profile_file_identity(
-    metadata: &std::fs::Metadata,
-) -> Option<ProfileFileIdentity> {
-    if !metadata.is_file() {
-        return None;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        Some(ProfileFileIdentity {
-            length: metadata.len(),
-            device: metadata.dev(),
-            inode: metadata.ino(),
-            modified_seconds: metadata.mtime(),
-            modified_nanoseconds: metadata.mtime_nsec(),
-            changed_seconds: metadata.ctime(),
-            changed_nanoseconds: metadata.ctime_nsec(),
-        })
-    }
-    #[cfg(not(unix))]
-    {
-        let modified = metadata.modified().ok();
-        let created = metadata.created().ok();
-        if modified.is_none() && created.is_none() {
-            return None;
-        }
-        Some(ProfileFileIdentity { length: metadata.len(), modified, created })
-    }
-}
-
+use crate::workspace::fs::{FileIdentity, capture_file_identity};
 /// Maximum complete profile-document size in UTF-8 bytes.
 pub const MAX_PROFILE_DOCUMENT_BYTES: usize =
     crate::module::manifest::MAX_SIRALOS_TOML_BYTES;
@@ -144,7 +86,7 @@ pub struct WorkspaceProfileSnapshot {
     present: bool,
     // Filesystem identity evidence for a present target. It is deliberately
     // private and is carried only into a one-shot write token.
-    file_identity: Option<ProfileFileIdentity>,
+    file_identity: Option<FileIdentity>,
     // A snapshot may be produced by a failed lstat/read. Such a snapshot must
     // not become a write expectation: an absent-file digest would otherwise
     // look like permission to create a file after an unreadable target.
@@ -182,7 +124,7 @@ pub struct WorkspaceProfileWriteToken {
     raw_sha256: String,
     raw_len: usize,
     present: bool,
-    file_identity: Option<ProfileFileIdentity>,
+    file_identity: Option<FileIdentity>,
     consumed: Arc<AtomicBool>,
 }
 
@@ -253,7 +195,7 @@ impl WorkspaceProfileWriteToken {
                     return false;
                 };
                 !metadata.file_type().is_symlink()
-                    && profile_file_identity(&metadata).as_ref()
+                    && capture_file_identity(&metadata).as_ref()
                         == Some(expected)
             }
             _ => false,
@@ -476,7 +418,7 @@ pub fn load_workspace_profile_snapshot(
             write_authority: Arc::new(AtomicBool::new(false)),
         };
     }
-    let file_identity = profile_file_identity(&metadata);
+    let file_identity = capture_file_identity(&metadata);
     let bytes = match read_complete_file_bounded(&path, MAX_SIRALOS_TOML_BYTES)
     {
         BoundedFileRead::Complete(bytes) => bytes,
@@ -543,7 +485,7 @@ pub fn load_workspace_profile_snapshot(
             };
         }
     };
-    let final_identity = profile_file_identity(&final_metadata);
+    let final_identity = capture_file_identity(&final_metadata);
     if file_identity != final_identity {
         return WorkspaceProfileSnapshot {
             load: WorkspaceProfileLoad::Invalid {

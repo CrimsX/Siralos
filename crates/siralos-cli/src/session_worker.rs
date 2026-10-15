@@ -85,6 +85,10 @@ pub enum WorkerCommand {
     ModulesEnable(String),
     /// Activate an installed module through the profile's narrowing gate.
     ModulesActivate(String),
+    /// Render one UI component preview with live feed content.
+    UiPreview(String),
+    /// Resolve and project the current UI panel snapshot.
+    PanelsReport,
     /// Stop: flush the recordings exactly once and exit the loop.
     Shutdown,
 }
@@ -99,6 +103,11 @@ pub enum WorkerEvent {
     Pane(crate::tui::ContextPaneData),
     /// A display report answering one of the request commands.
     Report(String),
+    /// A UI panels snapshot answering `PanelsReport`. Structured
+    /// (not text) so the frontend projects tabs and grid cells
+    /// without re-resolving feeds. Boxed: the snapshot dwarfs the
+    /// other event payloads.
+    Panels(Box<crate::tui::UiPanels>),
     /// A command failed. The text is for a frontend to render truthfully;
     /// failing a command must never look like success.
     Failed(String),
@@ -366,6 +375,10 @@ pub trait WorkerSession {
     fn context_report(&self) -> String;
     /// The tool projection report behind `/tools`.
     fn tools_report(&self) -> String;
+    /// Render one UI component preview with live feed content.
+    fn ui_preview(&self, id: &str) -> String;
+    /// Resolve and project the current UI panel snapshot.
+    fn panels_report(&self) -> crate::tui::UiPanels;
     /// Apply a model switch the UI has already persisted (decision 167 D3).
     fn set_model(&mut self, model: &str) -> Result<(), String>;
     /// Re-apply the reloaded composition (decision 167 D3) and return the
@@ -740,6 +753,14 @@ fn run_worker_loop_with_stop<S: WorkerSession>(
                 let report = session.tools_report();
                 let _ = events.send(WorkerEvent::Report(report));
             }
+            WorkerCommand::UiPreview(id) => {
+                let report = session.ui_preview(&id);
+                let _ = events.send(WorkerEvent::Report(report));
+            }
+            WorkerCommand::PanelsReport => {
+                let panels = session.panels_report();
+                let _ = events.send(WorkerEvent::Panels(Box::new(panels)));
+            }
             WorkerCommand::SetModel(model) => {
                 match session.set_model(&model) {
                     // No report of its own: the frontend owns the profile
@@ -869,10 +890,12 @@ impl WorkerHandle {
             | WorkerCommand::SetModel(value)
             | WorkerCommand::ModulesAdd(value)
             | WorkerCommand::ModulesEnable(value)
-            | WorkerCommand::ModulesActivate(value) => Some(value.len()),
+            | WorkerCommand::ModulesActivate(value)
+            | WorkerCommand::UiPreview(value) => Some(value.len()),
             WorkerCommand::Cancel
             | WorkerCommand::ContextReport
             | WorkerCommand::ToolsReport
+            | WorkerCommand::PanelsReport
             | WorkerCommand::Reload
             | WorkerCommand::ModelsFetch
             | WorkerCommand::Shutdown => None,
@@ -1428,6 +1451,10 @@ pub fn apply_worker_event<W: std::io::Write>(
             | ToolLoopEvent::ContextPressure { .. } => {}
         },
         WorkerEvent::Pane(data) => *pane = Some(data),
+        // Panels snapshots are frontend state (stored by the relay
+        // that owns the panels view); the shared bridge that only
+        // owns a writer never renders them.
+        WorkerEvent::Panels(_) => {}
         WorkerEvent::Report(text) => {
             writer.write_all(sanitizer.flush().as_bytes())?;
             let safe = crate::sanitize::sanitize_for_display(&text);
@@ -1925,6 +1952,18 @@ mod loop_tests {
         }
         fn tools_report(&self) -> String {
             "tools".to_owned()
+        }
+        fn ui_preview(&self, id: &str) -> String {
+            format!("preview of {id}\n")
+        }
+        fn panels_report(&self) -> crate::tui::UiPanels {
+            crate::tui::UiPanels {
+                projection: siralos_core::ui::UiProjection {
+                    tabs: Vec::new(),
+                    grid: [[None, None], [None, None]],
+                },
+                selected: 0,
+            }
         }
         fn set_model(&mut self, model: &str) -> Result<(), String> {
             // Record it: a double that discards its argument cannot fail a test.
@@ -2643,6 +2682,18 @@ mod loop_tests {
         }
         fn modules_activate(&mut self, _id: &str) -> Result<String, String> {
             Ok(String::new())
+        }
+        fn ui_preview(&self, _id: &str) -> String {
+            String::new()
+        }
+        fn panels_report(&self) -> crate::tui::UiPanels {
+            crate::tui::UiPanels {
+                projection: siralos_core::ui::UiProjection {
+                    tabs: Vec::new(),
+                    grid: [[None, None], [None, None]],
+                },
+                selected: 0,
+            }
         }
         fn status(&self) -> SessionStatus {
             SessionStatus {

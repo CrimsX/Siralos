@@ -301,6 +301,18 @@ pub(super) fn pump_worker(
                 effects.answer = Some(WorkerEvent::Models(models));
                 stop = true;
             }
+            // Panels snapshots are frontend STATE like Ready/Models:
+            // store them and answer the relay. Content lines arrive
+            // sanitized from the worker; the draw path renders them
+            // verbatim.
+            WorkerEvent::Panels(boxed)
+                if matches!(until, Until::Answer | Until::Status) =>
+            {
+                let panels = *boxed;
+                state.borrow_mut().panels = Some(panels.clone());
+                effects.answer = Some(WorkerEvent::Panels(Box::new(panels)));
+                stop = true;
+            }
             // Everything else is transcript. `Pane` never reaches this arm (it
             // is frontend state and is handled above); the bridge keeps its own
             // arm for its direct callers and its tests.
@@ -791,6 +803,7 @@ pub(super) fn await_worker_ready(
                     WorkerEvent::TurnFinished => "turn completion",
                     WorkerEvent::Stopped => "a stop event",
                     WorkerEvent::Report(_) => "a report",
+                    WorkerEvent::Panels(_) => "a panels snapshot",
                     WorkerEvent::Failed(_) => "a failure",
                     WorkerEvent::Models(_) => "a model list",
                     WorkerEvent::Ready(_) => "a header",

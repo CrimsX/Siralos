@@ -37,6 +37,16 @@ pub(super) enum SlashCommand<'a> {
     Reload,
     /// `/mouse` — flip TUI mouse capture (TUI) / honesty line (stdio).
     Mouse,
+    /// `/ui-list` — list UI panel components (ADR 0039).
+    UiList,
+    /// `/ui-add` — add a UI panel component (TUI form; stdio prints usage).
+    UiAdd,
+    /// `/ui-edit` with optional component id (`None` = bare command).
+    UiEdit(Option<&'a str>),
+    /// `/ui-remove` with optional component id (`None` = bare command).
+    UiRemove(Option<&'a str>),
+    /// `/ui-preview` with optional component id (`None` = bare command).
+    UiPreview(Option<&'a str>),
     /// `/evolve` — display-only (U8).
     Evolve,
     /// Anything else: a prompt for the application.
@@ -63,6 +73,11 @@ pub fn slash_command_catalog() -> Vec<(&'static str, &'static str)> {
         ("/models", "List available models"),
         ("/reload", "Re-read profile and report what would change"),
         ("/mouse", "Toggle mouse capture (wheel scroll / text select)"),
+        ("/ui-list", "List UI panel components"),
+        ("/ui-add", "Add a UI panel component"),
+        ("/ui-edit", "Edit a UI panel component"),
+        ("/ui-remove", "Remove a UI panel component"),
+        ("/ui-preview", "Preview a UI panel component"),
         ("/evolve", "Show Stage 6 evolution surfaces"),
         ("/exit", "Exit the session"),
     ]
@@ -96,6 +111,11 @@ pub(super) fn parse_slash_command(input: &str) -> SlashCommand<'_> {
         "/provider" => SlashCommand::Provider,
         "/provider remove" => SlashCommand::ProviderRemove,
         "/mouse" => SlashCommand::Mouse,
+        "/ui-list" => SlashCommand::UiList,
+        "/ui-add" => SlashCommand::UiAdd,
+        "/ui-edit" => SlashCommand::UiEdit(None),
+        "/ui-remove" => SlashCommand::UiRemove(None),
+        "/ui-preview" => SlashCommand::UiPreview(None),
         "/model" => SlashCommand::Model(None),
         "/models" => SlashCommand::Models,
         "/reload" => SlashCommand::Reload,
@@ -114,6 +134,12 @@ pub(super) fn parse_slash_command(input: &str) -> SlashCommand<'_> {
                 SlashCommand::ModulesActivate(None)
             } else if let Some(id) = input.strip_prefix("/modules-activate ") {
                 SlashCommand::ModulesActivate(Some(id))
+            } else if let Some(id) = input.strip_prefix("/ui-edit ") {
+                SlashCommand::UiEdit(Some(id))
+            } else if let Some(id) = input.strip_prefix("/ui-remove ") {
+                SlashCommand::UiRemove(Some(id))
+            } else if let Some(id) = input.strip_prefix("/ui-preview ") {
+                SlashCommand::UiPreview(Some(id))
             } else if input.starts_with("/models") {
                 // `/models` takes no arguments: anything beyond the exact
                 // form stays an unknown command (honesty gate), exactly as

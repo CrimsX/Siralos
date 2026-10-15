@@ -328,6 +328,54 @@ impl UiComponentSpec {
     }
 }
 
+/// Where a component spec was declared. User specs live in
+/// workspace `.siralos/ui.toml`; module specs are re-parsed from
+/// installed module manifests each session, never cached.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SpecSource {
+    /// Workspace user spec.
+    User,
+    /// Module-declared spec, with the declaring module id.
+    Module {
+        /// Declaring module package id.
+        id: String,
+    },
+}
+
+/// One validated spec with its declaration source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourcedSpec {
+    /// Declaration source.
+    pub source: SpecSource,
+    /// The validated spec.
+    pub spec: UiComponentSpec,
+}
+
+/// Merge user and module specs into registration order: user
+/// specs first in file order, then module specs in caller order,
+/// with user specs winning every id conflict. Deterministic for
+/// identical inputs.
+#[must_use]
+pub fn merge_specs(
+    user: Vec<UiComponentSpec>,
+    modules: Vec<(String, UiComponentSpec)>,
+) -> Vec<SourcedSpec> {
+    let mut merged: Vec<SourcedSpec> = user
+        .into_iter()
+        .map(|spec| SourcedSpec { source: SpecSource::User, spec })
+        .collect();
+    for (module_id, spec) in modules {
+        if merged.iter().any(|sourced| sourced.spec.id() == spec.id()) {
+            continue;
+        }
+        merged.push(SourcedSpec {
+            source: SpecSource::Module { id: module_id },
+            spec,
+        });
+    }
+    merged
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -478,5 +526,37 @@ mod tests {
             UiSpecError::InvalidPlacement.message(),
             "component placement must be `tab` or `cell:<row>,<col>`"
         );
+    }
+
+    fn parsed(id: &str, title: &str) -> UiComponentSpec {
+        UiComponentSpec::parse(&UnvalidatedSpec {
+            id: id.to_owned(),
+            title: title.to_owned(),
+            feed: "tools.catalog".to_owned(),
+            enabled: true,
+            placement: "tab".to_owned(),
+            max_rows: 20,
+            max_cols: 60,
+            params: Vec::new(),
+        })
+        .expect("test spec parses")
+    }
+
+    #[test]
+    fn merge_prefers_user_specs_and_keeps_order() {
+        use super::{SpecSource, merge_specs};
+        let merged = merge_specs(
+            vec![parsed("user-only", "User"), parsed("shared", "Mine")],
+            vec![
+                ("mod-a".to_owned(), parsed("shared", "Theirs")),
+                ("mod-a".to_owned(), parsed("mod-only", "Mod")),
+            ],
+        );
+        let ids: Vec<&str> =
+            merged.iter().map(|sourced| sourced.spec.id()).collect();
+        assert_eq!(ids, vec!["user-only", "shared", "mod-only"]);
+        assert!(matches!(merged[1].source, SpecSource::User));
+        assert_eq!(merged[1].spec.title(), "Mine");
+        assert!(matches!(merged[2].source, SpecSource::Module { .. }));
     }
 }

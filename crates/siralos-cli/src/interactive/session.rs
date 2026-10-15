@@ -11,18 +11,18 @@ use super::{
     ReadTool, RecordedReplayProvider, ReplayStoreLoadError,
     RetainingReplayRecorder, SIRALOS_SYSTEM_INSTRUCTIONS, SegmentInput,
     SessionProvider, SiralosApplication, Stability, ToolLoopEvent,
-    ToolRegistry, WorkspaceListTool, WorkspaceProfileLoad, WorkspaceReadTool,
-    WorkspaceSearchTool, WriteTool, apply_reloaded_config,
+    ToolRegistry, UiFeedInputs, WorkspaceListTool, WorkspaceProfileLoad,
+    WorkspaceReadTool, WorkspaceSearchTool, WriteTool, apply_reloaded_config,
     approve_workspace_profile, compose_skills_segment,
     declare_and_compose_profile, effective_profile_protocol,
-    load_replay_store, load_user_configuration,
+    load_replay_store, load_sourced_user_specs, load_user_configuration,
     load_workspace_profile_snapshot, non_live_state_digest,
     redacted_credential_display, reload_authority_is_revalidated,
     reload_report_from_load, render_activate_module, render_add_module,
     render_context_segment, render_enable_module, render_tools_segment,
-    resolve_workspace_root, safe_alias_for_display, safe_profile_diagnostic,
-    safe_report_text, session_host_rules, verify_session_lock,
-    write_replay_store,
+    render_ui_preview_text, resolve_spec_content, resolve_workspace_root,
+    safe_alias_for_display, safe_profile_diagnostic, safe_report_text,
+    session_host_rules, verify_session_lock, write_replay_store,
 };
 
 /// Flush the retaining record-replay recorder at session exit — the SINGLE
@@ -338,6 +338,57 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
             id,
             self.profile_modules.as_deref(),
         ))
+    }
+
+    fn ui_preview(&self, id: &str) -> String {
+        // Same render path as the stdio dispatcher: the session
+        // holds the registry snapshot, policy, and application, so
+        // feed content resolves here (decision 168 R4).
+        let state_dir = siralos_adapters::paths::state_dir().ok();
+        render_ui_preview_text(
+            &self.workspace_root,
+            &self.tool_definitions,
+            &self.policy,
+            self.application.last_projection(),
+            state_dir.as_deref(),
+            id,
+        )
+    }
+
+    fn panels_report(&self) -> crate::tui::UiPanels {
+        use siralos_core::ui::{UiRegistry, content_for, project_components};
+        // User specs only; module-declared specs join in P5.
+        // Unreadable documents render as the empty host here; the
+        // typed refusal surfaces through `/ui-list`.
+        let sourced =
+            load_sourced_user_specs(&self.workspace_root).unwrap_or_default();
+        let mut registry = UiRegistry::new();
+        for item in &sourced {
+            if !item.spec.enabled() {
+                continue;
+            }
+            if registry.insert(item.spec.clone()).is_err() {
+                continue;
+            }
+        }
+        let state_dir = siralos_adapters::paths::state_dir().ok();
+        let mut contents = std::collections::BTreeMap::new();
+        for spec in registry.specs() {
+            let inputs = UiFeedInputs {
+                root: &self.workspace_root,
+                tools: &self.tool_definitions,
+                policy: &self.policy,
+                last_projection: self.application.last_projection(),
+                checkpoint_state_dir: state_dir.as_deref(),
+            };
+            if let Ok(lines) = resolve_spec_content(&inputs, spec) {
+                contents.insert(spec.id().to_owned(), lines);
+            }
+        }
+        let projection = project_components(&registry, |spec| {
+            content_for(spec.id(), &contents)
+        });
+        crate::tui::UiPanels { projection, selected: 0 }.clamped()
     }
 
     fn status(&self) -> crate::session_worker::SessionStatus {

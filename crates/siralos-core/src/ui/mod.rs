@@ -16,6 +16,7 @@ pub use projection::{
 pub use spec::{
     GRID_COLS, GRID_ROWS, MAX_SPEC_ID_BYTES, MAX_SPEC_PARAM_KEY_BYTES,
     MAX_SPEC_PARAM_VALUE_BYTES, MAX_SPEC_PARAMS, MAX_SPEC_SIZE_HINT,
-    MAX_SPEC_TITLE_CHARS, MIN_SPEC_SIZE_HINT, UiComponentSpec, UiFeed,
-    UiPlacement, UiSpecError, UnvalidatedSpec,
+    MAX_SPEC_TITLE_CHARS, MIN_SPEC_SIZE_HINT, SourcedSpec, SpecSource,
+    UiComponentSpec, UiFeed, UiPlacement, UiSpecError, UnvalidatedSpec,
+    merge_specs,
 };

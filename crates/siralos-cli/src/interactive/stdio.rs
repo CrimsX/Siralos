@@ -8,15 +8,16 @@ use super::{
     StdioApprovalPrompter, WorkspaceProfileLoad, Write, apply_model_switch,
     apply_provider_remove_confirmation_at, apply_reloaded_config,
     approve_workspace_profile, compose_session, drain_events,
-    drive_context_demand, flush_record_replay, io, is_unknown_slash_command,
-    load_user_configuration, load_workspace_profile_snapshot,
-    model_listing_diagnostic, model_listing_gate, non_live_state_digest,
-    parse_slash_command, read_approval_via_input_queue,
-    reload_authority_is_revalidated, reload_report_from_load,
-    render_activate_module, render_add_module, render_context_segment,
-    render_enable_module, render_evolve_lines, render_model_line,
-    render_modules, render_provider_line, render_startup_notices,
-    render_tools_segment, safe_alias_for_display, sanitize_for_display,
+    drive_context_demand, execute_ui_remove, flush_record_replay, io,
+    is_unknown_slash_command, load_user_configuration,
+    load_workspace_profile_snapshot, model_listing_diagnostic,
+    model_listing_gate, non_live_state_digest, parse_slash_command,
+    read_approval_via_input_queue, reload_authority_is_revalidated,
+    reload_report_from_load, render_activate_module, render_add_module,
+    render_context_segment, render_enable_module, render_evolve_lines,
+    render_model_line, render_modules, render_provider_line,
+    render_startup_notices, render_tools_segment, render_ui_list_text,
+    render_ui_preview_text, safe_alias_for_display, sanitize_for_display,
     slash_command_catalog,
 };
 
@@ -373,6 +374,57 @@ where
                 manifests,
                 id.unwrap_or(""),
                 profile_modules,
+            ));
+            writer
+                .borrow_mut()
+                .write_all(rendered.as_bytes())
+                .map_err(InteractiveError::Io)?;
+        }
+        SlashCommand::UiList => {
+            let rendered =
+                sanitize_for_display(&render_ui_list_text(workspace_root));
+            writer
+                .borrow_mut()
+                .write_all(rendered.as_bytes())
+                .map_err(InteractiveError::Io)?;
+        }
+        SlashCommand::UiAdd => {
+            let rendered = sanitize_for_display(
+                "ui-add opens a form in the TUI; run the TUI and press F2 to manage panels\n",
+            );
+            writer
+                .borrow_mut()
+                .write_all(rendered.as_bytes())
+                .map_err(InteractiveError::Io)?;
+        }
+        SlashCommand::UiEdit(_) => {
+            let rendered = sanitize_for_display(
+                "ui-edit opens a form in the TUI; run the TUI and press F2 to manage panels\n",
+            );
+            writer
+                .borrow_mut()
+                .write_all(rendered.as_bytes())
+                .map_err(InteractiveError::Io)?;
+        }
+        SlashCommand::UiRemove(id) => {
+            let rendered = sanitize_for_display(&execute_ui_remove(
+                workspace_root,
+                id.unwrap_or(""),
+            ));
+            writer
+                .borrow_mut()
+                .write_all(rendered.as_bytes())
+                .map_err(InteractiveError::Io)?;
+        }
+        SlashCommand::UiPreview(id) => {
+            let state_dir = siralos_adapters::paths::state_dir().ok();
+            let rendered = sanitize_for_display(&render_ui_preview_text(
+                workspace_root,
+                tool_definitions,
+                policy,
+                application.last_projection(),
+                state_dir.as_deref(),
+                id.unwrap_or(""),
             ));
             writer
                 .borrow_mut()

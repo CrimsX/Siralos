@@ -1067,8 +1067,13 @@ mod context_pane_tests {
         assert!(names.contains(&"/evolve"));
         assert!(names.contains(&"/context"));
         assert!(names.contains(&"/mouse"));
+        assert!(names.contains(&"/ui-list"));
+        assert!(names.contains(&"/ui-add"));
+        assert!(names.contains(&"/ui-edit"));
+        assert!(names.contains(&"/ui-remove"));
+        assert!(names.contains(&"/ui-preview"));
         assert!(names.contains(&"/exit"));
-        assert_eq!(names.len(), 15);
+        assert_eq!(names.len(), 20);
     }
 
     #[test]
@@ -1077,7 +1082,7 @@ mod context_pane_tests {
         state.input = "/".to_owned();
         state.update_palette();
         let palette_len = state.palette.as_ref().expect("palette for /").len();
-        assert_eq!(palette_len, 15);
+        assert_eq!(palette_len, 20);
         // I3: palette shows ALL filtered entries, bounded by terminal height minus input/status rows; scroll indicator only if overflow.
         // At 80x24, available 21, 15 entries fit fully with no indicator.
         let buf = super::render(&state, 80, 24);
@@ -1926,8 +1931,8 @@ fn palette_bounded_and_prefix_highlight() {
     let mut state = TuiState::new();
     state.input = "/".to_owned();
     state.update_palette();
-    // Full catalog 15, palette shows all filtered entries
-    assert_eq!(state.palette.as_ref().unwrap().len(), 15);
+    // Full catalog 20, palette shows all filtered entries
+    assert_eq!(state.palette.as_ref().unwrap().len(), 20);
     let buf = render(&state, 80, 24);
     let content: String = buf.content().iter().map(|c| c.symbol()).collect();
     assert!(content.contains("/context"));
@@ -4543,4 +4548,83 @@ fn panels_view_keys_enter_cycle_and_exit() {
     assert_eq!(state.panels.as_ref().expect("panels").selected, 0);
     assert!(!handle_key(&mut state, press(KeyCode::Esc), 24));
     assert!(!state.panels_view);
+}
+
+#[test]
+fn ui_spec_validators_accept_and_refuse() {
+    use super::forms::{
+        validate_ui_enabled, validate_ui_feed, validate_ui_param_line,
+        validate_ui_placement, validate_ui_size, validate_ui_spec_id,
+        validate_ui_title,
+    };
+    assert!(validate_ui_spec_id("recent-files").is_ok());
+    assert!(validate_ui_spec_id("").is_err());
+    assert!(validate_ui_spec_id("ABC").is_err());
+    assert!(validate_ui_title("Recent files").is_ok());
+    assert!(validate_ui_title("a\nb").is_err());
+    assert!(validate_ui_feed("tools.catalog").is_ok());
+    assert!(validate_ui_feed("nope").is_err());
+    assert!(validate_ui_placement("tab").is_ok());
+    assert!(validate_ui_placement("cell:1,0").is_ok());
+    assert!(validate_ui_placement("cell:2,0").is_err());
+    assert!(validate_ui_size("20").is_ok());
+    assert!(validate_ui_size("0").is_err());
+    assert!(validate_ui_size("100").is_err());
+    assert!(validate_ui_size("many").is_err());
+    assert!(validate_ui_enabled("y").is_ok());
+    assert!(validate_ui_enabled("N").is_ok());
+    assert!(validate_ui_enabled("maybe").is_err());
+    assert!(validate_ui_param_line("path=src").is_ok());
+    assert!(validate_ui_param_line("no-equals").is_err());
+    assert!(validate_ui_param_line("Bad Key!=v").is_err());
+}
+
+#[test]
+fn ui_spec_form_add_flow_completes() {
+    use super::forms::{UiSpecField, UiSpecForm, advance_ui_spec_form};
+    let mut form = UiSpecForm::new_add();
+    let submit = |form: &mut UiSpecForm, text: &str| {
+        form.input = text.to_owned();
+        advance_ui_spec_form(form);
+    };
+    submit(&mut form, "bad id!");
+    assert!(form.error.is_some());
+    assert_eq!(form.field, UiSpecField::Id);
+    submit(&mut form, "recent");
+    assert_eq!(form.field, UiSpecField::Title);
+    submit(&mut form, "Recent");
+    submit(&mut form, "workspace.list");
+    submit(&mut form, "cell:0,0");
+    submit(&mut form, "20");
+    submit(&mut form, "60");
+    submit(&mut form, "y");
+    assert_eq!(form.field, UiSpecField::Params);
+    submit(&mut form, "path=src");
+    assert!(form.completed.is_none(), "params accumulate");
+    submit(&mut form, "");
+    let done = form.completed.expect("completes");
+    assert_eq!(done.id, "recent");
+    assert!(done.enabled);
+    assert_eq!(done.params, vec![("path".to_owned(), "src".to_owned())]);
+}
+
+#[test]
+fn ui_spec_form_edit_skips_id_prefilled() {
+    use super::forms::UiSpecForm;
+    use siralos_core::ui::{UiComponentSpec, UnvalidatedSpec};
+    let existing = UiComponentSpec::parse(&UnvalidatedSpec {
+        id: "fixed".to_owned(),
+        title: "Old".to_owned(),
+        feed: "tools.catalog".to_owned(),
+        enabled: false,
+        placement: "tab".to_owned(),
+        max_rows: 10,
+        max_cols: 40,
+        params: Vec::new(),
+    })
+    .expect("parses");
+    let form = UiSpecForm::new_edit("fixed", &existing);
+    assert_eq!(form.field, super::forms::UiSpecField::Title);
+    assert_eq!(form.id.as_deref(), Some("fixed"));
+    assert_eq!(form.enabled, Some(false));
 }

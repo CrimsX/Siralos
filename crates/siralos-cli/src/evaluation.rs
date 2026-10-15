@@ -1128,6 +1128,18 @@ mod tests {
         fn tools_report(&self) -> String {
             String::new()
         }
+        fn ui_preview(&self, _id: &str) -> String {
+            String::new()
+        }
+        fn panels_report(&self) -> crate::tui::UiPanels {
+            crate::tui::UiPanels {
+                projection: siralos_core::ui::UiProjection {
+                    tabs: Vec::new(),
+                    grid: [[None, None], [None, None]],
+                },
+                selected: 0,
+            }
+        }
         fn set_model(&mut self, _model: &str) -> Result<(), String> {
             Ok(())
         }

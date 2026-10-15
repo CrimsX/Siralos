@@ -43,8 +43,8 @@ pub struct ContextSummary {
     pub volatile_bytes: usize,
     /// Estimated tokens.
     pub estimated_tokens: usize,
-    /// Working maximum tokens.
-    pub working_maximum: usize,
+    /// Working maximum tokens (mirrors the pressure bound type).
+    pub working_maximum: i64,
     /// Pressure state wire string.
     pub pressure_state: String,
     /// Pressure percent.
@@ -70,8 +70,10 @@ pub struct FeedContext<'a> {
     pub modules: &'a [ModuleRecord],
     /// Latest context summary, when computed.
     pub context: Option<&'a ContextSummary>,
-    /// Caller state directory for the checkpoint store.
-    pub checkpoint_state_dir: &'a Path,
+    /// Caller state directory for the checkpoint store. `None`
+    /// refuses only the checkpoints feed; every other feed ignores
+    /// it.
+    pub checkpoint_state_dir: Option<&'a Path>,
 }
 
 /// Why a feed refused to resolve. Typed and stable; paths are
@@ -298,13 +300,15 @@ fn resolve_checkpoints_list(
             "\"limit\" must be an integer 1..=100".to_owned(),
         ));
     }
-    let store = open_checkpoint_store(
-        context.workspace_root,
-        context.checkpoint_state_dir,
-    )
-    .map_err(|_| {
-        FeedError::Denied("checkpoint store unavailable".to_owned())
-    })?;
+    let Some(state_dir) = context.checkpoint_state_dir else {
+        return Err(FeedError::Denied(
+            "checkpoint store unavailable".to_owned(),
+        ));
+    };
+    let store = open_checkpoint_store(context.workspace_root, state_dir)
+        .map_err(|_| {
+            FeedError::Denied("checkpoint store unavailable".to_owned())
+        })?;
     let listed = store.list(None, Some(limit));
     if listed.is_empty() {
         return Ok(vec!["checkpoints: none recorded".to_owned()]);
@@ -413,7 +417,7 @@ mod tests {
                 policy: &self.policy,
                 modules: &[],
                 context: None,
-                checkpoint_state_dir: &self.state_dir,
+                checkpoint_state_dir: Some(&self.state_dir),
             }
         }
     }

@@ -810,6 +810,55 @@ pub fn handle_key(
             }
         }
     }
+    // UI spec form (ADR 0039 P4): modal discipline like the
+    // provider form, but field-local — Esc cancels, Enter
+    // validates and advances, Backspace edits, printable chars
+    // append bounded. Completion is drained by the loop.
+    if let Some(form) = state.ui_spec_form.as_mut() {
+        if form.completed.is_some() {
+            return false;
+        }
+        match key.code {
+            KeyCode::Esc => {
+                if key.kind != crossterm::event::KeyEventKind::Press {
+                    return false;
+                }
+                state.ui_spec_form = None;
+                return false;
+            }
+            KeyCode::Enter => {
+                if key.kind != crossterm::event::KeyEventKind::Press {
+                    return false;
+                }
+                super::forms::advance_ui_spec_form(form);
+                return false;
+            }
+            KeyCode::Backspace => {
+                if key.kind != crossterm::event::KeyEventKind::Press {
+                    return false;
+                }
+                form.input.pop();
+                form.error = None;
+                return false;
+            }
+            KeyCode::Char(ch) => {
+                if key.kind != crossterm::event::KeyEventKind::Press {
+                    return false;
+                }
+                if ch.is_control() {
+                    return false;
+                }
+                if form.input.len() + ch.len_utf8() <= MAX_INPUT_BYTES {
+                    form.input.push(ch);
+                }
+                form.error = None;
+                return false;
+            }
+            _ => {
+                return false;
+            }
+        }
+    }
     // H6: provider picker intercepts all keys while visible.
     if state.provider_picker.is_some() {
         match key.code {

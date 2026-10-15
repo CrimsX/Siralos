@@ -5,16 +5,16 @@ use super::{
     InteractiveError, InteractiveOptions, ModelListingGate, Path, Rc, RefCell,
     SlashCommand, TuiState, Until, VecDeque, WorkerCommand, WorkerEvent,
     WorkerGuard, WorkerSource, Write, ask_worker, ask_worker_effects,
-    await_worker_ready, drain_pending_worker,
-    handle_pending_approval_key_outcome, handle_tui_mouse, io,
-    is_unknown_slash_command, load_workspace_profile_write_token,
-    model_listing_diagnostic, model_listing_gate,
-    open_model_picker_via_worker, parse_slash_command, relay_suspended_turn,
-    render_answer, render_evolve_lines, render_model_line, render_modules,
-    render_provider_line_display, resolve_workspace_root,
-    safe_alias_for_display, sanitize_for_display, slash_command_catalog,
-    spawn_tui_worker, switch_model_via_worker, transient_status,
-    write_profile_config_at,
+    await_worker_ready, drain_pending_worker, drain_ui_spec_form,
+    execute_ui_remove, handle_pending_approval_key_outcome, handle_tui_mouse,
+    io, is_unknown_slash_command, load_sourced_user_specs,
+    load_workspace_profile_write_token, model_listing_diagnostic,
+    model_listing_gate, open_model_picker_via_worker, parse_slash_command,
+    relay_suspended_turn, render_answer, render_evolve_lines,
+    render_model_line, render_modules, render_provider_line_display,
+    render_ui_list_text, resolve_workspace_root, safe_alias_for_display,
+    sanitize_for_display, slash_command_catalog, spawn_tui_worker,
+    switch_model_via_worker, transient_status, write_profile_config_at,
 };
 
 /// Dispatch one parsed [`SlashCommand`] to the TUI sink — the second thin
@@ -117,6 +117,66 @@ pub(super) fn dispatch_tui_command(
                 progress,
                 reasoning,
                 WorkerCommand::ModulesActivate(id.unwrap_or("").to_owned()),
+                Until::Answer,
+            )?;
+            render_answer(answer, sink)?;
+        }
+        SlashCommand::UiList => {
+            // Display only from the workspace file: local render.
+            let rendered =
+                sanitize_for_display(&render_ui_list_text(workspace_root));
+            let _ = sink.write_all(rendered.as_bytes());
+        }
+        SlashCommand::UiAdd => {
+            // Opens the spec form; submit drains through the worker
+            // boundary via the completed form (input.rs drives).
+            state.borrow_mut().ui_spec_form =
+                Some(crate::tui::UiSpecForm::new_add());
+        }
+        SlashCommand::UiEdit(id) => {
+            let Some(id) = id.filter(|id| !id.is_empty()) else {
+                let _ = sink.write_all(
+                    sanitize_for_display("usage: /ui-edit <id>\n").as_bytes(),
+                );
+                return Ok(false);
+            };
+            match load_sourced_user_specs(workspace_root)
+                .unwrap_or_default()
+                .into_iter()
+                .find(|each| each.spec.id() == id)
+            {
+                Some(item) => {
+                    state.borrow_mut().ui_spec_form =
+                        Some(crate::tui::UiSpecForm::new_edit(id, &item.spec));
+                }
+                None => {
+                    let _ = sink.write_all(
+                        sanitize_for_display(&format!(
+                            "no ui component {id:?}\n"
+                        ))
+                        .as_bytes(),
+                    );
+                }
+            }
+        }
+        SlashCommand::UiRemove(id) => {
+            // File-local mutation under a fresh observation: no
+            // session state involved, so no worker round trip.
+            let rendered = sanitize_for_display(&execute_ui_remove(
+                workspace_root,
+                id.unwrap_or(""),
+            ));
+            let _ = sink.write_all(rendered.as_bytes());
+        }
+        SlashCommand::UiPreview(id) => {
+            let answer = ask_worker(
+                worker,
+                sink,
+                state,
+                pane,
+                progress,
+                reasoning,
+                WorkerCommand::UiPreview(id.unwrap_or("").to_owned()),
                 Until::Answer,
             )?;
             render_answer(answer, sink)?;
@@ -857,6 +917,31 @@ pub fn run_interactive_tui_with_options(
                         tui_state.borrow_mut().provider_add_form = None;
                     }
                 }
+                let composed = transient_status(&tui_state.borrow(), "");
+                tui_state.borrow_mut().status = composed;
+            }
+            // UI spec form drain (ADR 0039 P4): a completed add/edit
+            // form writes `.siralos/ui.toml` under a fresh
+            // observation. File-local mutation under a one-shot
+            // token: no session state involved, so no worker round
+            // trip (unlike profile writes, there is no live state
+            // to apply).
+            let ui_completed = {
+                let mut guard = tui_state.borrow_mut();
+                if let Some(form) = guard.ui_spec_form.as_mut() {
+                    form.completed
+                        .take()
+                        .map(|data| (form.editing.clone(), data))
+                } else {
+                    None
+                }
+            };
+            if let Some((editing, data)) = ui_completed {
+                let outcome =
+                    drain_ui_spec_form(&workspace_root, editing, &data);
+                let _ =
+                    sink.write_all(sanitize_for_display(&outcome).as_bytes());
+                tui_state.borrow_mut().ui_spec_form = None;
                 let composed = transient_status(&tui_state.borrow(), "");
                 tui_state.borrow_mut().status = composed;
             }

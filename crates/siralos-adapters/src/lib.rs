@@ -16,6 +16,7 @@ pub mod context_session;
 pub mod language;
 pub mod lockfile;
 pub mod module;
+pub mod observed_write;
 pub mod paths;
 pub mod process;
 pub mod profile_config;

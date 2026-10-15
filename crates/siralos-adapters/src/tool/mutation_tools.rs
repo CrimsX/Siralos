@@ -1316,6 +1316,33 @@ mod tests {
     }
 
     #[test]
+    fn write_refuses_the_ui_document_as_protected() {
+        // ADR 0039: `.siralos/ui.toml` is behavioral configuration.
+        // Workspace mutation tools refuse it before approval,
+        // checkpoint, or staging — only the Host write path in the
+        // cli may touch it.
+        let fixture = Fixture::new();
+        fs::create_dir_all(fixture.root.join(".siralos")).unwrap();
+        let tool = fixture.write_tool();
+        let token = CancellationToken::new();
+        let result = tool.execute(
+            &json!({"path": ".siralos/ui.toml", "content": "x"}),
+            token.signal(),
+        );
+        assert!(
+            matches!(result, ToolExecutionResult::Denied { .. }),
+            "{result:?}"
+        );
+        if let ToolExecutionResult::Denied { message } = result {
+            assert_eq!(
+                message,
+                "Path is protected from model-facing workspace mutation."
+            );
+        }
+        assert_eq!(fixture.checkpoint_count(), 0);
+    }
+
+    #[test]
     fn write_refuses_protected_and_excluded_paths() {
         let fixture = Fixture::new();
         fs::create_dir_all(fixture.root.join("sub")).unwrap();

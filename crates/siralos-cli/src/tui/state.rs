@@ -181,6 +181,10 @@ pub struct TuiState {
     /// `None` renders the sane empty host. Populated by the worker
     /// panel report (P4); P3 stages fixtures in tests directly.
     pub panels: Option<super::panels::UiPanels>,
+    /// UI spec add/edit form (ADR 0039 P4): while `Some`, Enter
+    /// advances its fields and Esc cancels; completion is drained
+    /// by the interactive loop into a worker command.
+    pub ui_spec_form: Option<super::forms::UiSpecForm>,
 }
 
 impl std::fmt::Debug for TuiState {
@@ -267,6 +271,7 @@ impl Default for TuiState {
             turn_epoch: 0,
             panels_view: false,
             panels: None,
+            ui_spec_form: None,
         }
     }
 }

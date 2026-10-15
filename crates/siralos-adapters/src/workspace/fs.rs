@@ -24,6 +24,69 @@ pub const DEFAULT_EXCLUDED_DIRECTORIES: [&str; 4] =
 /// Prefix of mutation staging entries excluded from listings.
 pub const MUTATION_TEMP_PREFIX: &str = ".siralos-mutation-";
 
+/// Portable file-identity evidence for observed-write tokens.
+///
+/// Content hashes cannot distinguish an A→B→A sequence when a
+/// filesystem restores the same bytes. This evidence is deliberately
+/// fail-closed: when the platform cannot provide it, observation
+/// yields no write authority. Unix adds the stable device/inode
+/// pair and change times; other targets use the strongest stable
+/// std metadata available without enabling an unstable platform
+/// API.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct FileIdentity {
+    length: u64,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+    #[cfg(unix)]
+    modified_seconds: i64,
+    #[cfg(unix)]
+    modified_nanoseconds: i64,
+    #[cfg(unix)]
+    changed_seconds: i64,
+    #[cfg(unix)]
+    changed_nanoseconds: i64,
+    #[cfg(not(unix))]
+    modified: Option<std::time::SystemTime>,
+    #[cfg(not(unix))]
+    created: Option<std::time::SystemTime>,
+}
+
+/// Capture file-identity evidence from live metadata. Returns
+/// `None` for non-files and where the platform offers no stable
+/// identity — callers treat that as unobservable, never as absent.
+pub(crate) fn capture_file_identity(
+    metadata: &std::fs::Metadata,
+) -> Option<FileIdentity> {
+    if !metadata.is_file() {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Some(FileIdentity {
+            length: metadata.len(),
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            modified_seconds: metadata.mtime(),
+            modified_nanoseconds: metadata.mtime_nsec(),
+            changed_seconds: metadata.ctime(),
+            changed_nanoseconds: metadata.ctime_nsec(),
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let modified = metadata.modified().ok();
+        let created = metadata.created().ok();
+        if modified.is_none() && created.is_none() {
+            return None;
+        }
+        Some(FileIdentity { length: metadata.len(), modified, created })
+    }
+}
+
 /// Return whether a directory entry is a link-like path that must not be
 /// followed by authority-bearing workspace traversal. Windows junction and
 /// mount-point entries are reparse points even when `is_symlink()` is false.

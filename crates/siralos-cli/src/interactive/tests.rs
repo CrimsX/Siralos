@@ -2639,7 +2639,12 @@ fn slash_command_catalog_lists_provider_model_evolve() {
     assert!(names.contains(&"/evolve"));
     assert!(names.contains(&"/context"));
     assert!(names.contains(&"/mouse"));
-    assert_eq!(names.len(), 15);
+    assert!(names.contains(&"/ui-list"));
+    assert!(names.contains(&"/ui-add"));
+    assert!(names.contains(&"/ui-edit"));
+    assert!(names.contains(&"/ui-remove"));
+    assert!(names.contains(&"/ui-preview"));
+    assert_eq!(names.len(), 20);
 }
 
 #[test]
@@ -2667,6 +2672,25 @@ fn parse_slash_recognizes_provider_model_evolve() {
     ));
     assert!(is_unknown_slash_command("/reload extra"));
     assert!(matches!(parse_slash_command("/evolve"), SlashCommand::Evolve));
+    assert!(matches!(parse_slash_command("/ui-list"), SlashCommand::UiList));
+    assert!(matches!(parse_slash_command("/ui-add"), SlashCommand::UiAdd));
+    assert!(matches!(
+        parse_slash_command("/ui-edit my-panel"),
+        SlashCommand::UiEdit(Some("my-panel"))
+    ));
+    assert!(matches!(
+        parse_slash_command("/ui-edit"),
+        SlashCommand::UiEdit(None)
+    ));
+    assert!(matches!(
+        parse_slash_command("/ui-remove my-panel"),
+        SlashCommand::UiRemove(Some("my-panel"))
+    ));
+    assert!(matches!(
+        parse_slash_command("/ui-preview my-panel"),
+        SlashCommand::UiPreview(Some("my-panel"))
+    ));
+    assert!(!is_unknown_slash_command("/ui-list"));
     // Unknown still goes to prompt
     assert!(matches!(
         parse_slash_command("/unknown"),

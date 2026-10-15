@@ -503,9 +503,12 @@ pub fn draw_with_pane(
         frame.render_widget(indicator, busy_area);
     }
     // Cursor at end of input (after `> ` prefix + input length). Clamp to area.
-    // When a modal is pending or the add-form is open, hide the cursor behind
+    // When a modal or any add-form is open, hide the cursor behind
     // the dimmed backdrop (no typing through a modal).
-    if state.pending_approval.is_none() && state.provider_add_form.is_none() {
+    if state.pending_approval.is_none()
+        && state.provider_add_form.is_none()
+        && state.ui_spec_form.is_none()
+    {
         let input_width =
             u16::try_from(display_width(&safe_input)).unwrap_or(u16::MAX);
         let cursor_x = input_area
@@ -695,6 +698,39 @@ pub fn draw_with_pane(
         frame.render_widget(paragraph, inner);
     }
 
+    // UI spec add/edit form (ADR 0039 P4): same modal discipline as
+    // the provider form — rounded modal, current field highlighted,
+    // per-field description, error line when the last submit was
+    // invalid.
+    if let Some(form) = &state.ui_spec_form {
+        let backdrop = Block::default()
+            .style(Style::default().bg(Color::DarkGray).fg(Color::White));
+        frame.render_widget(backdrop, backdrop_area);
+        let modal_area = centered_rect(75, 75, backdrop_area);
+        frame.render_widget(ratatui::widgets::Clear, modal_area);
+        let title = match &form.editing {
+            Some(id) => format!(" edit UI component {id} "),
+            None => " add UI component ".to_owned(),
+        };
+        let modal_block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title(title)
+            .title_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            )
+            .style(Style::default().bg(Color::Black).fg(Color::Cyan));
+        let inner = modal_block.inner(modal_area);
+        frame.render_widget(modal_block, modal_area);
+        let lines = ui_spec_form_lines(form);
+        let paragraph = Paragraph::new(Text::from(lines))
+            .style(Style::default().fg(Color::White).bg(Color::Black))
+            .wrap(ratatui::widgets::Wrap { trim: false });
+        frame.render_widget(paragraph, inner);
+    }
+
     // Modal overlay (T2): dimmed backdrop + centered modal with the sanitized
     // approval request (bounded to MAX_APPROVAL_LINES). This reuses the same
     // sanitizer-bound lines the stdio path would render — no unsanitized content.
@@ -878,6 +914,95 @@ pub(super) fn provider_add_form_lines(
                         .style(Style::default().fg(Color::DarkGray)),
                 );
             }
+        }
+    }
+    lines.push(
+        Line::from("    Enter to continue, Esc to cancel")
+            .style(Style::default().fg(Color::DarkGray)),
+    );
+    if let Some(err) = &form.error {
+        lines.push(
+            Line::from(format!("    error: {}", safe_form_message(err)))
+                .style(Style::default().fg(Color::Red)),
+        );
+    }
+    lines
+}
+
+/// UI spec form lines: one label + value row per field in form
+/// order (id row only while adding), the current field's
+/// description, accumulated params, and the error line when the
+/// last submit was invalid. Same modal discipline as the provider
+/// form; values render sanitized.
+pub(super) fn ui_spec_form_lines(
+    form: &crate::tui::forms::UiSpecForm,
+) -> Vec<Line<'static>> {
+    use crate::tui::forms::UiSpecField;
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut rows: Vec<(UiSpecField, Option<String>)> = Vec::new();
+    if form.editing.is_none() {
+        rows.push((UiSpecField::Id, form.id.clone()));
+    }
+    rows.push((UiSpecField::Title, form.title.clone()));
+    rows.push((UiSpecField::Feed, form.feed.clone()));
+    rows.push((UiSpecField::Placement, form.placement.clone()));
+    rows.push((
+        UiSpecField::MaxRows,
+        form.max_rows.map(|size| size.to_string()),
+    ));
+    rows.push((
+        UiSpecField::MaxCols,
+        form.max_cols.map(|size| size.to_string()),
+    ));
+    rows.push((
+        UiSpecField::Enabled,
+        form.enabled.map(
+            |flag| {
+                if flag { "y".to_owned() } else { "n".to_owned() }
+            },
+        ),
+    ));
+    for (field, stored) in rows {
+        let label = field.label();
+        let description = field.description();
+        let is_current = field == form.field && form.completed.is_none();
+        let has_stored = stored.is_some();
+        let display = if is_current {
+            format!("> {label}: {}", safe_form_message(&form.input))
+        } else if let Some(value) = stored {
+            if value.is_empty() {
+                format!("  {label}: —")
+            } else {
+                format!("  {label}: {}", safe_form_message(&value))
+            }
+        } else {
+            format!("  {label}:")
+        };
+        let style = if is_current {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(ratatui::style::Modifier::BOLD)
+        } else if has_stored {
+            Style::default().fg(Color::Green)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        lines.push(Line::from(display).style(style));
+        lines.push(
+            Line::from(format!("    {description}"))
+                .style(Style::default().fg(Color::DarkGray)),
+        );
+    }
+    if !form.params.is_empty() || form.field == UiSpecField::Params {
+        lines.push(
+            Line::from("    params so far:")
+                .style(Style::default().fg(Color::DarkGray)),
+        );
+        for (key, value) in &form.params {
+            lines.push(Line::from(format!(
+                "      {}",
+                safe_form_message(&format!("{key}={value}"))
+            )));
         }
     }
     lines.push(

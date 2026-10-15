@@ -854,3 +854,402 @@ pub(super) fn validate_endpoint_value(value: &str) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Sequential field for the UI component spec form (ADR 0039 P4).
+/// Order: Id (add only) -> Title -> Feed -> Placement -> MaxRows
+/// -> MaxCols -> Enabled -> Params.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiSpecField {
+    /// Component id (`[a-z0-9_-]{1,64}`); skipped when editing.
+    Id,
+    /// Display title (1..=128 chars, no controls).
+    Title,
+    /// Feed wire string (closed six-feed vocabulary).
+    Feed,
+    /// Placement (`tab` or `cell:<row>,<col>`).
+    Placement,
+    /// Row hint (integer 1..=99).
+    MaxRows,
+    /// Column hint (integer 1..=99).
+    MaxCols,
+    /// Enabled switch (`y`/`n`).
+    Enabled,
+    /// Params: one `key=value` per submitted line, empty line done.
+    Params,
+}
+
+impl UiSpecField {
+    /// Title label for the current field.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Id => "id",
+            Self::Title => "title",
+            Self::Feed => "feed",
+            Self::Placement => "placement",
+            Self::MaxRows => "max rows",
+            Self::MaxCols => "max cols",
+            Self::Enabled => "enabled",
+            Self::Params => "params",
+        }
+    }
+
+    /// Dim description line below the label.
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Id => "lowercase letters, numbers, hyphens, underscores",
+            Self::Title => "the panel title",
+            Self::Feed => {
+                "workspace.list, workspace.search, context.summary, tools.catalog, modules.status, checkpoints.list"
+            }
+            Self::Placement => "tab, or cell:<row>,<col> (0..=1 each)",
+            Self::MaxRows => "visible rows, 1 to 99",
+            Self::MaxCols => "visible columns, 1 to 99",
+            Self::Enabled => "y to render, n to keep disabled",
+            Self::Params => "one key=value per line, empty line when done",
+        }
+    }
+}
+
+/// Validated spec values a completed UI form carries to the
+/// worker, which re-validates through the core parser before any
+/// write (the form never authorizes).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UiSpecData {
+    /// Component id (entered for add, fixed for edit).
+    pub id: String,
+    /// Display title.
+    pub title: String,
+    /// Feed wire string.
+    pub feed: String,
+    /// Placement wire string.
+    pub placement: String,
+    /// Row hint.
+    pub max_rows: i64,
+    /// Column hint.
+    pub max_cols: i64,
+    /// Enabled switch.
+    pub enabled: bool,
+    /// Params in entry order.
+    pub params: Vec<(String, String)>,
+}
+
+/// UI component spec add/edit form. Add starts at `Id`; edit
+/// fixes the id, prefills the rest, and starts at `Title`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UiSpecForm {
+    /// Fixed id under edit, `None` while adding.
+    pub editing: Option<String>,
+    /// Validated id (entered for add, fixed for edit).
+    pub id: Option<String>,
+    /// Validated title.
+    pub title: Option<String>,
+    /// Validated feed wire string.
+    pub feed: Option<String>,
+    /// Validated placement wire string.
+    pub placement: Option<String>,
+    /// Validated row hint.
+    pub max_rows: Option<i64>,
+    /// Validated column hint.
+    pub max_cols: Option<i64>,
+    /// Validated enabled switch.
+    pub enabled: Option<bool>,
+    /// Accumulated validated params in entry order.
+    pub params: Vec<(String, String)>,
+    /// Current field being edited.
+    pub field: UiSpecField,
+    /// Current field edit buffer (raw typing, not yet validated).
+    pub input: String,
+    /// Validation error to display (if last Enter was invalid).
+    pub error: Option<String>,
+    /// When Some, the form completed and these validated values go
+    /// to the worker, which re-validates before writing.
+    pub completed: Option<UiSpecData>,
+}
+
+impl UiSpecForm {
+    /// Create an add form starting at the id field.
+    pub fn new_add() -> Self {
+        Self {
+            editing: None,
+            id: None,
+            title: None,
+            feed: None,
+            placement: None,
+            max_rows: None,
+            max_cols: None,
+            enabled: None,
+            params: Vec::new(),
+            field: UiSpecField::Id,
+            input: String::new(),
+            error: None,
+            completed: None,
+        }
+    }
+
+    /// Create an edit form for `id`, prefilled from the existing
+    /// spec, starting at the title field.
+    pub fn new_edit(
+        id: &str,
+        existing: &siralos_core::ui::UiComponentSpec,
+    ) -> Self {
+        let mut form = Self::new_add();
+        form.editing = Some(id.to_owned());
+        form.id = Some(id.to_owned());
+        form.title = Some(existing.title().to_owned());
+        form.feed = Some(existing.feed().as_str().to_owned());
+        form.placement = Some(match existing.placement() {
+            siralos_core::ui::UiPlacement::Tab => "tab".to_owned(),
+            siralos_core::ui::UiPlacement::Cell { row, col } => {
+                format!("cell:{row},{col}")
+            }
+        });
+        form.max_rows = Some(existing.max_rows() as i64);
+        form.max_cols = Some(existing.max_cols() as i64);
+        form.enabled = Some(existing.enabled());
+        form.params = existing
+            .params()
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        form.field = UiSpecField::Title;
+        form
+    }
+
+    fn finish_if_ready(&mut self) {
+        let (
+            Some(id),
+            Some(title),
+            Some(feed),
+            Some(placement),
+            Some(max_rows),
+            Some(max_cols),
+            Some(enabled),
+        ) = (
+            self.id.clone(),
+            self.title.clone(),
+            self.feed.clone(),
+            self.placement.clone(),
+            self.max_rows,
+            self.max_cols,
+            self.enabled,
+        )
+        else {
+            return;
+        };
+        self.completed = Some(UiSpecData {
+            id,
+            title,
+            feed,
+            placement,
+            max_rows,
+            max_cols,
+            enabled,
+            params: std::mem::take(&mut self.params),
+        });
+    }
+}
+
+/// Validate spec id: `[a-z0-9_-]{1,64}`.
+pub(super) fn validate_ui_spec_id(value: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > siralos_core::ui::MAX_SPEC_ID_BYTES
+        || !value.bytes().all(|byte| {
+            byte.is_ascii_lowercase()
+                || byte.is_ascii_digit()
+                || byte == b'_'
+                || byte == b'-'
+        })
+    {
+        return Err(
+            "Component id must be 1 to 64 characters: lowercase letters, numbers, hyphens, underscores."
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+/// Validate spec title: 1..=128 chars, no controls.
+pub(super) fn validate_ui_title(value: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.chars().count() > siralos_core::ui::MAX_SPEC_TITLE_CHARS
+        || value.chars().any(|cell| cell.is_control() || cell == '\u{7f}')
+    {
+        return Err(
+            "Component title must be 1 to 128 characters with no control characters."
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+/// Validate feed wire string: the closed six-feed vocabulary.
+pub(super) fn validate_ui_feed(value: &str) -> Result<(), String> {
+    match value {
+        "workspace.list" | "workspace.search" | "context.summary"
+        | "tools.catalog" | "modules.status" | "checkpoints.list" => Ok(()),
+        _ => Err(
+            "Feed must be workspace.list, workspace.search, context.summary, tools.catalog, modules.status, or checkpoints.list."
+                .to_owned(),
+        ),
+    }
+}
+
+/// Validate placement: `tab` or `cell:<row>,<col>` in the 2x2 grid.
+pub(super) fn validate_ui_placement(value: &str) -> Result<(), String> {
+    use siralos_core::ui::{GRID_COLS, GRID_ROWS};
+    if value == "tab" {
+        return Ok(());
+    }
+    let error = "Placement must be \"tab\" or \"cell:<row>,<col>\" with row and column 0 or 1.".to_owned();
+    let Some(tail) = value.strip_prefix("cell:") else {
+        return Err(error);
+    };
+    let Some((row, col)) = tail.split_once(',') else {
+        return Err(error);
+    };
+    let (Ok(row), Ok(col)) = (row.parse::<usize>(), col.parse::<usize>())
+    else {
+        return Err(error);
+    };
+    if row >= GRID_ROWS || col >= GRID_COLS {
+        return Err(error);
+    }
+    Ok(())
+}
+
+/// Validate size hint: integer 1..=99.
+pub(super) fn validate_ui_size(value: &str) -> Result<(), String> {
+    match value.trim().parse::<i64>() {
+        Ok(size)
+            if size >= siralos_core::ui::MIN_SPEC_SIZE_HINT as i64
+                && size <= siralos_core::ui::MAX_SPEC_SIZE_HINT as i64 =>
+        {
+            Ok(())
+        }
+        _ => Err("Size must be an integer from 1 to 99.".to_owned()),
+    }
+}
+
+/// Validate enabled switch: y/n and common spellings.
+pub(super) fn validate_ui_enabled(value: &str) -> Result<(), String> {
+    match value.trim().to_lowercase().as_str() {
+        "y" | "yes" | "true" | "1" => Ok(()),
+        "n" | "no" | "false" | "0" => Ok(()),
+        _ => Err("Enabled must be y or n.".to_owned()),
+    }
+}
+
+/// Validate one `key=value` param line.
+pub(super) fn validate_ui_param_line(value: &str) -> Result<(), String> {
+    let Some((key, _)) = value.split_once('=') else {
+        return Err(
+            "Params are one key=value per line (empty line when done)."
+                .to_owned(),
+        );
+    };
+    validate_ui_spec_id(key).map_err(|_| {
+        "Param keys must be 1 to 64 characters: lowercase letters, numbers, hyphens, underscores."
+            .to_owned()
+    })
+}
+
+/// Advance the form on Enter: validate the current field, store
+/// it, and move on; the Params field accumulates lines until an
+/// empty submit; the last field completes the form.
+pub(super) fn advance_ui_spec_form(form: &mut UiSpecForm) {
+    form.error = None;
+    let input = form.input.trim().to_owned();
+    match form.field {
+        UiSpecField::Id => match validate_ui_spec_id(&input) {
+            Ok(()) => {
+                form.id = Some(input);
+                form.field = UiSpecField::Title;
+                form.input.clear();
+            }
+            Err(error) => form.error = Some(error),
+        },
+        UiSpecField::Title => match validate_ui_title(&input) {
+            Ok(()) => {
+                form.title = Some(input);
+                form.field = UiSpecField::Feed;
+                form.input.clear();
+            }
+            Err(error) => form.error = Some(error),
+        },
+        UiSpecField::Feed => match validate_ui_feed(&input) {
+            Ok(()) => {
+                form.feed = Some(input);
+                form.field = UiSpecField::Placement;
+                form.input.clear();
+            }
+            Err(error) => form.error = Some(error),
+        },
+        UiSpecField::Placement => match validate_ui_placement(&input) {
+            Ok(()) => {
+                form.placement = Some(input);
+                form.field = UiSpecField::MaxRows;
+                form.input.clear();
+            }
+            Err(error) => form.error = Some(error),
+        },
+        UiSpecField::MaxRows => match validate_ui_size(&input) {
+            Ok(()) => {
+                form.max_rows = Some(
+                    input.parse::<i64>().expect("validated integer parses"),
+                );
+                form.field = UiSpecField::MaxCols;
+                form.input.clear();
+            }
+            Err(error) => form.error = Some(error),
+        },
+        UiSpecField::MaxCols => match validate_ui_size(&input) {
+            Ok(()) => {
+                form.max_cols = Some(
+                    input.parse::<i64>().expect("validated integer parses"),
+                );
+                form.field = UiSpecField::Enabled;
+                form.input.clear();
+            }
+            Err(error) => form.error = Some(error),
+        },
+        UiSpecField::Enabled => match validate_ui_enabled(&input) {
+            Ok(()) => {
+                form.enabled = Some(matches!(
+                    input.to_lowercase().as_str(),
+                    "y" | "yes" | "true" | "1"
+                ));
+                form.field = UiSpecField::Params;
+                form.input.clear();
+            }
+            Err(error) => form.error = Some(error),
+        },
+        UiSpecField::Params => {
+            if input.is_empty() {
+                form.finish_if_ready();
+                form.input.clear();
+                return;
+            }
+            match validate_ui_param_line(&input) {
+                Ok(()) => {
+                    if form.params.len() >= siralos_core::ui::MAX_SPEC_PARAMS {
+                        form.error =
+                            Some("At most 8 params per component.".to_owned());
+                        return;
+                    }
+                    let (key, value) =
+                        input.split_once('=').expect("validated shape");
+                    if value.len()
+                        > siralos_core::ui::MAX_SPEC_PARAM_VALUE_BYTES
+                    {
+                        form.error =
+                            Some("Param values must fit 1KiB.".to_owned());
+                        return;
+                    }
+                    form.params.push((key.to_owned(), value.to_owned()));
+                    form.input.clear();
+                }
+                Err(error) => form.error = Some(error),
+            }
+        }
+    }
+}
