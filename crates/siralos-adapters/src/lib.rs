@@ -25,6 +25,7 @@ pub mod replay_store;
 pub mod research;
 pub mod skills_loader;
 pub mod tool;
+pub mod ui_feeds;
 pub mod workspace;
 
 pub use paths::state_dir;
