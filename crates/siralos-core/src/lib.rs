@@ -40,6 +40,7 @@ pub mod security;
 pub mod skills;
 pub mod task;
 pub mod tool;
+pub mod ui;
 pub mod version;
 pub mod workspace;
 

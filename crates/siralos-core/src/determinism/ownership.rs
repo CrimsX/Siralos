@@ -34,6 +34,12 @@ pub const OWNERSHIP_INDEX: &[OwnershipEntry] = &[
         overlaps_with: &["provider tool schema"],
     },
     OwnershipEntry {
+        responsibility: "ui projection",
+        owner: "UiComponentProjector",
+        path: "crates/siralos-core/src/ui/",
+        overlaps_with: &["panel rendering"],
+    },
+    OwnershipEntry {
         responsibility: "context projection",
         owner: "ContextProjector",
         path: "crates/siralos-core/src/projection/",
