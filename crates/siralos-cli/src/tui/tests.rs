@@ -4390,7 +4390,157 @@ fn a_multibyte_trace_is_revealed_and_trimmed_on_character_boundaries() {
     }
     assert_eq!(state.reasoning_shown, 128, "two bytes per character");
     state.reasoning_shown = state.reasoning.len();
-    state.push_reasoning("é");
+    state.push_reasoning("�");
     assert!(state.reasoning.is_char_boundary(state.reasoning_shown));
     state.reveal_char();
+}
+
+// UI panels view (ADR 0039): host rendering over fixture snapshots.
+
+fn panels_buffer(
+    panels: Option<&super::panels::UiPanels>,
+    width: u16,
+    height: u16,
+) -> String {
+    let buffer = super::panels::render_panels_to_buffer(
+        panels, None, "ready", width, height,
+    );
+    buffer.content().iter().map(|cell| cell.symbol()).collect::<String>()
+}
+
+fn fixture_panels() -> super::panels::UiPanels {
+    use siralos_core::ui::{
+        UiComponentSpec, UiRegistry, UnvalidatedSpec, project_components,
+    };
+    let specs = ["mod-status/tab", "ws-list/cell:0,0", "ctx/cell:0,1"];
+    let mut registry = UiRegistry::new();
+    for item in specs {
+        let (id, placement) = item.split_once('/').expect("shaped");
+        registry
+            .insert(
+                UiComponentSpec::parse(&UnvalidatedSpec {
+                    id: id.to_owned(),
+                    title: format!("{id} title"),
+                    feed: "tools.catalog".to_owned(),
+                    enabled: true,
+                    placement: placement.to_owned(),
+                    max_rows: 20,
+                    max_cols: 60,
+                    params: Vec::new(),
+                })
+                .expect("fixture parses"),
+            )
+            .expect("fixture inserts");
+    }
+    let projection = project_components(&registry, |spec| {
+        vec![format!("content of {}", spec.id())]
+    });
+    super::panels::UiPanels { projection, selected: 0 }
+}
+
+#[test]
+fn panels_empty_host_renders_sane() {
+    let text = panels_buffer(None, 80, 24);
+    assert!(text.contains("grid"), "{text:?}");
+    assert!(text.contains("(empty)"), "{text:?}");
+    assert!(text.contains("F2/Esc"), "{text:?}");
+    // Degenerate viewports never panic.
+    let _ = panels_buffer(None, 0, 0);
+    let _ = panels_buffer(None, 1, 1);
+}
+
+#[test]
+fn panels_render_is_deterministic() {
+    let panels = fixture_panels();
+    let first = panels_buffer(Some(&panels), 80, 24);
+    let second = panels_buffer(Some(&panels), 80, 24);
+    assert_eq!(first, second);
+    // Selected tab renders full-bleed with its title and content.
+    assert!(first.contains("mod-status title"), "{first:?}");
+    assert!(first.contains("content of mod-status"), "{first:?}");
+    // The grid tab shows cells plus the empty-cell placeholder.
+    let mut grid = panels;
+    grid.selected = 1;
+    let grid_text = panels_buffer(Some(&grid), 80, 24);
+    assert!(grid_text.contains("content of ws-list"), "{grid_text:?}");
+    assert!(grid_text.contains("content of ctx"), "{grid_text:?}");
+    assert!(grid_text.contains("(empty)"), "{grid_text:?}");
+}
+
+#[test]
+fn sanitized_chain_never_emits_escapes() {
+    use siralos_core::ui::{
+        UiComponentSpec, UiRegistry, UnvalidatedSpec, project_components,
+    };
+    let hostile = "ok\n\x1b]0;pwned\x07\x1b[2Jtitle";
+    let spec = UiComponentSpec::parse(&UnvalidatedSpec {
+        id: "evil".to_owned(),
+        // Control characters are refused at parse; the printable
+        // remainder proves titles still work.
+        title: "evil title".to_owned(),
+        feed: "tools.catalog".to_owned(),
+        enabled: true,
+        placement: "tab".to_owned(),
+        max_rows: 20,
+        max_cols: 60,
+        params: Vec::new(),
+    })
+    .expect("parses");
+    let mut registry = UiRegistry::new();
+    registry.insert(spec).expect("inserts");
+    // Production order: sanitize raw feed content, then project,
+    // then draw. The buffer must contain no escape byte.
+    let raw = [hostile.to_owned()];
+    let clean: Vec<String> = raw
+        .iter()
+        .map(|line| super::panels::sanitize_panel_line(line))
+        .collect();
+    assert!(!clean.join("").contains('\x1b'));
+    let projection = project_components(&registry, |_| clean.clone());
+    let panels = super::panels::UiPanels { projection, selected: 0 };
+    let text = panels_buffer(Some(&panels), 80, 24);
+    assert!(!text.contains('\x1b'), "escape leaked: {text:?}");
+    assert!(!text.contains('\x07'), "bel leaked: {text:?}");
+    assert!(text.contains("ok"), "{text:?}");
+}
+
+#[test]
+fn starter_specs_parse_and_cover_four_feeds() {
+    let specs = super::panels::starter_specs();
+    assert_eq!(specs.len(), 4);
+    let mut feeds: Vec<&str> =
+        specs.iter().map(|spec| spec.feed().as_str()).collect();
+    feeds.sort_unstable();
+    assert_eq!(
+        feeds,
+        vec![
+            "context.summary",
+            "modules.status",
+            "tools.catalog",
+            "workspace.list"
+        ]
+    );
+    assert!(specs.iter().all(|spec| spec.enabled()), "starters ship enabled");
+}
+
+#[test]
+fn panels_view_keys_enter_cycle_and_exit() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let press = |code| KeyEvent::new(code, KeyModifiers::NONE);
+    let mut state = TuiState::new();
+    // F2 enters the view and consumes the key.
+    assert!(!handle_key(&mut state, press(KeyCode::F(2)), 24));
+    assert!(state.panels_view);
+    // Typing is inert inside the view.
+    state.input = "hello".to_owned();
+    assert!(!handle_key(&mut state, press(KeyCode::Char('a')), 24));
+    assert_eq!(state.input, "hello");
+    // Tabs cycle with wrap, Esc exits.
+    state.panels = Some(fixture_panels());
+    assert!(!handle_key(&mut state, press(KeyCode::Char(']')), 24));
+    assert_eq!(state.panels.as_ref().expect("panels").selected, 1);
+    assert!(!handle_key(&mut state, press(KeyCode::Char('[')), 24));
+    assert_eq!(state.panels.as_ref().expect("panels").selected, 0);
+    assert!(!handle_key(&mut state, press(KeyCode::Esc), 24));
+    assert!(!state.panels_view);
 }

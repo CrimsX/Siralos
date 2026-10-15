@@ -472,11 +472,18 @@ pub fn run_interactive_tui_with_options(
                     // (a dead terminal) is kept and reported once, instead of
                     // leaving a frozen UI with no diagnostic.
                     if let Err(error) = terminal.draw(|frame| {
-                        draw_with_pane(
-                            &tui_state.borrow(),
-                            pane_cache.borrow().as_ref(),
-                            frame,
-                        )
+                        // UI panels view (ADR 0039): an explicit mode
+                        // with its own draw path. The transcript path
+                        // below runs byte-identical when inactive.
+                        if tui_state.borrow().panels_view {
+                            crate::tui::draw_panels(&tui_state.borrow(), frame)
+                        } else {
+                            draw_with_pane(
+                                &tui_state.borrow(),
+                                pane_cache.borrow().as_ref(),
+                                frame,
+                            )
+                        }
                     }) {
                         let mut slot = draw_error.borrow_mut();
                         if slot.is_none() {

@@ -916,6 +916,29 @@ pub fn handle_key(
             }
         }
     }
+    // UI panels view (ADR 0039): while active the transcript input
+    // is inert — only the view keys act. `F2`/`Esc` exit, `[`/`]`
+    // switch tabs (wrapping across the grid tab).
+    if state.panels_view {
+        if key.kind != crossterm::event::KeyEventKind::Press {
+            return false;
+        }
+        match key.code {
+            KeyCode::Esc | KeyCode::F(2) => {
+                state.panels_view = false;
+                return false;
+            }
+            KeyCode::Char('[') => {
+                super::panels::cycle_panels_tab(&mut state.panels, true);
+                return false;
+            }
+            KeyCode::Char(']') => {
+                super::panels::cycle_panels_tab(&mut state.panels, false);
+                return false;
+            }
+            _ => return false,
+        }
+    }
     if key.kind != crossterm::event::KeyEventKind::Press {
         return false;
     }
@@ -933,6 +956,12 @@ pub fn handle_key(
         }
         (KeyCode::Left, _) => {
             state.reasoning_expanded = false;
+            false
+        }
+        (KeyCode::F(2), _) => {
+            // UI panels view (ADR 0039): enter explicitly; the
+            // transcript frame is untouched by everything panels do.
+            state.panels_view = true;
             false
         }
         (KeyCode::Esc, _) => {

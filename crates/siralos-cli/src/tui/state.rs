@@ -173,6 +173,14 @@ pub struct TuiState {
     pub reasoning_shown: usize,
     /// Monotonic turn identity used to reset turn-scoped output sanitizers.
     pub turn_epoch: u64,
+    /// Panels view active (ADR 0039): the frame shows the UI panel
+    /// host instead of the transcript. Input is inert except the
+    /// view keys (`F2`/`Esc` exit, `[`/`]` switch tabs).
+    pub panels_view: bool,
+    /// Staged panels snapshot rendered while `panels_view` holds.
+    /// `None` renders the sane empty host. Populated by the worker
+    /// panel report (P4); P3 stages fixtures in tests directly.
+    pub panels: Option<super::panels::UiPanels>,
 }
 
 impl std::fmt::Debug for TuiState {
@@ -257,6 +265,8 @@ impl Default for TuiState {
             stream_tail: String::new(),
             reasoning_shown: 0,
             turn_epoch: 0,
+            panels_view: false,
+            panels: None,
         }
     }
 }
