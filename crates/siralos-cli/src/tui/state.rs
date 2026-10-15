@@ -185,6 +185,10 @@ pub struct TuiState {
     /// advances its fields and Esc cancels; completion is drained
     /// by the interactive loop into a worker command.
     pub ui_spec_form: Option<super::forms::UiSpecForm>,
+    /// Panels data refresh requested (ADR 0039 P4): set when the
+    /// panels view opens with no staged snapshot; the loop fetches
+    /// one `PanelsReport` and clears the flag.
+    pub panels_refresh_pending: bool,
 }
 
 impl std::fmt::Debug for TuiState {
@@ -272,6 +276,7 @@ impl Default for TuiState {
             panels_view: false,
             panels: None,
             ui_spec_form: None,
+            panels_refresh_pending: false,
         }
     }
 }

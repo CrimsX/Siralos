@@ -1010,7 +1010,12 @@ pub fn handle_key(
         (KeyCode::F(2), _) => {
             // UI panels view (ADR 0039): enter explicitly; the
             // transcript frame is untouched by everything panels do.
+            // A fresh entry with no staged snapshot asks the loop
+            // for one panel report.
             state.panels_view = true;
+            if state.panels.is_none() {
+                state.panels_refresh_pending = true;
+            }
             false
         }
         (KeyCode::Esc, _) => {

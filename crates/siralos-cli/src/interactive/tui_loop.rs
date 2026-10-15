@@ -17,6 +17,46 @@ use super::{
     switch_model_via_worker, transient_status, write_profile_config_at,
 };
 
+/// UI panels refresh (ADR 0039 P4): entering the view with no
+/// staged snapshot fetches one panel report; the pump arm stages
+/// the snapshot and clears nothing else. Returns whether a fetch
+/// ran (test seam; the loop ignores the answer either way).
+pub(super) fn refresh_panels_if_requested(
+    worker: &mut WorkerSource,
+    sink: &mut crate::tui::TuiSink,
+    state: &Rc<RefCell<TuiState>>,
+    pane: &Rc<RefCell<Option<crate::tui::ContextPaneData>>>,
+    progress: &mut dyn FnMut() -> bool,
+    reasoning: &mut dyn FnMut(&str),
+) -> bool {
+    let refresh = {
+        let mut guard = state.borrow_mut();
+        if guard.panels_view
+            && guard.panels.is_none()
+            && guard.panels_refresh_pending
+        {
+            guard.panels_refresh_pending = false;
+            true
+        } else {
+            false
+        }
+    };
+    if !refresh {
+        return false;
+    }
+    let _ = ask_worker(
+        worker,
+        sink,
+        state,
+        pane,
+        progress,
+        reasoning,
+        WorkerCommand::PanelsReport,
+        Until::Answer,
+    );
+    true
+}
+
 /// Dispatch one parsed [`SlashCommand`] to the TUI sink — the second thin
 /// per-frontend writer over the shared parse + render helpers, and since C2
 /// step 3 the frontend half of the worker boundary.
@@ -820,6 +860,14 @@ pub fn run_interactive_tui_with_options(
                                     );
                                     tui_state.borrow_mut().status = composed;
                                 }
+                                refresh_panels_if_requested(
+                                    worker.source(),
+                                    &mut sink,
+                                    &tui_state,
+                                    &pane_cache,
+                                    &mut progress,
+                                    &mut reasoning_sink,
+                                );
                             }
                         }
                         crossterm::event::Event::Mouse(mouse) => {

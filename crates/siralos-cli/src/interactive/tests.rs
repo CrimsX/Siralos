@@ -6269,3 +6269,170 @@ fn prompter_truncates_oversized_previews_with_a_count() {
     );
     assert!(text.contains("40 more lines"), "{text:?}");
 }
+
+fn seed_ui_toml(root: &std::path::Path, text: &str) {
+    std::fs::create_dir_all(root.join(".siralos")).expect("ui dir");
+    std::fs::write(root.join(".siralos").join("ui.toml"), text).expect("seed");
+}
+
+const UI_ONE_SPEC: &str = "[[components]]\nid = \"one\"\ntitle = \"One\"\nfeed = \"tools.catalog\"\nenabled = true\nplacement = \"tab\"\nmax_rows = 20\nmax_cols = 60\n";
+
+#[test]
+fn ui_list_dispatch_stdio_lists_and_hints_empty() {
+    let root = temporary_directory("ui-list");
+    let output = run("/ui-list\n/exit\n", &root, None);
+    assert!(output.contains("(none"), "{output:?}");
+    assert!(output.contains("/ui-add"), "{output:?}");
+    seed_ui_toml(&root, UI_ONE_SPEC);
+    let output = run("/ui-list\n/exit\n", &root, None);
+    assert!(output.contains("one"), "{output:?}");
+    assert!(output.contains("One"), "{output:?}");
+    assert!(output.contains("tools.catalog"), "{output:?}");
+    let _ = remove_dir_all(root);
+}
+
+#[test]
+fn ui_remove_dispatch_stdio_mutates_and_refuses() {
+    let root = temporary_directory("ui-remove");
+    seed_ui_toml(&root, UI_ONE_SPEC);
+    let output = run("/ui-remove missing\n/exit\n", &root, None);
+    assert!(output.contains("no ui component"), "{output:?}");
+    let output = run("/ui-remove one\n/exit\n", &root, None);
+    assert!(output.contains("Removed ui component one"), "{output:?}");
+    let output = run("/ui-list\n/exit\n", &root, None);
+    assert!(output.contains("(none"), "{output:?}");
+    let _ = remove_dir_all(root);
+}
+
+#[test]
+fn ui_add_edit_stdio_point_at_tui_forms() {
+    let root = temporary_directory("ui-add-stdio");
+    let output = run("/ui-add\n/exit\n", &root, None);
+    assert!(output.contains("TUI"), "{output:?}");
+    let output = run("/ui-edit one\n/exit\n", &root, None);
+    assert!(output.contains("TUI"), "{output:?}");
+    let _ = remove_dir_all(root);
+}
+
+#[test]
+fn ui_preview_dispatch_stdio_renders_and_refuses() {
+    let root = temporary_directory("ui-preview");
+    seed_ui_toml(&root, UI_ONE_SPEC);
+    let output = run("/ui-preview one\n/exit\n", &root, None);
+    assert!(output.contains("one - One"), "{output:?}");
+    assert!(output.contains("feed: tools.catalog"), "{output:?}");
+    let output = run("/ui-preview missing\n/exit\n", &root, None);
+    assert!(output.contains("no ui component"), "{output:?}");
+    let _ = remove_dir_all(root);
+}
+
+#[test]
+fn ui_tui_dispatch_lists_opens_forms_removes_and_previews() {
+    use crate::session_worker::{WorkerCommand, WorkerEvent};
+    let root = temporary_directory("ui-tui");
+    seed_ui_toml(&root, UI_ONE_SPEC);
+    // List renders from the workspace file with no worker traffic.
+    let mut listed = ScriptedTui::new();
+    let mut ticks = 0usize;
+    listed.dispatch(&SlashCommand::UiList, &root, &mut ticks);
+    assert_eq!(listed.command(), None);
+    assert!(
+        listed.transcript().contains("one"),
+        "got {:?}",
+        listed.transcript()
+    );
+    // Add opens the form; nothing is written yet.
+    let mut adding = ScriptedTui::new();
+    adding.dispatch(&SlashCommand::UiAdd, &root, &mut ticks);
+    assert!(adding.state.borrow().ui_spec_form.is_some());
+    assert_eq!(adding.command(), None);
+    // Edit with an unknown id refuses; with a known id it prefills.
+    let mut missing = ScriptedTui::new();
+    missing.dispatch(&SlashCommand::UiEdit(Some("gone")), &root, &mut ticks);
+    assert!(
+        missing.transcript().contains("no ui component"),
+        "got {:?}",
+        missing.transcript()
+    );
+    let mut editing = ScriptedTui::new();
+    editing.dispatch(&SlashCommand::UiEdit(Some("one")), &root, &mut ticks);
+    let form = editing.state.borrow();
+    let form = form.ui_spec_form.as_ref().expect("form opens");
+    assert_eq!(form.id.as_deref(), Some("one"));
+    // Remove mutates the file; preview asks the worker.
+    let mut removing = ScriptedTui::new();
+    removing.dispatch(&SlashCommand::UiRemove(Some("one")), &root, &mut ticks);
+    assert!(removing.transcript().contains("Removed ui component one"));
+    let mut previewing = ScriptedTui::new();
+    previewing.answer(vec![WorkerEvent::Report("preview text\n".to_owned())]);
+    previewing.dispatch(
+        &SlashCommand::UiPreview(Some("one")),
+        &root,
+        &mut ticks,
+    );
+    assert_eq!(
+        previewing.command(),
+        Some(WorkerCommand::UiPreview("one".to_owned()))
+    );
+    assert!(previewing.transcript().contains("preview text"));
+    let _ = remove_dir_all(root);
+}
+
+#[test]
+fn panels_refresh_fetches_once_when_view_opens_empty() {
+    use super::refresh_panels_if_requested;
+    let mut tui = ScriptedTui::new();
+    let mut ticks = 0usize;
+    let state = std::rc::Rc::clone(&tui.state);
+    let mut reasoning = move |text: &str| {
+        state.borrow_mut().reasoning.push_str(text);
+    };
+    let mut progress = || {
+        ticks += 1;
+        false
+    };
+    // Closed view never fetches.
+    assert!(!refresh_panels_if_requested(
+        &mut tui.worker.source,
+        &mut tui.sink,
+        &tui.state,
+        &tui.pane,
+        &mut progress,
+        &mut reasoning,
+    ));
+    assert_eq!(tui.command(), None);
+    // Entering empty fetches exactly once, then the flag is spent.
+    tui.state.borrow_mut().panels_view = true;
+    tui.state.borrow_mut().panels_refresh_pending = true;
+    tui.answer(vec![crate::session_worker::WorkerEvent::Panels(Box::new(
+        crate::tui::UiPanels {
+            projection: siralos_core::ui::UiProjection {
+                tabs: Vec::new(),
+                grid: [[None, None], [None, None]],
+            },
+            selected: 0,
+        },
+    ))]);
+    assert!(refresh_panels_if_requested(
+        &mut tui.worker.source,
+        &mut tui.sink,
+        &tui.state,
+        &tui.pane,
+        &mut progress,
+        &mut reasoning,
+    ));
+    assert_eq!(
+        tui.command(),
+        Some(crate::session_worker::WorkerCommand::PanelsReport)
+    );
+    // The pump arm staged the answered snapshot.
+    assert!(tui.state.borrow().panels.is_some());
+    assert!(!refresh_panels_if_requested(
+        &mut tui.worker.source,
+        &mut tui.sink,
+        &tui.state,
+        &tui.pane,
+        &mut progress,
+        &mut reasoning,
+    ));
+}

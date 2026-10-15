@@ -2622,6 +2622,32 @@ mod loop_tests {
         assert!(events.contains(&WorkerEvent::Report("tools".to_owned())));
     }
 
+    #[test]
+    fn ui_preview_and_panels_report_answer_theirs() {
+        let mut session = FakeSession::default();
+        let events = run(
+            vec![
+                WorkerCommand::UiPreview("demo".to_owned()),
+                WorkerCommand::PanelsReport,
+            ],
+            &mut session,
+            &CancelFlag::new(),
+        );
+        assert!(
+            events.contains(&WorkerEvent::Report(
+                "preview of demo\n".to_owned()
+            ))
+        );
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                WorkerEvent::Panels(panels) if panels.selected == 0
+                    && panels.projection.tabs.is_empty()
+            )),
+            "{events:?}"
+        );
+    }
+
     /// A session that behaves like a STALLED provider: every event costs
     /// `delay`, and every cancel is timestamped where it lands. The C4 evidence
     /// pack measures the two things a stall decides -- how many frames the

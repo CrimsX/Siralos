@@ -709,7 +709,10 @@ pub fn draw_with_pane(
         let modal_area = centered_rect(75, 75, backdrop_area);
         frame.render_widget(ratatui::widgets::Clear, modal_area);
         let title = match &form.editing {
-            Some(id) => format!(" edit UI component {id} "),
+            Some(id) => format!(
+                " edit UI component {} ",
+                crate::sanitize::sanitize_for_display(id)
+            ),
             None => " add UI component ".to_owned(),
         };
         let modal_block = Block::default()
@@ -967,13 +970,22 @@ pub(super) fn ui_spec_form_lines(
         let description = field.description();
         let is_current = field == form.field && form.completed.is_none();
         let has_stored = stored.is_some();
+        // User-derived values render through the neutral
+        // sanitizer, not the provider redactor: titles and params
+        // may legitimately contain `key:` or `@` shapes.
         let display = if is_current {
-            format!("> {label}: {}", safe_form_message(&form.input))
+            format!(
+                "> {label}: {}",
+                crate::sanitize::sanitize_for_display(&form.input)
+            )
         } else if let Some(value) = stored {
             if value.is_empty() {
                 format!("  {label}: —")
             } else {
-                format!("  {label}: {}", safe_form_message(&value))
+                format!(
+                    "  {label}: {}",
+                    crate::sanitize::sanitize_for_display(&value)
+                )
             }
         } else {
             format!("  {label}:")
@@ -1001,7 +1013,9 @@ pub(super) fn ui_spec_form_lines(
         for (key, value) in &form.params {
             lines.push(Line::from(format!(
                 "      {}",
-                safe_form_message(&format!("{key}={value}"))
+                crate::sanitize::sanitize_for_display(&format!(
+                    "{key}={value}"
+                ))
             )));
         }
     }
@@ -1011,8 +1025,11 @@ pub(super) fn ui_spec_form_lines(
     );
     if let Some(err) = &form.error {
         lines.push(
-            Line::from(format!("    error: {}", safe_form_message(err)))
-                .style(Style::default().fg(Color::Red)),
+            Line::from(format!(
+                "    error: {}",
+                crate::sanitize::sanitize_for_display(err)
+            ))
+            .style(Style::default().fg(Color::Red)),
         );
     }
     lines

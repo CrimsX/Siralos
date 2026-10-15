@@ -4628,3 +4628,89 @@ fn ui_spec_form_edit_skips_id_prefilled() {
     assert_eq!(form.id.as_deref(), Some("fixed"));
     assert_eq!(form.enabled, Some(false));
 }
+
+#[test]
+fn ui_spec_form_modal_renders_fields_and_errors() {
+    use super::forms::UiSpecForm;
+    use super::render::ui_spec_form_lines;
+    let mut form = UiSpecForm::new_add();
+    let lines: Vec<String> = ui_spec_form_lines(&form)
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect();
+    let text = lines.join("\n");
+    assert!(text.contains("id"), "{text:?}");
+    assert!(text.contains("placement"), "{text:?}");
+    assert!(text.contains("Enter to continue"), "{text:?}");
+    form.error = Some("bad\nvalue".to_owned());
+    let lines: Vec<String> = ui_spec_form_lines(&form)
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect();
+    let text = lines.join("\n");
+    assert!(text.contains("error: bad"), "{text:?}");
+    // The modal branch draws the form with its title.
+    let mut state = TuiState::new();
+    state.ui_spec_form = Some(UiSpecForm::new_add());
+    let buf = render(&state, 80, 24);
+    let content: String = buf.content().iter().map(|c| c.symbol()).collect();
+    assert!(content.contains("add UI component"), "{content:?}");
+}
+
+#[test]
+fn entering_panels_view_arms_refresh_when_empty() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let press = |code| KeyEvent::new(code, KeyModifiers::NONE);
+    let mut state = TuiState::new();
+    assert!(!handle_key(&mut state, press(KeyCode::F(2)), 24));
+    assert!(state.panels_view);
+    assert!(state.panels_refresh_pending);
+    // A staged snapshot needs no refresh.
+    state.panels = Some(fixture_panels());
+    state.panels_refresh_pending = false;
+    assert!(!handle_key(&mut state, press(KeyCode::Esc), 24));
+    assert!(!handle_key(&mut state, press(KeyCode::F(2)), 24));
+    assert!(state.panels_view);
+    assert!(!state.panels_refresh_pending);
+}
+
+#[test]
+fn ui_form_driving_advances_and_cancels_through_keys() {
+    use super::forms::UiSpecField;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let press = |code| KeyEvent::new(code, KeyModifiers::NONE);
+    let mut state = TuiState::new();
+    state.ui_spec_form = Some(super::forms::UiSpecForm::new_add());
+    // Typing fills the id buffer.
+    for ch in ['m', 'y', '-', 'p'] {
+        assert!(!handle_key(&mut state, press(KeyCode::Char(ch)), 24));
+    }
+    // Enter advances past a valid id.
+    assert!(!handle_key(&mut state, press(KeyCode::Enter), 24));
+    let form = state.ui_spec_form.as_ref().expect("form stays");
+    assert_eq!(form.field, UiSpecField::Title);
+    assert_eq!(form.id.as_deref(), Some("my-p"));
+    // Invalid input keeps the field with an error.
+    {
+        let form = state.ui_spec_form.as_mut().expect("form stays");
+        form.field = UiSpecField::Feed;
+        form.input = "nope".to_owned();
+    }
+    assert!(!handle_key(&mut state, press(KeyCode::Enter), 24));
+    let form = state.ui_spec_form.as_ref().expect("form stays");
+    assert_eq!(form.field, UiSpecField::Feed);
+    assert!(form.error.is_some());
+    // Esc cancels the whole form.
+    assert!(!handle_key(&mut state, press(KeyCode::Esc), 24));
+    assert!(state.ui_spec_form.is_none());
+}

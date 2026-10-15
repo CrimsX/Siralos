@@ -188,6 +188,8 @@ use tui_loop::deliver_tool_approval_verdict;
 #[cfg(test)]
 use tui_loop::dispatch_tui_command;
 #[cfg(test)]
+use tui_loop::refresh_panels_if_requested;
+#[cfg(test)]
 use tui_loop::resume_suspended_turn;
 pub use tui_loop::run_interactive_tui_stdio;
 pub use tui_loop::run_interactive_tui_with_options;
