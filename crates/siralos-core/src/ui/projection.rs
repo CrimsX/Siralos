@@ -8,8 +8,6 @@
 //! never fetches, never renders, and never trusts unsanitized
 //! text beyond truncating it to the spec bounds.
 
-use std::collections::BTreeMap;
-
 use super::spec::{GRID_COLS, GRID_ROWS, UiComponentSpec, UiPlacement};
 
 /// Marker appended when lines are cut to the row hint.
@@ -187,22 +185,11 @@ pub fn project_components(
     UiProjection { tabs, grid }
 }
 
-/// Look up resolved content by spec id, defaulting to empty.
-#[must_use]
-pub fn content_for(
-    id: &str,
-    contents: &BTreeMap<String, Vec<String>>,
-) -> Vec<String> {
-    contents.get(id).cloned().unwrap_or_default()
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{
-        UiRegistry, UiRegistryError, content_for, project_components,
-    };
+    use super::{UiRegistry, UiRegistryError, project_components};
     use crate::ui::spec::{UiComponentSpec, UiFeed, UnvalidatedSpec};
 
     fn spec(id: &str, placement: &str, enabled: bool) -> UiComponentSpec {
@@ -231,7 +218,7 @@ mod tests {
         contents.insert("cell".to_owned(), vec!["c".to_owned()]);
         contents.insert("a-tab".to_owned(), vec!["a".to_owned()]);
         let projected = project_components(&registry, |spec| {
-            content_for(spec.id(), &contents)
+            contents.get(spec.id()).cloned().unwrap_or_default()
         });
         let titles: Vec<&str> =
             projected.tabs.iter().map(|slot| slot.title.as_str()).collect();

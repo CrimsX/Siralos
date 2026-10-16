@@ -477,7 +477,7 @@ fn render_op(
     use siralos_cli::tui::{UiPanels, render_panels_to_buffer};
     use siralos_core::tool::PermissionPolicy;
     use siralos_core::tool::registry::RegisteredToolInfo;
-    use siralos_core::ui::{UiRegistry, content_for, project_components};
+    use siralos_core::ui::{UiRegistry, project_components};
     let selected =
         entry.get("selected").and_then(Value::as_u64).ok_or_else(|| {
             HarnessError::corpus(
@@ -506,14 +506,11 @@ fn render_op(
         last_projection: None,
         checkpoint_state_dir: None,
     };
-    let mut contents = BTreeMap::new();
-    for spec in registry.specs() {
-        if let Ok(lines) = resolve_spec_content(&inputs, spec) {
-            contents.insert(spec.id().to_owned(), lines);
-        }
-    }
+    // Resolve at the seam: no intermediate map, so a feed
+    // refusal defaults to the empty slot right where the
+    // projector asks for content.
     let projection = project_components(&registry, |spec| {
-        content_for(spec.id(), &contents)
+        resolve_spec_content(&inputs, spec).unwrap_or_default()
     });
     let panels = UiPanels { projection, selected }.clamped();
     let tabs = panels.tab_titles();

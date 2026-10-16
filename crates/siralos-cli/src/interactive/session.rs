@@ -360,7 +360,7 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
     }
 
     fn panels_report(&self) -> crate::tui::UiPanels {
-        use siralos_core::ui::{UiRegistry, content_for, project_components};
+        use siralos_core::ui::{UiRegistry, project_components};
         // User specs plus module-declared specs gated by
         // lifecycle and feed authority (ADR 0039 §5); user ids win
         // every conflict. Unreadable user documents render as the
@@ -406,22 +406,19 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
         let modules = crate::interactive::ui::load_feed_module_records(
             &self.workspace_root,
         );
-        let mut contents = std::collections::BTreeMap::new();
-        for spec in registry.specs() {
-            let inputs = UiFeedInputs {
-                root: &self.workspace_root,
-                tools: &self.tool_definitions,
-                policy: &self.policy,
-                modules: &modules,
-                last_projection: self.application.last_projection(),
-                checkpoint_state_dir: state_dir.as_deref(),
-            };
-            if let Ok(lines) = resolve_spec_content(&inputs, spec) {
-                contents.insert(spec.id().to_owned(), lines);
-            }
-        }
+        // Resolve at the seam: no intermediate map, so a feed
+        // refusal defaults to the empty slot right where the
+        // projector asks for content.
+        let inputs = UiFeedInputs {
+            root: &self.workspace_root,
+            tools: &self.tool_definitions,
+            policy: &self.policy,
+            modules: &modules,
+            last_projection: self.application.last_projection(),
+            checkpoint_state_dir: state_dir.as_deref(),
+        };
         let projection = project_components(&registry, |spec| {
-            content_for(spec.id(), &contents)
+            resolve_spec_content(&inputs, spec).unwrap_or_default()
         });
         crate::tui::UiPanels { projection, selected: 0 }.clamped()
     }

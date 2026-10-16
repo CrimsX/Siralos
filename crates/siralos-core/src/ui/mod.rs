@@ -10,7 +10,7 @@ pub mod projection;
 pub mod spec;
 
 pub use projection::{
-    ProjectedSlot, UiProjection, UiRegistry, UiRegistryError, content_for,
+    ProjectedSlot, UiProjection, UiRegistry, UiRegistryError,
     project_components,
 };
 pub use spec::{
