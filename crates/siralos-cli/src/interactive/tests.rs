@@ -5272,7 +5272,11 @@ fn stale_mutation_attempt_consumes_the_observed_revision() {
         None,
     )
     .expect_err("stale attempt must refuse");
-    assert!(first.contains("changed concurrently"), "got: {first:?}");
+    use super::profile::ProfileWriteErrorKind;
+    assert!(
+        matches!(first.kind, ProfileWriteErrorKind::StaleConcurrent),
+        "got: {first:?}"
+    );
     write(&path, original).expect("restore original");
     let second = super::write_profile_config_at(
         &root,
@@ -5285,7 +5289,10 @@ fn stale_mutation_attempt_consumes_the_observed_revision() {
         None,
     )
     .expect_err("a consumed token must require a fresh snapshot");
-    assert!(second.contains("one-shot"), "got: {second:?}");
+    assert!(
+        matches!(second.kind, ProfileWriteErrorKind::OneShotConsumed),
+        "got: {second:?}"
+    );
     assert_eq!(read(&path).expect("read original"), original.as_bytes());
     let _ = remove_dir_all(root);
 }
@@ -5310,12 +5317,17 @@ fn snapshot_bound_profile_writer_refuses_caller_drift() {
         None,
     )
     .expect_err("stale writer must refuse");
+    use super::profile::ProfileWriteErrorKind;
+    assert!(
+        matches!(error.kind, ProfileWriteErrorKind::StaleConcurrent),
+        "got: {error:?}"
+    );
     assert_eq!(
-        error,
+        error.message,
         "siralos.toml changed concurrently; reload before retrying"
     );
-    assert!(!error.contains("old-secret"));
-    assert!(!error.contains("new.example"));
+    assert!(!error.message.contains("old-secret"));
+    assert!(!error.message.contains("new.example"));
     assert_eq!(
         read(root.join("siralos.toml")).expect("read drifted profile"),
         drifted.as_bytes()
@@ -5335,8 +5347,13 @@ fn snapshot_bound_profile_remove_refuses_caller_drift() {
     write(root.join("siralos.toml"), drifted).expect("concurrent edit");
     let error = super::remove_profile_config_at(&root, &observed)
         .expect_err("stale removal must refuse");
+    use super::profile::ProfileWriteErrorKind;
+    assert!(
+        matches!(error.kind, ProfileWriteErrorKind::StaleConcurrent),
+        "got: {error:?}"
+    );
     assert_eq!(
-        error,
+        error.message,
         "siralos.toml changed concurrently; reload before retrying"
     );
     assert_eq!(
@@ -5383,9 +5400,13 @@ fn model_switch_refuses_a_profile_revision_observed_before_drift() {
         "new-model",
     )
     .expect_err("stale model switch must refuse");
-    assert!(error.contains("changed concurrently"), "got: {error:?}");
-    assert!(!error.contains("OPENAI_API_KEY"));
-    assert!(!error.contains("new.example"));
+    use super::profile::ProfileWriteErrorKind;
+    assert!(
+        matches!(error.kind, ProfileWriteErrorKind::StaleConcurrent),
+        "got: {error:?}"
+    );
+    assert!(!error.message.contains("OPENAI_API_KEY"));
+    assert!(!error.message.contains("new.example"));
     assert_eq!(
         read(root.join("siralos.toml")).expect("read drifted profile"),
         drifted.as_bytes()
@@ -5405,8 +5426,12 @@ fn snapshot_bound_profile_remove_token_is_one_shot() {
         .expect("first empty-profile removal is a no-op");
     let error = super::remove_profile_config_at(&root, &observed)
         .expect_err("a consumed token must not be replayed");
-    assert!(error.contains("one-shot"), "got: {error:?}");
-    assert!(!error.contains("siralos.toml"));
+    use super::profile::ProfileWriteErrorKind;
+    assert!(
+        matches!(error.kind, ProfileWriteErrorKind::OneShotConsumed),
+        "got: {error:?}"
+    );
+    assert!(!error.message.contains("siralos.toml"));
     assert_eq!(read(&path).expect("read empty profile"), b"");
     let _ = remove_dir_all(root);
 }
@@ -5433,8 +5458,12 @@ fn model_switch_rejects_aba_after_exact_record_observation() {
         "new-model",
     )
     .expect_err("ABA must refuse");
-    assert!(error.contains("changed concurrently"), "got: {error:?}");
-    assert!(!error.contains("OPENAI_API_KEY"));
+    use super::profile::ProfileWriteErrorKind;
+    assert!(
+        matches!(error.kind, ProfileWriteErrorKind::StaleConcurrent),
+        "got: {error:?}"
+    );
+    assert!(!error.message.contains("OPENAI_API_KEY"));
     assert_eq!(
         read(&path).expect("read restored profile"),
         original.as_bytes()

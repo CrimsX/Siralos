@@ -969,7 +969,8 @@ pub fn run_interactive_tui_with_options(
                     data.endpoint.as_deref(),
                     Some(data.protocol.as_str()),
                     data.model_display_name.as_deref(),
-                ),
+                )
+                .map_err(|error| error.message),
                 None => Err(
                     "profile snapshot is unavailable; reload before retrying"
                         .to_owned(),

@@ -11,6 +11,54 @@ use super::{
     verify_workspace_lock,
 };
 
+/// Machine-branchable class of a profile write failure. The
+/// `message` phrases stay stable for display and tests; control
+/// flow and tests match on `kind`, never on the human-readable
+/// string. Same treatment as [`super::ui::UiFileErrorKind`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProfileWriteErrorKind {
+    /// No snapshot existed to authorize the write.
+    ObservationRefused,
+    /// The one-shot authority was already consumed.
+    OneShotConsumed,
+    /// Bytes or identity moved under the observation.
+    StaleConcurrent,
+    /// Reading, staging, or verifying the replacement failed.
+    StagingFailed,
+    /// The digest-bound commit lost its race.
+    CommitFailed,
+    /// The candidate profile failed validation.
+    InvalidProfile,
+}
+
+/// One profile write failure: a branchable kind plus the stable
+/// human-readable reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileWriteError {
+    /// Machine-branchable failure class.
+    pub kind: ProfileWriteErrorKind,
+    /// Deterministic, human-readable reason.
+    pub message: String,
+}
+
+impl std::fmt::Display for ProfileWriteError {
+    /// Render the stable message (display and sink sites keep
+    /// formatting the error directly).
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+fn profile_error(
+    kind: ProfileWriteErrorKind,
+    message: impl Into<String>,
+) -> ProfileWriteError {
+    ProfileWriteError { kind, message: message.into() }
+}
+
 /// Stage 5.9 (decision 55): verify the on-disk `siralos.lock` against
 /// the recomputed current lock. The current lock is recomputed from the
 /// applied profile's effective-policy identity and the installed module
@@ -183,6 +231,7 @@ pub fn write_profile_config(
         protocol,
         model_display_name,
     )
+    .map_err(|error| error.message)
 }
 
 /// Write the `[profile]` section atomically with format-preserving merge
@@ -205,8 +254,10 @@ pub fn write_profile_config_at(
     endpoint: Option<&str>,
     protocol: Option<&str>,
     model_display_name: Option<&str>,
-) -> Result<(), String> {
-    observed.consume()?;
+) -> Result<(), ProfileWriteError> {
+    observed.consume().map_err(|message| {
+        profile_error(ProfileWriteErrorKind::OneShotConsumed, message)
+    })?;
     write_profile_config_at_after_consumption(
         workspace_root,
         observed,
@@ -229,62 +280,78 @@ fn write_profile_config_at_after_consumption(
     endpoint: Option<&str>,
     protocol: Option<&str>,
     model_display_name: Option<&str>,
-) -> Result<(), String> {
+) -> Result<(), ProfileWriteError> {
     // Re-validate at the write boundary (defense in depth).
     if !siralos_core::composition::is_provider_id(provider) {
-        return Err("A provider must match [a-z0-9_-]{1,64}.".to_owned());
+        return Err(profile_error(
+            ProfileWriteErrorKind::InvalidProfile,
+            "A provider must match [a-z0-9_-]{1,64}.",
+        ));
     }
     if !siralos_core::composition::is_model_id(model) {
-        return Err(
-            "A model must match [a-zA-Z0-9._/:@-]{1,256} with no NUL."
-                .to_owned(),
-        );
+        return Err(profile_error(
+            ProfileWriteErrorKind::InvalidProfile,
+            "A model must match [a-zA-Z0-9._/:@-]{1,256} with no NUL.",
+        ));
     }
     if let Some(cred) = credential_env {
         // Verbatim credential: accept env:NAME, key:VALUE, or bare legacy env name. Validation mirrors ProfileRecord.
         if let Some(name) = cred.strip_prefix("env:") {
             if !siralos_core::composition::is_credential_env_name(name) {
-                return Err(
-                    "A credential env name must match [A-Z0-9_]{1,64} after \"env:\"."
-                        .to_owned(),
-                );
+                return Err(profile_error(
+                    ProfileWriteErrorKind::InvalidProfile,
+                    "A credential env name must match [A-Z0-9_]{1,64} after \"env:\".",
+                ));
             }
             if cred.len()
                 > siralos_core::composition::MAX_PROFILE_CREDENTIAL_BYTES
             {
-                return Err(format!(
-                    "The credential exceeds the {}-byte bound.",
-                    siralos_core::composition::MAX_PROFILE_CREDENTIAL_BYTES
+                return Err(profile_error(
+                    ProfileWriteErrorKind::InvalidProfile,
+                    format!(
+                        "The credential exceeds the {}-byte bound.",
+                        siralos_core::composition::MAX_PROFILE_CREDENTIAL_BYTES
+                    ),
                 ));
             }
         } else if let Some(inner) = cred.strip_prefix("key:") {
             if inner.is_empty() {
-                return Err(
-                    "A credential key: value must be non-empty.".to_owned()
-                );
+                return Err(profile_error(
+                    ProfileWriteErrorKind::InvalidProfile,
+                    "A credential key: value must be non-empty.",
+                ));
             }
             if inner.contains('\0') {
-                return Err("A credential must not contain NUL.".to_owned());
+                return Err(profile_error(
+                    ProfileWriteErrorKind::InvalidProfile,
+                    "A credential must not contain NUL.",
+                ));
             }
             if inner.len()
                 > siralos_core::composition::MAX_PROFILE_CREDENTIAL_KEY_BYTES
             {
-                return Err(format!(
-                    "The credential key value exceeds the {}-byte bound.",
-                    siralos_core::composition::MAX_PROFILE_CREDENTIAL_KEY_BYTES
+                return Err(profile_error(
+                    ProfileWriteErrorKind::InvalidProfile,
+                    format!(
+                        "The credential key value exceeds the {}-byte bound.",
+                        siralos_core::composition::MAX_PROFILE_CREDENTIAL_KEY_BYTES
+                    ),
                 ));
             }
         } else {
             // Bare legacy compat — treat as env name.
             if !siralos_core::composition::is_credential_env_name(cred) {
-                return Err(
-                    "A credential env name must match [A-Z0-9_]{1,64} after \"env:\"."
-                        .to_owned(),
-                );
+                return Err(profile_error(
+                    ProfileWriteErrorKind::InvalidProfile,
+                    "A credential env name must match [A-Z0-9_]{1,64} after \"env:\".",
+                ));
             }
         }
         if cred.contains('\0') {
-            return Err("A credential must not contain NUL.".to_owned());
+            return Err(profile_error(
+                ProfileWriteErrorKind::InvalidProfile,
+                "A credential must not contain NUL.",
+            ));
         }
     }
     if let Some(proto) = protocol {
@@ -292,10 +359,10 @@ fn write_profile_config_at_after_consumption(
             && proto != "openai-responses"
             && proto != "anthropic-messages"
         {
-            return Err(
-                "The protocol must be \"openai-completions\", \"openai-responses\", or \"anthropic-messages\"."
-                    .to_owned(),
-            );
+            return Err(profile_error(
+                ProfileWriteErrorKind::InvalidProfile,
+                "The protocol must be \"openai-completions\", \"openai-responses\", or \"anthropic-messages\".",
+            ));
         }
     }
     if let Some(display) = model_display_name {
@@ -303,20 +370,25 @@ fn write_profile_config_at_after_consumption(
             if display.len()
                 > siralos_core::composition::MAX_PROFILE_MODEL_DISPLAY_NAME_BYTES
             {
-                return Err(format!(
-                    "The model display name exceeds the {}-byte bound.",
-                    siralos_core::composition::MAX_PROFILE_MODEL_DISPLAY_NAME_BYTES
+                return Err(profile_error(
+                    ProfileWriteErrorKind::InvalidProfile,
+                    format!(
+                        "The model display name exceeds the {}-byte bound.",
+                        siralos_core::composition::MAX_PROFILE_MODEL_DISPLAY_NAME_BYTES
+                    ),
                 ));
             }
             if display.contains('\0') {
-                return Err(
-                    "A model display name must not contain NUL.".to_owned()
-                );
+                return Err(profile_error(
+                    ProfileWriteErrorKind::InvalidProfile,
+                    "A model display name must not contain NUL.",
+                ));
             }
             if !siralos_core::composition::is_printable(display) {
-                return Err(
-                    "A model display name must be printable.".to_owned()
-                );
+                return Err(profile_error(
+                    ProfileWriteErrorKind::InvalidProfile,
+                    "A model display name must be printable.",
+                ));
             }
         }
     }
@@ -329,28 +401,37 @@ fn write_profile_config_at_after_consumption(
         if ep.is_empty()
             || ep.len() > siralos_core::composition::MAX_PROFILE_ENDPOINT_BYTES
         {
-            return Err(format!(
-                "The endpoint exceeds the {}-byte bound or is empty.",
-                siralos_core::composition::MAX_PROFILE_ENDPOINT_BYTES
+            return Err(profile_error(
+                ProfileWriteErrorKind::InvalidProfile,
+                format!(
+                    "The endpoint exceeds the {}-byte bound or is empty.",
+                    siralos_core::composition::MAX_PROFILE_ENDPOINT_BYTES
+                ),
             ));
         }
         if ep.contains('\0') {
-            return Err("An endpoint must not contain NUL.".to_owned());
+            return Err(profile_error(
+                ProfileWriteErrorKind::InvalidProfile,
+                "An endpoint must not contain NUL.",
+            ));
         }
         if !siralos_core::composition::has_http_scheme(ep) {
-            return Err(
-                "An endpoint must start with \"https://\" or \"http://\"."
-                    .to_owned(),
-            );
+            return Err(profile_error(
+                ProfileWriteErrorKind::InvalidProfile,
+                "An endpoint must start with \"https://\" or \"http://\".",
+            ));
         }
         if ep.contains(' ') {
-            return Err("An endpoint must not contain spaces.".to_owned());
+            return Err(profile_error(
+                ProfileWriteErrorKind::InvalidProfile,
+                "An endpoint must not contain spaces.",
+            ));
         }
         if !siralos_core::composition::is_valid_http_endpoint(ep) {
-            return Err(
-                "An endpoint must have a valid HTTP(S) authority without userinfo, fragment, or controls."
-                    .to_owned(),
-            );
+            return Err(profile_error(
+                ProfileWriteErrorKind::InvalidProfile,
+                "An endpoint must have a valid HTTP(S) authority without userinfo, fragment, or controls.",
+            ));
         }
     }
     let path = workspace_root
@@ -365,18 +446,27 @@ fn write_profile_config_at_after_consumption(
     ) {
         Ok(bytes) => Some(bytes),
         Err(reason) if reason == "profile target is absent" => None,
-        Err(reason) => return Err(reason),
+        Err(reason) => {
+            return Err(profile_error(
+                ProfileWriteErrorKind::StagingFailed,
+                reason,
+            ));
+        }
     };
     if !observed.matches_path(&path, current_bytes.as_deref()) {
-        return Err(
-            "siralos.toml changed concurrently; reload before retrying"
-                .to_owned(),
-        );
+        return Err(profile_error(
+            ProfileWriteErrorKind::StaleConcurrent,
+            "siralos.toml changed concurrently; reload before retrying",
+        ));
     }
     let existing: Option<String> = current_bytes
         .map(|bytes| {
-            String::from_utf8(bytes)
-                .map_err(|_| "siralos.toml is not valid UTF-8".to_owned())
+            String::from_utf8(bytes).map_err(|_| {
+                profile_error(
+                    ProfileWriteErrorKind::InvalidProfile,
+                    "siralos.toml is not valid UTF-8",
+                )
+            })
         })
         .transpose()?;
     // Format-preserving parse via toml_edit.
@@ -384,8 +474,12 @@ fn write_profile_config_at_after_consumption(
         if text.trim().is_empty() {
             toml_edit::DocumentMut::new()
         } else {
-            text.parse::<toml_edit::DocumentMut>()
-                .map_err(|_| "siralos.toml does not parse".to_owned())?
+            text.parse::<toml_edit::DocumentMut>().map_err(|_| {
+                profile_error(
+                    ProfileWriteErrorKind::InvalidProfile,
+                    "siralos.toml does not parse",
+                )
+            })?
         }
     } else {
         toml_edit::DocumentMut::new()
@@ -396,7 +490,10 @@ fn write_profile_config_at_after_consumption(
     match doc.get("profile") {
         Some(item) if item.is_table() || item.is_inline_table() => {}
         Some(_) => {
-            return Err("The [profile] entry must be a table.".to_owned());
+            return Err(profile_error(
+                ProfileWriteErrorKind::InvalidProfile,
+                "The [profile] entry must be a table.",
+            ));
         }
         None => {
             doc["profile"] = toml_edit::table();
@@ -470,7 +567,10 @@ fn write_profile_config_at_after_consumption(
     if serialized.len()
         > siralos_adapters::module::manifest::MAX_SIRALOS_TOML_BYTES
     {
-        return Err("siralos.toml exceeds the byte bound".to_owned());
+        return Err(profile_error(
+            ProfileWriteErrorKind::StagingFailed,
+            "siralos.toml exceeds the byte bound",
+        ));
     }
     // Stage through the shared atomic writer: an exclusive temporary file in the
     // target's own directory, RAII cleanup on every failure, and a commit that
@@ -485,14 +585,22 @@ fn write_profile_config_at_after_consumption(
         serialized.as_bytes(),
         Some(0o600),
     )
-    .map_err(|_| "profile could not be staged".to_owned())?;
+    .map_err(|_| {
+        profile_error(
+            ProfileWriteErrorKind::StagingFailed,
+            "profile could not be staged",
+        )
+    })?;
     // Verify the exact staged bytes through the same parser used at startup.
     // No second filesystem copy is made: a literal credential must never be
     // written to an unrelated temporary directory merely to validate it.
     let verify_bytes = read_profile_bytes_bounded(
         staged.path(),
         siralos_adapters::module::manifest::MAX_SIRALOS_TOML_BYTES,
-    )?;
+    )
+    .map_err(|reason| {
+        profile_error(ProfileWriteErrorKind::StagingFailed, reason)
+    })?;
     match siralos_adapters::profile_config::parse_workspace_profile_bytes(
         &verify_bytes,
     ) {
@@ -500,10 +608,10 @@ fn write_profile_config_at_after_consumption(
             record,
         ) => {
             if record.validate().is_err() {
-                return Err(
-                    "written profile failed validation (details hidden)"
-                        .to_owned(),
-                );
+                return Err(profile_error(
+                    ProfileWriteErrorKind::InvalidProfile,
+                    "written profile failed validation (details hidden)",
+                ));
             }
             // Ensure the applied record carries every written value (verbatim
             // credential; comparison is local and never rendered).
@@ -520,18 +628,25 @@ fn write_profile_config_at_after_consumption(
                 || record.protocol.as_str() != expected_protocol
                 || record.model_display_name != expected_display
             {
-                return Err(
-                    "written profile did not apply the requested fields"
-                        .to_owned(),
-                );
+                return Err(profile_error(
+                    ProfileWriteErrorKind::InvalidProfile,
+                    "written profile did not apply the requested fields",
+                ));
             }
         }
         siralos_adapters::profile_config::WorkspaceProfileLoad::Invalid {
             ..
-        } => return Err("written profile invalid (details hidden)".to_owned()),
+        } => {
+            return Err(profile_error(
+                ProfileWriteErrorKind::InvalidProfile,
+                "written profile invalid (details hidden)",
+            ));
+        }
         siralos_adapters::profile_config::WorkspaceProfileLoad::Absent => {
-            return Err("written profile did not apply the requested fields"
-                .to_owned());
+            return Err(profile_error(
+                ProfileWriteErrorKind::InvalidProfile,
+                "written profile did not apply the requested fields",
+            ));
         }
     }
     // Revalidate the exact filesystem revision once more after staging and
@@ -545,17 +660,17 @@ fn write_profile_config_at_after_consumption(
         Ok(bytes) => Some(bytes),
         Err(reason) if reason == "profile target is absent" => None,
         Err(_reason) => {
-            return Err(
-                "profile could not be revalidated; reload before retrying"
-                    .to_owned(),
-            );
+            return Err(profile_error(
+                ProfileWriteErrorKind::StagingFailed,
+                "profile could not be revalidated; reload before retrying",
+            ));
         }
     };
     if !observed.matches_path(&path, final_bytes.as_deref()) {
-        return Err(
-            "siralos.toml changed concurrently; reload before retrying"
-                .to_owned(),
-        );
+        return Err(profile_error(
+            ProfileWriteErrorKind::StaleConcurrent,
+            "siralos.toml changed concurrently; reload before retrying",
+        ));
     }
     let observed_digest =
         final_bytes.as_deref().map(siralos_core::identity::sha256_hex);
@@ -571,18 +686,25 @@ fn write_profile_config_at_after_consumption(
         }
         | siralos_adapters::atomic::AtomicWriteFailure::RequestedNameMismatch {
             ..
-        } => "siralos.toml changed concurrently; reload before retrying"
-            .to_owned(),
+        } => profile_error(
+            ProfileWriteErrorKind::StaleConcurrent,
+            "siralos.toml changed concurrently; reload before retrying",
+        ),
         siralos_adapters::atomic::AtomicWriteFailure::TargetIsNotARegularFile {
             ..
-        } => "siralos.toml must be a regular file; refusing symlink or special file"
-            .to_owned(),
+        } => profile_error(
+            ProfileWriteErrorKind::CommitFailed,
+            "siralos.toml must be a regular file; refusing symlink or special file",
+        ),
         siralos_adapters::atomic::AtomicWriteFailure::TargetUnreadable { .. }
         | siralos_adapters::atomic::AtomicWriteFailure::ReplaceFailed { .. }
         | siralos_adapters::atomic::AtomicWriteFailure::Staged { .. }
         | siralos_adapters::atomic::AtomicWriteFailure::StagedIdentityUnverifiable {
             ..
-        } => "profile commit failed (details hidden)".to_owned(),
+        } => profile_error(
+            ProfileWriteErrorKind::CommitFailed,
+            "profile commit failed (details hidden)",
+        ),
     })?;
     Ok(())
 }
@@ -622,6 +744,7 @@ pub fn persist_switched_model(
         applied_provider,
         new_model,
     )
+    .map_err(|error| error.message)
 }
 
 /// Persist a live `/model` switch against the exact profile revision the
@@ -633,15 +756,21 @@ pub fn persist_switched_model_at(
     observed: &WorkspaceProfileWriteToken,
     applied_provider: Option<&str>,
     new_model: &str,
-) -> Result<String, String> {
-    observed.consume()?;
-    validate_live_model_id(new_model)
-        .map_err(|reason| format!("{reason}\n"))?;
+) -> Result<String, ProfileWriteError> {
+    observed.consume().map_err(|message| {
+        profile_error(ProfileWriteErrorKind::OneShotConsumed, message)
+    })?;
+    validate_live_model_id(new_model).map_err(|reason| {
+        profile_error(
+            ProfileWriteErrorKind::InvalidProfile,
+            format!("{reason}\n"),
+        )
+    })?;
     if applied_provider.is_none_or(|provider| provider.is_empty()) {
-        return Err(
-            "no provider configured — cannot switch model without an applied [profile]\n"
-                .to_owned(),
-        );
+        return Err(profile_error(
+            ProfileWriteErrorKind::InvalidProfile,
+            "no provider configured — cannot switch model without an applied [profile]\n",
+        ));
     }
     let path = workspace_root
         .join(siralos_adapters::module::manifest::SIRALOS_TOML_FILE_NAME);
@@ -652,17 +781,17 @@ pub fn persist_switched_model_at(
         Ok(bytes) => Some(bytes),
         Err(reason) if reason == "profile target is absent" => None,
         Err(_reason) => {
-            return Err(
-                "model switch refused: profile could not be revalidated\n"
-                    .to_owned(),
-            );
+            return Err(profile_error(
+                ProfileWriteErrorKind::StagingFailed,
+                "model switch refused: profile could not be revalidated\n",
+            ));
         }
     };
     if !observed.matches_path(&path, current_bytes.as_deref()) {
-        return Err(
-            "model switch refused: profile changed concurrently; reload before switching\n"
-                .to_owned(),
-        );
+        return Err(profile_error(
+            ProfileWriteErrorKind::StaleConcurrent,
+            "model switch refused: profile changed concurrently; reload before switching\n",
+        ));
     }
     let record = match current_bytes
         .as_deref()
@@ -670,31 +799,31 @@ pub fn persist_switched_model_at(
     {
         Some(WorkspaceProfileLoad::Record(record)) => record,
         _ => {
-            return Err(
-                "no provider configured — cannot switch model without an applied [profile]\n"
-                    .to_owned(),
-            );
+            return Err(profile_error(
+                ProfileWriteErrorKind::InvalidProfile,
+                "no provider configured — cannot switch model without an applied [profile]\n",
+            ));
         }
     };
     if record.validate().is_err() {
-        return Err(
-            "model switch refused: profile is invalid (details hidden)\n"
-                .to_owned(),
-        );
+        return Err(profile_error(
+            ProfileWriteErrorKind::InvalidProfile,
+            "model switch refused: profile is invalid (details hidden)\n",
+        ));
     }
     if record.provider.as_deref() != applied_provider {
-        return Err(
-            "model switch refused: profile provider changed; reload before switching\n"
-                .to_owned(),
-        );
+        return Err(profile_error(
+            ProfileWriteErrorKind::StaleConcurrent,
+            "model switch refused: profile provider changed; reload before switching\n",
+        ));
     }
     let provider = match record.provider.as_deref() {
         Some(provider) if !provider.is_empty() => provider.to_owned(),
         _ => {
-            return Err(
-                "no provider configured — cannot switch model without an applied [profile]\n"
-                    .to_owned(),
-            );
+            return Err(profile_error(
+                ProfileWriteErrorKind::InvalidProfile,
+                "no provider configured — cannot switch model without an applied [profile]\n",
+            ));
         }
     };
     write_profile_config_at_after_consumption(
@@ -707,7 +836,12 @@ pub fn persist_switched_model_at(
         Some(record.protocol.as_str()),
         None,
     )
-    .map_err(|reason| format!("model switch failed: {reason}\n"))?;
+    .map_err(|error| {
+        profile_error(
+            error.kind,
+            format!("model switch failed: {}\n", error.message),
+        )
+    })?;
     let safe_model =
         display_field_redacted(Some(new_model), record.credential.as_deref());
     Ok(format!(
@@ -775,6 +909,7 @@ pub fn remove_profile_config(workspace_root: &Path) -> Result<(), String> {
                 .to_owned()
         })?;
     remove_profile_config_at(workspace_root, &observed)
+        .map_err(|error| error.message)
 }
 
 /// Remove provider-owned fields atomically (provider deletion) — the
@@ -789,8 +924,10 @@ pub fn remove_profile_config(workspace_root: &Path) -> Result<(), String> {
 pub fn remove_profile_config_at(
     workspace_root: &Path,
     observed: &WorkspaceProfileWriteToken,
-) -> Result<(), String> {
-    observed.consume()?;
+) -> Result<(), ProfileWriteError> {
+    observed.consume().map_err(|message| {
+        profile_error(ProfileWriteErrorKind::OneShotConsumed, message)
+    })?;
     let path = workspace_root
         .join(siralos_adapters::module::manifest::SIRALOS_TOML_FILE_NAME);
     // Read current bytes, then bind every subsequent decision to the exact
@@ -802,39 +939,55 @@ pub fn remove_profile_config_at(
     ) {
         Ok(bytes) => Some(bytes),
         Err(reason) if reason == "profile target is absent" => None,
-        Err(reason) => return Err(reason),
+        Err(reason) => {
+            return Err(profile_error(
+                ProfileWriteErrorKind::StagingFailed,
+                reason,
+            ));
+        }
     };
     if !observed.matches_path(&path, current_bytes.as_deref()) {
-        return Err(
-            "siralos.toml changed concurrently; reload before retrying"
-                .to_owned(),
-        );
+        return Err(profile_error(
+            ProfileWriteErrorKind::StaleConcurrent,
+            "siralos.toml changed concurrently; reload before retrying",
+        ));
     }
     let Some(bytes) = current_bytes else {
         return Ok(());
     };
-    let existing = String::from_utf8(bytes)
-        .map_err(|_| "siralos.toml is not valid UTF-8".to_owned())?;
+    let existing = String::from_utf8(bytes).map_err(|_| {
+        profile_error(
+            ProfileWriteErrorKind::InvalidProfile,
+            "siralos.toml is not valid UTF-8",
+        )
+    })?;
     // Format-preserving parse via toml_edit (write-path diagnostic).
     let mut doc: toml_edit::DocumentMut = if existing.trim().is_empty() {
-        if !profile_snapshot_unchanged(&path, observed)? {
-            return Err(
-                "siralos.toml changed concurrently; reload before retrying"
-                    .to_owned(),
-            );
+        if !profile_snapshot_unchanged(&path, observed).map_err(|reason| {
+            profile_error(ProfileWriteErrorKind::StagingFailed, reason)
+        })? {
+            return Err(profile_error(
+                ProfileWriteErrorKind::StaleConcurrent,
+                "siralos.toml changed concurrently; reload before retrying",
+            ));
         }
         return Ok(());
     } else {
-        existing
-            .parse::<toml_edit::DocumentMut>()
-            .map_err(|_| "siralos.toml does not parse".to_owned())?
+        existing.parse::<toml_edit::DocumentMut>().map_err(|_| {
+            profile_error(
+                ProfileWriteErrorKind::InvalidProfile,
+                "siralos.toml does not parse",
+            )
+        })?
     };
     if doc.get("profile").is_none() {
-        if !profile_snapshot_unchanged(&path, observed)? {
-            return Err(
-                "siralos.toml changed concurrently; reload before retrying"
-                    .to_owned(),
-            );
+        if !profile_snapshot_unchanged(&path, observed).map_err(|reason| {
+            profile_error(ProfileWriteErrorKind::StagingFailed, reason)
+        })? {
+            return Err(profile_error(
+                ProfileWriteErrorKind::StaleConcurrent,
+                "siralos.toml changed concurrently; reload before retrying",
+            ));
         }
         return Ok(());
     }
@@ -853,19 +1006,23 @@ pub fn remove_profile_config_at(
     ];
     let remove_profile = {
         let Some(item) = doc.get_mut("profile") else {
-            if !profile_snapshot_unchanged(&path, observed)? {
-                return Err(
-                    "siralos.toml changed concurrently; reload before retrying"
-                        .to_owned(),
-                );
+            if !profile_snapshot_unchanged(&path, observed).map_err(
+                |reason| {
+                    profile_error(ProfileWriteErrorKind::StagingFailed, reason)
+                },
+            )? {
+                return Err(profile_error(
+                    ProfileWriteErrorKind::StaleConcurrent,
+                    "siralos.toml changed concurrently; reload before retrying",
+                ));
             }
             return Ok(());
         };
         let Some(table) = item.as_table_like_mut() else {
-            return Err(
-                "profile must be a TOML table; refusing provider removal"
-                    .to_owned(),
-            );
+            return Err(profile_error(
+                ProfileWriteErrorKind::InvalidProfile,
+                "profile must be a TOML table; refusing provider removal",
+            ));
         };
         for key in provider_keys {
             table.remove(key);
@@ -883,7 +1040,10 @@ pub fn remove_profile_config_at(
     if serialized.len()
         > siralos_adapters::module::manifest::MAX_SIRALOS_TOML_BYTES
     {
-        return Err("siralos.toml exceeds the byte bound".to_owned());
+        return Err(profile_error(
+            ProfileWriteErrorKind::StagingFailed,
+            "siralos.toml exceeds the byte bound",
+        ));
     }
     // The write path's staging verbatim, through the shared atomic writer.
     let staged = siralos_adapters::atomic::stage_atomic(
@@ -896,13 +1056,21 @@ pub fn remove_profile_config_at(
         serialized.as_bytes(),
         Some(0o600),
     )
-    .map_err(|_| "profile could not be staged".to_owned())?;
+    .map_err(|_| {
+        profile_error(
+            ProfileWriteErrorKind::StagingFailed,
+            "profile could not be staged",
+        )
+    })?;
     // Verify the exact staged bytes without copying secret-bearing profile
     // text into a second temporary directory.
     let verify_bytes = read_profile_bytes_bounded(
         staged.path(),
         siralos_adapters::module::manifest::MAX_SIRALOS_TOML_BYTES,
-    )?;
+    )
+    .map_err(|reason| {
+        profile_error(ProfileWriteErrorKind::StagingFailed, reason)
+    })?;
     match siralos_adapters::profile_config::parse_workspace_profile_bytes(
         &verify_bytes,
     ) {
@@ -911,19 +1079,19 @@ pub fn remove_profile_config_at(
             diagnostic,
         } => {
             let _ = diagnostic;
-            return Err(
-                "removed config is invalid; refusing provider removal"
-                    .to_owned(),
-            );
+            return Err(profile_error(
+                ProfileWriteErrorKind::InvalidProfile,
+                "removed config is invalid; refusing provider removal",
+            ));
         }
         siralos_adapters::profile_config::WorkspaceProfileLoad::Record(
             record,
         ) => {
             if record.validate().is_err() {
-                return Err(
-                    "remaining profile is invalid; refusing provider removal"
-                        .to_owned(),
-                );
+                return Err(profile_error(
+                    ProfileWriteErrorKind::InvalidProfile,
+                    "remaining profile is invalid; refusing provider removal",
+                ));
             }
             if record.provider.is_some()
                 || record.model.is_some()
@@ -933,10 +1101,10 @@ pub fn remove_profile_config_at(
                 || record.record_replay
                 || record.replay
             {
-                return Err(
-                    "provider fields remain after removal; refusing to replace siralos.toml"
-                        .to_owned(),
-                );
+                return Err(profile_error(
+                    ProfileWriteErrorKind::InvalidProfile,
+                    "provider fields remain after removal; refusing to replace siralos.toml",
+                ));
             }
         }
     }
@@ -947,25 +1115,25 @@ pub fn remove_profile_config_at(
         Ok(bytes) => Some(bytes),
         Err(reason) if reason == "profile target is absent" => None,
         Err(_reason) => {
-            return Err(
-                "profile could not be revalidated; reload before retrying"
-                    .to_owned(),
-            );
+            return Err(profile_error(
+                ProfileWriteErrorKind::StagingFailed,
+                "profile could not be revalidated; reload before retrying",
+            ));
         }
     };
     if !observed.matches_path(&path, final_bytes.as_deref()) {
-        return Err(
-            "siralos.toml changed concurrently; reload before retrying"
-                .to_owned(),
-        );
+        return Err(profile_error(
+            ProfileWriteErrorKind::StaleConcurrent,
+            "siralos.toml changed concurrently; reload before retrying",
+        ));
     }
     let observed_digest =
         final_bytes.as_deref().map(siralos_core::identity::sha256_hex);
     let Some(observed_digest) = observed_digest else {
-        return Err(
-            "profile could not be revalidated; reload before retrying"
-                .to_owned(),
-        );
+        return Err(profile_error(
+            ProfileWriteErrorKind::StagingFailed,
+            "profile could not be revalidated; reload before retrying",
+        ));
     };
     let commit_result = staged.commit_if_digest(&observed_digest);
     commit_result.map_err(|error| match error {
@@ -975,18 +1143,25 @@ pub fn remove_profile_config_at(
         }
         | siralos_adapters::atomic::AtomicWriteFailure::RequestedNameMismatch {
             ..
-        } => "siralos.toml changed concurrently; reload before retrying"
-            .to_owned(),
+        } => profile_error(
+            ProfileWriteErrorKind::StaleConcurrent,
+            "siralos.toml changed concurrently; reload before retrying",
+        ),
         siralos_adapters::atomic::AtomicWriteFailure::TargetIsNotARegularFile {
             ..
-        } => "siralos.toml must be a regular file; refusing symlink or special file"
-            .to_owned(),
+        } => profile_error(
+            ProfileWriteErrorKind::CommitFailed,
+            "siralos.toml must be a regular file; refusing symlink or special file",
+        ),
         siralos_adapters::atomic::AtomicWriteFailure::TargetUnreadable { .. }
         | siralos_adapters::atomic::AtomicWriteFailure::ReplaceFailed { .. }
         | siralos_adapters::atomic::AtomicWriteFailure::Staged { .. }
         | siralos_adapters::atomic::AtomicWriteFailure::StagedIdentityUnverifiable {
             ..
-        } => "profile commit failed (details hidden)".to_owned(),
+        } => profile_error(
+            ProfileWriteErrorKind::CommitFailed,
+            "profile commit failed (details hidden)",
+        ),
     })?;
     Ok(())
 }
