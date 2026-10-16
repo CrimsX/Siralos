@@ -1,0 +1,21 @@
+{
+  "env": {},
+  "id": "ui-components.render-tab",
+  "input": {
+    "authority": ["workspace.read"],
+    "calls": [
+      {
+        "op": "render",
+        "selected": 0
+      }
+    ],
+    "files": [],
+    "fingerprint": "fixture-ui-components-render-tab",
+    "modules": [],
+    "uiDocument": "[[components]]\nid = \"mod-status\"\ntitle = \"Modules\"\nfeed = \"modules.status\"\nplacement = \"tab\"\n",
+    "verifyPaths": []
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "ui-components"
+}

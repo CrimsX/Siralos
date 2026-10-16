@@ -179,6 +179,7 @@ pub(in crate::harness) fn validate_scenario(
             | SUBJECT_WORKSPACE_PREPARE
             | SUBJECT_WORKSPACE_APPLY
             | SUBJECT_DEFAULT_TOOLS
+            | SUBJECT_UI_COMPONENTS
             | SUBJECT_CHECKPOINT
             | SUBJECT_GIT_INSPECTION
             | SUBJECT_LANGUAGE_DIAGNOSTICS
@@ -324,6 +325,7 @@ pub(in crate::harness) fn validate_scenario(
         | SUBJECT_WORKSPACE_PREPARE
         | SUBJECT_WORKSPACE_APPLY
         | SUBJECT_DEFAULT_TOOLS
+        | SUBJECT_UI_COMPONENTS
         | SUBJECT_CHECKPOINT
         | SUBJECT_GIT_INSPECTION
         | SUBJECT_LANGUAGE_DIAGNOSTICS

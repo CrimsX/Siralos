@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 85,
+  "corpusVersion": 86,
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -1183,6 +1183,54 @@
       "sha256": "f6d75cbce1b4d1c11f9b68a68084adb3359c5baaf851c91d251e4337da743c7d"
     },
     {
+      "file": "ui-components.authoring-add.json",
+      "sha256": "a37381cd9f9938597b15984c54dad9b4f62439248ac45bf79f5b4069956fabac"
+    },
+    {
+      "file": "ui-components.authoring-edit-remove.json",
+      "sha256": "ff4e409e2855e836d23282a4a5cdcfa1d95dd6ac3efd84132103f857f7cc2902"
+    },
+    {
+      "file": "ui-components.authoring-protected.json",
+      "sha256": "a405f297728e18b539330b72efb71730ba839d11dc911e56b028a990c10a9ddf"
+    },
+    {
+      "file": "ui-components.module-authority.json",
+      "sha256": "a753643d2f5a3aaba86b11f5f7f628765bb1c315edd9132d37435f4961d8a18e"
+    },
+    {
+      "file": "ui-components.module-precedence.json",
+      "sha256": "fee7a07a132a6abca73cd1afae4e1f79b7376bec9a9a86b0fddd3debe791d888"
+    },
+    {
+      "file": "ui-components.render-empty.json",
+      "sha256": "8a2684d9ced46f9707c7de34ef56d563912bc36ff8bd27d0a952bc9dc4870962"
+    },
+    {
+      "file": "ui-components.render-grid.json",
+      "sha256": "f4d784e54826482ab9e55a5195dd44a510a1160f37b02697ee1e1cb4af9b6b47"
+    },
+    {
+      "file": "ui-components.render-tab.json",
+      "sha256": "8d05795960308f4e533962bba74f483d2ab2f345c33d814b2d683f080e9f5558"
+    },
+    {
+      "file": "ui-components.spec-bad-placement.json",
+      "sha256": "7c235d337d53de40e12be920eea0caa6025e078d6d97ed97af38ad11f2583f57"
+    },
+    {
+      "file": "ui-components.spec-oversize.json",
+      "sha256": "ba9df79b7764b33d78314a8cd35ab87964fb56b98f030b941937ff88688b715c"
+    },
+    {
+      "file": "ui-components.spec-unknown-feed.json",
+      "sha256": "89e168fcb1691af85e5ab3342772db584954df3d264f346d0d905937614e96b6"
+    },
+    {
+      "file": "ui-components.spec-valid.json",
+      "sha256": "22743ef7e304e367fcde08b1f78c32a30d47b93d58a88e5365af570c777d9e7c"
+    },
+    {
       "file": "user-config-matrix.json",
       "sha256": "5c50ed7508faa104a8f186043c0ba076c32f97bd8f3c9470fda5bdaeea94ad7f"
     },
@@ -1287,5 +1335,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "ca3c9b5cc184b5c1b51d99d7c1c3bcb5e7ce8317cba0f4b898458eb6765b5a4c"
+  "corpusSha256": "7602e5788250c9afe21ebe320b1e11aa1a1ef0962b6a8a8c8ab6be702ea572a3"
 }

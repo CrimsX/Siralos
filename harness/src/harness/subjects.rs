@@ -16,4 +16,5 @@ pub(in crate::harness) mod r13_reference;
 pub(in crate::harness) mod runtime_records;
 pub(in crate::harness) mod scenario_input;
 pub(in crate::harness) mod task_contract;
+pub(in crate::harness) mod ui_components;
 pub(in crate::harness) mod workspace_ops;

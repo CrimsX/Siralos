@@ -1,0 +1,56 @@
+{
+  "env": {},
+  "id": "ui-components.authoring-edit-remove",
+  "input": {
+    "authority": ["workspace.read"],
+    "calls": [
+      {
+        "id": "one",
+        "op": "edit",
+        "spec": {
+          "enabled": true,
+          "feed": "tools.catalog",
+          "id": "one",
+          "max_cols": 60,
+          "max_rows": 20,
+          "params": {},
+          "placement": "tab",
+          "title": "One edited"
+        }
+      },
+      {
+        "id": "one",
+        "op": "edit",
+        "spec": {
+          "enabled": true,
+          "feed": "tools.catalog",
+          "id": "other",
+          "max_cols": 60,
+          "max_rows": 20,
+          "params": {},
+          "placement": "tab",
+          "title": "Other"
+        }
+      },
+      {
+        "id": "missing",
+        "op": "remove"
+      },
+      {
+        "id": "one",
+        "op": "remove"
+      },
+      {
+        "op": "list"
+      }
+    ],
+    "files": [],
+    "fingerprint": "fixture-ui-components-authoring-edit-remove",
+    "modules": [],
+    "uiDocument": "[[components]]\nid = \"one\"\ntitle = \"One\"\nfeed = \"tools.catalog\"\nplacement = \"tab\"\n",
+    "verifyPaths": [".siralos/ui.toml"]
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "ui-components"
+}

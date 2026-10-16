@@ -1,0 +1,46 @@
+{
+  "env": {},
+  "id": "ui-components.authoring-add",
+  "input": {
+    "authority": ["workspace.read"],
+    "calls": [
+      {
+        "op": "add",
+        "spec": {
+          "enabled": true,
+          "feed": "tools.catalog",
+          "id": "one",
+          "max_cols": 60,
+          "max_rows": 20,
+          "params": {},
+          "placement": "tab",
+          "title": "One"
+        }
+      },
+      {
+        "op": "add",
+        "spec": {
+          "enabled": true,
+          "feed": "tools.catalog",
+          "id": "one",
+          "max_cols": 60,
+          "max_rows": 20,
+          "params": {},
+          "placement": "tab",
+          "title": "One"
+        }
+      },
+      {
+        "op": "list"
+      }
+    ],
+    "files": [],
+    "fingerprint": "fixture-ui-components-authoring-add",
+    "modules": [],
+    "uiDocument": null,
+    "verifyPaths": [".siralos/ui.toml"]
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "ui-components"
+}

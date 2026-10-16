@@ -466,4 +466,180 @@ export {
   validateReadResult,
   validateRevisionResult,
   validateSearchResult,
+  validateUiComponentsResult,
 };
+
+// Statuses a ui-components authoring op can report: production
+// outcomes only. Anything else fails validation.
+const UI_COMPONENT_OPS = new Set([
+  "parse",
+  "add",
+  "edit",
+  "remove",
+  "list",
+  "write",
+  "render",
+  "merge",
+]);
+const UI_COMPONENT_STATUSES = new Set(["ok", "refused"]);
+
+// Closed feed vocabulary (ADR 0039): feeds are data selectors, never
+// an extension point. Unknown feeds refuse in the spec parser.
+const UI_COMPONENT_FEEDS = new Set([
+  "workspace.list",
+  "workspace.search",
+  "context.summary",
+  "tools.catalog",
+  "modules.status",
+  "checkpoints.list",
+]);
+
+// Shared ui-components bounds: the fixed panel viewport (80x24,
+// mirroring the Rust runner) and the longest human-readable field
+// the records carry. Named here because the JS protocol side owns
+// the record contract; the Rust side owns the behavior.
+const UI_FRAME_COLS = 80;
+const UI_FRAME_ROWS = 24;
+const UI_TEXT_FIELD_MAX = 2048;
+
+function assertNonEmptyString(value, message) {
+  if (typeof value !== "string" || value.length === 0 || value.length > UI_TEXT_FIELD_MAX) {
+    throw new Error(message);
+  }
+}
+
+function validateUiSpecSummary(spec, label) {
+  assertExactKeys(
+    spec,
+    ["enabled", "feed", "id", "max_cols", "max_rows", "params", "placement", "title"],
+    label,
+  );
+  assertNonEmptyString(spec.id, `${label}.id is invalid`);
+  assertNonEmptyString(spec.title, `${label}.title is invalid`);
+  if (!UI_COMPONENT_FEEDS.has(spec.feed)) {
+    throw new Error(`${label}.feed is invalid`);
+  }
+  if (typeof spec.enabled !== "boolean") {
+    throw new Error(`${label}.enabled is invalid`);
+  }
+  assertNonEmptyString(spec.placement, `${label}.placement is invalid`);
+  for (const key of ["max_rows", "max_cols"]) {
+    if (!Number.isSafeInteger(spec[key]) || spec[key] < 0) {
+      throw new Error(`${label}.${key} is invalid`);
+    }
+  }
+  if (!isObject(spec.params)) {
+    throw new Error(`${label}.params must be an object`);
+  }
+  for (const [key, value] of Object.entries(spec.params)) {
+    if (typeof value !== "string") {
+      throw new Error(`${label}.params.${key} must be a string`);
+    }
+  }
+}
+
+function validateUiComponentsResult(record, label) {
+  assertExactKeys(record.result, ["files", "ops"], `${label}.result`);
+  if (!Array.isArray(record.result.ops) || record.result.ops.length > 16) {
+    throw new Error(`${label}.result.ops must be a bounded array`);
+  }
+  for (const [index, entry] of record.result.ops.entries()) {
+    const entryLabel = `${label}.result.ops[${index}]`;
+    if (!isObject(entry)) {
+      throw new Error(`${entryLabel} must be an object`);
+    }
+    if (!UI_COMPONENT_OPS.has(entry.op)) {
+      throw new Error(`${entryLabel}.op is invalid`);
+    }
+    if (entry.op === "parse") {
+      if (!UI_COMPONENT_STATUSES.has(entry.status)) {
+        throw new Error(`${entryLabel}.status is invalid`);
+      }
+      if (entry.status === "ok") {
+        assertExactKeys(entry, ["op", "specs", "status"], entryLabel);
+        if (!Array.isArray(entry.specs)) {
+          throw new Error(`${entryLabel}.specs must be an array`);
+        }
+        for (const [specIndex, spec] of entry.specs.entries()) {
+          validateUiSpecSummary(spec, `${entryLabel}.specs[${specIndex}]`);
+        }
+      } else {
+        assertExactKeys(entry, ["message", "op", "status"], entryLabel);
+        assertNonEmptyString(entry.message, `${entryLabel}.message is invalid`);
+      }
+      continue;
+    }
+    if (entry.op === "add" || entry.op === "edit" || entry.op === "remove") {
+      assertExactKeys(entry, ["message", "op", "status"], entryLabel);
+      if (!UI_COMPONENT_STATUSES.has(entry.status)) {
+        throw new Error(`${entryLabel}.status is invalid`);
+      }
+      assertNonEmptyString(entry.message, `${entryLabel}.message is invalid`);
+      continue;
+    }
+    if (entry.op === "list" || entry.op === "merge") {
+      assertExactKeys(entry, ["op", "text"], entryLabel);
+      if (typeof entry.text !== "string") {
+        throw new Error(`${entryLabel}.text must be a string`);
+      }
+      continue;
+    }
+    if (entry.op === "write") {
+      if (!DEFAULT_TOOLS_STATUSES.has(entry.status)) {
+        throw new Error(`${entryLabel}.status is invalid`);
+      }
+      if (entry.status === "success") {
+        assertExactKeys(entry, ["op", "output", "status", "tool"], entryLabel);
+        if (entry.tool !== "write" || !isObject(entry.output)) {
+          throw new Error(`${entryLabel} has an invalid success shape`);
+        }
+      } else {
+        assertExactKeys(entry, ["message", "op", "status", "tool"], entryLabel);
+        if (entry.tool !== "write") {
+          throw new Error(`${entryLabel}.tool is invalid`);
+        }
+        assertNonEmptyString(entry.message, `${entryLabel}.message is invalid`);
+      }
+      continue;
+    }
+    // render
+    assertExactKeys(entry, ["frame", "op", "selected", "tabs"], entryLabel);
+    if (!Number.isSafeInteger(entry.selected) || entry.selected < 0) {
+      throw new Error(`${entryLabel}.selected is invalid`);
+    }
+    if (!Array.isArray(entry.tabs) || entry.tabs.length === 0) {
+      throw new Error(`${entryLabel}.tabs must be a non-empty array`);
+    }
+    for (const title of entry.tabs) {
+      if (typeof title !== "string") {
+        throw new Error(`${entryLabel}.tabs entries must be strings`);
+      }
+    }
+    if (!Array.isArray(entry.frame) || entry.frame.length !== UI_FRAME_ROWS) {
+      throw new Error(`${entryLabel}.frame must be exactly ${UI_FRAME_ROWS} row strings`);
+    }
+    for (const row of entry.frame) {
+      if (typeof row !== "string" || row.length > UI_FRAME_COLS) {
+        throw new Error(
+          `${entryLabel}.frame rows must be strings of at most ${UI_FRAME_COLS} characters`,
+        );
+      }
+    }
+  }
+  if (!Array.isArray(record.result.files)) {
+    throw new Error(`${label}.result.files must be an array`);
+  }
+  for (const [index, entry] of record.result.files.entries()) {
+    const entryLabel = `${label}.result.files[${index}]`;
+    assertExactKeys(entry, ["path", "sha256"], entryLabel);
+    if (typeof entry.path !== "string") {
+      throw new Error(`${entryLabel}.path is invalid`);
+    }
+    if (
+      entry.sha256 !== null &&
+      (typeof entry.sha256 !== "string" || !LOWER_SHA256.test(entry.sha256))
+    ) {
+      throw new Error(`${entryLabel}.sha256 is invalid`);
+    }
+  }
+}

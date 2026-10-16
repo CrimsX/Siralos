@@ -1,0 +1,21 @@
+{
+  "env": {},
+  "id": "ui-components.spec-unknown-feed",
+  "input": {
+    "authority": ["workspace.read"],
+    "calls": [
+      {
+        "document": "[[components]]\nid = \"x\"\ntitle = \"X\"\nfeed = \"nope\"\nplacement = \"tab\"\n",
+        "op": "parse"
+      }
+    ],
+    "files": [],
+    "fingerprint": "fixture-ui-components-spec-unknown-feed",
+    "modules": [],
+    "uiDocument": null,
+    "verifyPaths": []
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "ui-components"
+}

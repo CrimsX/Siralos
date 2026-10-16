@@ -1,0 +1,25 @@
+{
+  "env": {},
+  "id": "ui-components.spec-oversize",
+  "input": {
+    "authority": ["workspace.read"],
+    "calls": [
+      {
+        "document": "[[components]]\nid = \"x\"\ntitle = \"ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt\"\nfeed = \"tools.catalog\"\nplacement = \"tab\"\n",
+        "op": "parse"
+      },
+      {
+        "document": "[[components]]\nid = \"y\"\ntitle = \"Y\"\nfeed = \"tools.catalog\"\nplacement = \"tab\"\n[components.params]\nk0 = \"v\"\nk1 = \"v\"\nk2 = \"v\"\nk3 = \"v\"\nk4 = \"v\"\nk5 = \"v\"\nk6 = \"v\"\nk7 = \"v\"\nk8 = \"v\"\n",
+        "op": "parse"
+      }
+    ],
+    "files": [],
+    "fingerprint": "fixture-ui-components-spec-oversize",
+    "modules": [],
+    "uiDocument": null,
+    "verifyPaths": []
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "ui-components"
+}

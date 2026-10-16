@@ -1,0 +1,31 @@
+{
+  "env": {},
+  "id": "ui-components.module-precedence",
+  "input": {
+    "authority": ["workspace.read"],
+    "calls": [
+      {
+        "op": "merge"
+      }
+    ],
+    "files": [],
+    "fingerprint": "fixture-ui-components-module-precedence",
+    "modules": [
+      {
+        "folder": "mod",
+        "manifest": "id = \"demo\"\ndigest = \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"\nabi = \"siralos:domain-abi@1.0.0\"\ncapabilities = [\"workspace-read\"]\n[ui]\n[[ui.components]]\nid = \"mod-list\"\ntitle = \"Mod list\"\nfeed = \"workspace.list\"\nplacement = \"tab\"\n[[ui.components]]\nid = \"mod-check\"\ntitle = \"Mod check\"\nfeed = \"checkpoints.list\"\nplacement = \"tab\"\n",
+        "state": "enabled"
+      },
+      {
+        "folder": "off",
+        "manifest": "id = \"demo\"\ndigest = \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"\nabi = \"siralos:domain-abi@1.0.0\"\ncapabilities = [\"workspace-read\"]\n[ui]\n[[ui.components]]\nid = \"mod-list\"\ntitle = \"Mod list\"\nfeed = \"workspace.list\"\nplacement = \"tab\"\n[[ui.components]]\nid = \"mod-check\"\ntitle = \"Mod check\"\nfeed = \"checkpoints.list\"\nplacement = \"tab\"\n",
+        "state": "installed"
+      }
+    ],
+    "uiDocument": "[[components]]\nid = \"mod-list\"\ntitle = \"Mine\"\nfeed = \"workspace.list\"\nplacement = \"tab\"\n",
+    "verifyPaths": []
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "ui-components"
+}

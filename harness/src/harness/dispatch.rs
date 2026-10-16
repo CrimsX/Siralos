@@ -232,6 +232,18 @@ fn run_scenario(
                 "result": result,
             }))
         }
+        SUBJECT_UI_COMPONENTS => {
+            let input = scenario.input.as_ref().expect(
+                "ui-components input was validated while loading the corpus",
+            );
+            let result = ui_components_record(&scenario.id, input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
         SUBJECT_CONTEXT_SCAN => {
             let input = scenario.input.as_ref().expect(
                 "context-scan input was validated while loading the corpus",

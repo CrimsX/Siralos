@@ -10,7 +10,7 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { canonicalizeJson, sha256Hex } from "./canonical.mjs";
 
 export const CORPUS_SCHEMA_VERSION = 3;
-export const CORPUS_VERSION = 85;
+export const CORPUS_VERSION = 86;
 export const ALLOWED_SUBJECTS = new Set([
   "state-dir",
   "version-identity",
@@ -22,6 +22,7 @@ export const ALLOWED_SUBJECTS = new Set([
   "workspace-prepare",
   "workspace-apply",
   "default-tools",
+  "ui-components",
   "checkpoint",
   "git-inspection",
   "language-diagnostics",
@@ -651,6 +652,7 @@ function validateSubjectInputs(scenario, label) {
     "workspace-prepare",
     "workspace-apply",
     "default-tools",
+    "ui-components",
     "checkpoint",
     "git-inspection",
     "context-scan",
@@ -1231,6 +1233,7 @@ export function validateScenario(scenario, file) {
     "workspace-prepare",
     "workspace-apply",
     "default-tools",
+    "ui-components",
     "checkpoint",
     "git-inspection",
     "language-diagnostics",

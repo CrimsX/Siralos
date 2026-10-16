@@ -1,0 +1,21 @@
+{
+  "env": {},
+  "id": "ui-components.render-empty",
+  "input": {
+    "authority": ["workspace.read"],
+    "calls": [
+      {
+        "op": "render",
+        "selected": 0
+      }
+    ],
+    "files": [],
+    "fingerprint": "fixture-ui-components-render-empty",
+    "modules": [],
+    "uiDocument": null,
+    "verifyPaths": []
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "ui-components"
+}

@@ -1,0 +1,21 @@
+{
+  "env": {},
+  "id": "ui-components.spec-bad-placement",
+  "input": {
+    "authority": ["workspace.read"],
+    "calls": [
+      {
+        "document": "[[components]]\nid = \"x\"\ntitle = \"X\"\nfeed = \"tools.catalog\"\nplacement = \"cell:2,0\"\n",
+        "op": "parse"
+      }
+    ],
+    "files": [],
+    "fingerprint": "fixture-ui-components-spec-bad-placement",
+    "modules": [],
+    "uiDocument": null,
+    "verifyPaths": []
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "ui-components"
+}

@@ -1,0 +1,27 @@
+{
+  "env": {},
+  "id": "ui-components.authoring-protected",
+  "input": {
+    "authority": ["workspace.read"],
+    "calls": [
+      {
+        "content": "hostile",
+        "op": "write",
+        "path": ".siralos/ui.toml"
+      }
+    ],
+    "files": [
+      {
+        "content": "x",
+        "path": ".siralos/keep.txt"
+      }
+    ],
+    "fingerprint": "fixture-ui-components-authoring-protected",
+    "modules": [],
+    "uiDocument": null,
+    "verifyPaths": []
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "ui-components"
+}

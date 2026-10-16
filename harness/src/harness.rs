@@ -46,6 +46,7 @@ const SUBJECT_WORKSPACE_REVISION: &str = "workspace-revision";
 const SUBJECT_WORKSPACE_PREPARE: &str = "workspace-prepare";
 const SUBJECT_WORKSPACE_APPLY: &str = "workspace-apply";
 const SUBJECT_DEFAULT_TOOLS: &str = "default-tools";
+const SUBJECT_UI_COMPONENTS: &str = "ui-components";
 const SUBJECT_CHECKPOINT: &str = "checkpoint";
 const SUBJECT_GIT_INSPECTION: &str = "git-inspection";
 const SUBJECT_LANGUAGE_DIAGNOSTICS: &str = "language-diagnostics";
@@ -127,7 +128,7 @@ const HERMETIC_PROVIDER_ENDPOINT: &str = "http://127.0.0.1:1/invalid";
 const SUBJECT_EVOLVE_PACKAGING: &str = "evolve-packaging";
 const SUBJECT_CLI_SESSION: &str = "cli-session";
 const CORPUS_SCHEMA_VERSION: u64 = 3;
-const CORPUS_VERSION: u64 = 85;
+const CORPUS_VERSION: u64 = 86;
 const MAX_LANGUAGE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_MODULE_INPUT_BYTES: usize = 64 * 1024;
 const MAX_PROVIDER_INPUT_BYTES: usize = 64 * 1024;
@@ -417,6 +418,7 @@ pub(in crate::harness) use self::subjects::task_contract::*;
 pub(crate) use self::subjects::task_contract::{
     scenario_clock, store_scenario_now,
 };
+pub(in crate::harness) use self::subjects::ui_components::*;
 pub(in crate::harness) use self::subjects::workspace_ops::*;
 
 #[cfg(test)]

@@ -90,6 +90,7 @@ import {
   validateReadResult,
   validateRevisionResult,
   validateSearchResult,
+  validateUiComponentsResult,
 } from "./workspace-ops.mjs";
 
 function validateCompletedResult(record, label) {
@@ -136,6 +137,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "default-tools") {
     validateDefaultToolsResult(record, label);
+    return;
+  }
+  if (record.subject === "ui-components") {
+    validateUiComponentsResult(record, label);
     return;
   }
   if (record.subject === "checkpoint") {

@@ -1,0 +1,30 @@
+{
+  "env": {},
+  "id": "ui-components.render-grid",
+  "input": {
+    "authority": ["workspace.read"],
+    "calls": [
+      {
+        "op": "render",
+        "selected": 1
+      }
+    ],
+    "files": [
+      {
+        "content": "fn main() {}\n",
+        "path": "src/main.rs"
+      },
+      {
+        "content": "hello\n",
+        "path": "README.md"
+      }
+    ],
+    "fingerprint": "fixture-ui-components-render-grid",
+    "modules": [],
+    "uiDocument": "[[components]]\nid = \"mod-status\"\ntitle = \"Modules\"\nfeed = \"modules.status\"\nplacement = \"tab\"\n[[components]]\nid = \"ws-list\"\ntitle = \"Workspace\"\nfeed = \"workspace.list\"\nplacement = \"cell:0,0\"\n[components.params]\npath = \"src\"\n[[components]]\nid = \"ctx-summary\"\ntitle = \"Context\"\nfeed = \"context.summary\"\nplacement = \"cell:0,1\"\n[[components]]\nid = \"tools-catalog\"\ntitle = \"Tools\"\nfeed = \"tools.catalog\"\nplacement = \"cell:1,0\"\n",
+    "verifyPaths": []
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "ui-components"
+}

@@ -1,0 +1,25 @@
+{
+  "env": {},
+  "id": "ui-components.spec-valid",
+  "input": {
+    "authority": ["workspace.read"],
+    "calls": [
+      {
+        "document": "[[components]]\nid = \"recent\"\ntitle = \"Recent files\"\nfeed = \"workspace.list\"\nenabled = true\nplacement = \"cell:0,0\"\nmax_rows = 20\nmax_cols = 60\n[components.params]\npath = \"src\"\n[[components]]\nid = \"tools\"\ntitle = \"Tools\"\nfeed = \"tools.catalog\"\nplacement = \"tab\"\n",
+        "op": "parse"
+      },
+      {
+        "document": "[[components]]\nid = \"m\"\ntitle = \"M\"\nfeed = \"modules.status\"\nplacement = \"cell:1,1\"\n",
+        "op": "parse"
+      }
+    ],
+    "files": [],
+    "fingerprint": "fixture-ui-components-spec-valid",
+    "modules": [],
+    "uiDocument": null,
+    "verifyPaths": []
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "ui-components"
+}

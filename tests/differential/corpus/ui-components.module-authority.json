@@ -1,0 +1,26 @@
+{
+  "env": {},
+  "id": "ui-components.module-authority",
+  "input": {
+    "authority": ["workspace.read"],
+    "calls": [
+      {
+        "op": "merge"
+      }
+    ],
+    "files": [],
+    "fingerprint": "fixture-ui-components-module-authority",
+    "modules": [
+      {
+        "folder": "mod",
+        "manifest": "id = \"demo\"\ndigest = \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"\nabi = \"siralos:domain-abi@1.0.0\"\ncapabilities = [\"other-cap\"]\n[ui]\n[[ui.components]]\nid = \"mod-list\"\ntitle = \"Mod list\"\nfeed = \"workspace.list\"\nplacement = \"tab\"\n[[ui.components]]\nid = \"mod-open\"\ntitle = \"Mod open\"\nfeed = \"tools.catalog\"\nplacement = \"tab\"\n[[ui.components]]\nid = \"mod-check\"\ntitle = \"Mod check\"\nfeed = \"checkpoints.list\"\nplacement = \"tab\"\n",
+        "state": "enabled"
+      }
+    ],
+    "uiDocument": null,
+    "verifyPaths": []
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "ui-components"
+}
