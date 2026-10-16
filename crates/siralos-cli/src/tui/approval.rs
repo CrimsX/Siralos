@@ -83,6 +83,6 @@ pub fn handle_modal_key(
     state: &mut TuiState,
     key: crossterm::event::KeyEvent,
 ) -> Option<ApprovalDecision> {
-    state.pending_approval.as_ref()?;
+    state.pending_approval.as_ref()?.modal()?;
     modal_key_decision(key)
 }

@@ -505,7 +505,11 @@ pub fn draw_with_pane(
     // Cursor at end of input (after `> ` prefix + input length). Clamp to area.
     // When a modal or any add-form is open, hide the cursor behind
     // the dimmed backdrop (no typing through a modal).
-    if state.pending_approval.is_none()
+    if state
+        .pending_approval
+        .as_ref()
+        .and_then(|approval| approval.modal())
+        .is_none()
         && state.provider_add_form.is_none()
         && state.ui_spec_form.is_none()
     {
@@ -737,7 +741,9 @@ pub fn draw_with_pane(
     // Modal overlay (T2): dimmed backdrop + centered modal with the sanitized
     // approval request (bounded to MAX_APPROVAL_LINES). This reuses the same
     // sanitizer-bound lines the stdio path would render — no unsanitized content.
-    if let Some(modal) = &state.pending_approval {
+    if let Some(modal) =
+        state.pending_approval.as_ref().and_then(|a| a.modal())
+    {
         // Dimmed backdrop over the transcript (OFF) or the whole body
         // (transcript + pane, ON).
         let backdrop = Block::default()
@@ -1484,7 +1490,9 @@ pub fn render_to_buffer_with_pane(
         paragraph.render(inner, &mut buf);
     }
 
-    if let Some(modal) = &state.pending_approval {
+    if let Some(modal) =
+        state.pending_approval.as_ref().and_then(|a| a.modal())
+    {
         let backdrop_area = match pane_area {
             None => transcript_area,
             Some(pane_rect) => {

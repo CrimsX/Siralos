@@ -160,10 +160,25 @@ pub(super) fn handle_pending_approval_key_outcome(
         crate::tui::handle_modal_key(&mut state, key)
     };
     let decision = decision?;
-    let confirming_removal = tui_state.borrow().confirming_provider_removal;
-    let observed = tui_state.borrow_mut().pending_profile_write_token.take();
-    tui_state.borrow_mut().pending_approval = None;
-    tui_state.borrow_mut().confirming_provider_removal = false;
+    // Take the whole approval: a tool verdict closes its modal into
+    // the decided state for resume; a removal consumes its staged
+    // revision. Anything else leaves no approval behind.
+    let taken = tui_state.borrow_mut().pending_approval.take();
+    let (confirming_removal, observed, exchange_id) = match taken {
+        Some(crate::tui::PendingApproval::ProviderRemovalConfirm {
+            token,
+            ..
+        }) => (true, token, None),
+        Some(crate::tui::PendingApproval::ProviderRemovalArmed { token }) => {
+            (true, token, None)
+        }
+        Some(crate::tui::PendingApproval::ToolApproval {
+            exchange_id,
+            ..
+        }) => (false, None, Some(exchange_id)),
+        Some(crate::tui::PendingApproval::ToolApprovalDecided { .. })
+        | None => (false, None, None),
+    };
     let mut removal_committed = false;
     if confirming_removal {
         // Provider-removal confirmation: resolve through the single
@@ -192,6 +207,12 @@ pub(super) fn handle_pending_approval_key_outcome(
         let rendered = sanitize_for_display(&removal);
         let _ = sink.write_all(rendered.as_bytes());
     } else {
+        if let Some(exchange_id) = exchange_id {
+            tui_state.borrow_mut().pending_approval =
+                Some(crate::tui::PendingApproval::ToolApprovalDecided {
+                    exchange_id,
+                });
+        }
         let verdict = match decision {
             crate::tui::ApprovalDecision::Approve => "Approved.",
             crate::tui::ApprovalDecision::Deny => "Denied.",

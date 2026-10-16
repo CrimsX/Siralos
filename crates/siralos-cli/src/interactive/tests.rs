@@ -2399,8 +2399,10 @@ fn t4_key_routing_calls_the_shared_handle_key() {
     assert!(crate::tui::handle_key(&mut state, press(KeyCode::Enter), 10));
     // While a modal is pending every key is ignored (loop's modal
     // branch routes to `handle_modal_key` first — unchanged).
-    state.pending_approval =
-        Some(crate::tui::ApprovalModal::new(vec!["req".to_owned()]));
+    state.pending_approval = Some(crate::tui::PendingApproval::ToolApproval {
+        modal: crate::tui::ApprovalModal::new(vec!["req".to_owned()]),
+        exchange_id: 0,
+    });
     assert!(!crate::tui::handle_key(
         &mut state,
         press(KeyCode::Char('z')),
@@ -4147,10 +4149,6 @@ fn tui_modal_provider_removal_yes_removes_without_panic() {
         tui_state.borrow().pending_approval.is_none(),
         "modal must close after the decision"
     );
-    assert!(
-        !tui_state.borrow().confirming_provider_removal,
-        "removal flag must reset after the decision"
-    );
     settle_reveal(&tui_state);
     assert!(
         tui_state.borrow().transcript_lines.iter().any(|line| line.contains(
@@ -4263,7 +4261,12 @@ fn tui_modal_dormant_approval_still_reports_verdict() {
     ] {
         let tui_state = Rc::new(RefCell::new(crate::tui::TuiState::new()));
         tui_state.borrow_mut().pending_approval =
-            Some(crate::tui::ApprovalModal::new(vec![format!("{label} req")]));
+            Some(crate::tui::PendingApproval::ToolApproval {
+                modal: crate::tui::ApprovalModal::new(vec![format!(
+                    "{label} req"
+                )]),
+                exchange_id: 0,
+            });
         let mut sink = crate::tui::TuiSink::new(tui_state.clone());
         assert!(
             handle_pending_approval_key(
@@ -4275,8 +4278,22 @@ fn tui_modal_dormant_approval_still_reports_verdict() {
             "modal key must decide the dormant modal"
         );
         assert!(
-            tui_state.borrow().pending_approval.is_none(),
+            tui_state
+                .borrow()
+                .pending_approval
+                .as_ref()
+                .and_then(|approval| approval.modal())
+                .is_none(),
             "dormant modal must close after the decision"
+        );
+        assert_eq!(
+            tui_state
+                .borrow()
+                .pending_approval
+                .as_ref()
+                .and_then(|approval| approval.suspended_exchange_id()),
+            Some(0),
+            "verdict stays recorded for resume"
         );
         assert!(
             tui_state
@@ -4291,7 +4308,10 @@ fn tui_modal_dormant_approval_still_reports_verdict() {
     // A non-modal key decides nothing and keeps the modal pending.
     let tui_state = Rc::new(RefCell::new(crate::tui::TuiState::new()));
     tui_state.borrow_mut().pending_approval =
-        Some(crate::tui::ApprovalModal::new(vec!["req".to_owned()]));
+        Some(crate::tui::PendingApproval::ToolApproval {
+            modal: crate::tui::ApprovalModal::new(vec!["req".to_owned()]),
+            exchange_id: 0,
+        });
     let mut sink = crate::tui::TuiSink::new(tui_state.clone());
     assert!(
         !handle_pending_approval_key(
@@ -5976,14 +5996,24 @@ fn pump_diverts_approval_request_from_answers_and_transcript() {
     assert_eq!(effects.approval_pending, Some(7));
     assert!(effects.answer.is_none(), "request must not answer");
     let state = tui.state.borrow();
-    let modal = state.pending_approval.as_ref().expect("modal armed");
+    let modal = state
+        .pending_approval
+        .as_ref()
+        .and_then(|approval| approval.modal())
+        .expect("modal armed");
     assert!(modal.lines.iter().any(|line| line.contains("n.txt")));
     assert!(
         !modal.lines.iter().any(|line| line.contains('\u{1b}')),
         "modal lines re-sanitized: {:?}",
         modal.lines
     );
-    assert_eq!(state.pending_tool_approval, Some(7));
+    assert_eq!(
+        state
+            .pending_approval
+            .as_ref()
+            .and_then(|approval| approval.suspended_exchange_id()),
+        Some(7)
+    );
     assert!(
         !state.transcript_lines.iter().any(|line| line.contains("n.txt")),
         "request itself is never transcript"
@@ -6007,7 +6037,14 @@ fn dispatch_suspends_turn_on_tool_approval() {
     );
     assert!(!exit, "suspension is not an exit");
     assert!(tui.state.borrow().pending_approval.is_some());
-    assert_eq!(tui.state.borrow().pending_tool_approval, Some(9));
+    assert_eq!(
+        tui.state
+            .borrow()
+            .pending_approval
+            .as_ref()
+            .and_then(|approval| approval.suspended_exchange_id()),
+        Some(9)
+    );
     let _ = remove_dir_all(root);
 }
 
@@ -6023,8 +6060,10 @@ fn tool_modal_keys_cannot_bypass_the_exchange() {
     // delivery is the main loop's separate step.
     let tui_state = Rc::new(RefCell::new(crate::tui::TuiState::new()));
     tui_state.borrow_mut().pending_approval =
-        Some(crate::tui::ApprovalModal::new(vec!["req".to_owned()]));
-    tui_state.borrow_mut().pending_tool_approval = Some(3);
+        Some(crate::tui::PendingApproval::ToolApproval {
+            modal: crate::tui::ApprovalModal::new(vec!["req".to_owned()]),
+            exchange_id: 3,
+        });
     let mut sink = crate::tui::TuiSink::new(tui_state.clone());
     assert!(
         !handle_pending_approval_key(
@@ -6036,7 +6075,14 @@ fn tool_modal_keys_cannot_bypass_the_exchange() {
         "non-modal key must not decide"
     );
     assert!(tui_state.borrow().pending_approval.is_some());
-    assert_eq!(tui_state.borrow().pending_tool_approval, Some(3));
+    assert_eq!(
+        tui_state
+            .borrow()
+            .pending_approval
+            .as_ref()
+            .and_then(|approval| approval.suspended_exchange_id()),
+        Some(3)
+    );
     assert!(
         handle_pending_approval_key(
             &tui_state,
@@ -6046,9 +6092,21 @@ fn tool_modal_keys_cannot_bypass_the_exchange() {
         ),
         "modal key must decide"
     );
-    assert!(tui_state.borrow().pending_approval.is_none());
+    assert!(
+        tui_state
+            .borrow()
+            .pending_approval
+            .as_ref()
+            .and_then(|approval| approval.modal())
+            .is_none(),
+        "the handler closes the modal into the decided state"
+    );
     assert_eq!(
-        tui_state.borrow().pending_tool_approval,
+        tui_state
+            .borrow()
+            .pending_approval
+            .as_ref()
+            .and_then(|approval| approval.suspended_exchange_id()),
         Some(3),
         "the handler clears the modal, never the exchange id"
     );
@@ -6074,7 +6132,10 @@ fn deliver_and_resume_complete_a_suspended_turn() {
         spins += 1;
     }
     let state = Rc::new(RefCell::new(crate::tui::TuiState::new()));
-    state.borrow_mut().pending_tool_approval = Some(0);
+    state.borrow_mut().pending_approval =
+        Some(crate::tui::PendingApproval::ToolApprovalDecided {
+            exchange_id: 0,
+        });
     let sink_state = Rc::new(RefCell::new(crate::tui::TuiState::new()));
     let mut sink = crate::tui::TuiSink::new(Rc::clone(&sink_state));
     assert!(
@@ -6103,7 +6164,10 @@ fn deliver_and_resume_complete_a_suspended_turn() {
     // Resume against a scripted completed turn ends it.
     let mut tui = ScriptedTui::new();
     tui.answer(vec![crate::session_worker::WorkerEvent::TurnFinished]);
-    tui.state.borrow_mut().pending_tool_approval = Some(11);
+    tui.state.borrow_mut().pending_approval =
+        Some(crate::tui::PendingApproval::ToolApprovalDecided {
+            exchange_id: 11,
+        });
     tui.state.borrow_mut().begin_turn(std::time::Instant::now());
     let mut progress = || false;
     let mut reasoning = |_: &str| {};
@@ -6116,7 +6180,7 @@ fn deliver_and_resume_complete_a_suspended_turn() {
         &mut reasoning,
     )
     .expect("resume");
-    assert!(tui.state.borrow().pending_tool_approval.is_none());
+    assert!(tui.state.borrow().pending_approval.is_none());
     assert!(
         tui.state.borrow().busy_since.is_none(),
         "completed resume ends the turn"

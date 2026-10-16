@@ -260,8 +260,10 @@ pub(super) fn pump_worker(
                 {
                     let mut state = state.borrow_mut();
                     state.pending_approval =
-                        Some(crate::tui::ApprovalModal::new(lines));
-                    state.pending_tool_approval = Some(id);
+                        Some(crate::tui::PendingApproval::ToolApproval {
+                            modal: crate::tui::ApprovalModal::new(lines),
+                            exchange_id: id,
+                        });
                 }
                 effects.approval_pending = Some(id);
                 stop = true;

@@ -142,6 +142,7 @@ pub use render::render_to_buffer_with_pane;
 pub use render::style_for_transcript_line;
 #[cfg(test)]
 use render::visible_transcript_rows;
+pub use state::PendingApproval;
 pub use state::TranscriptEntry;
 pub use state::TuiState;
 pub use state::command_catalog;

@@ -286,8 +286,10 @@ fn non_tty_silent_stdio() {
 fn modal_renders_over_dimmed_transcript() {
     let mut state = TuiState::new();
     state.transcript_lines = vec!["line 1".to_owned(), "line 2".to_owned()];
-    state.pending_approval =
-        Some(ApprovalModal::new(vec!["Approve this?".to_owned()]));
+    state.pending_approval = Some(PendingApproval::ToolApproval {
+        modal: ApprovalModal::new(vec!["Approve this?".to_owned()]),
+        exchange_id: 0,
+    });
     let a = render(&state, 40, 12);
     let b = render(&state, 40, 12);
     // Determinism
@@ -309,7 +311,10 @@ fn approval_y_routes_approve_through_same_gate() {
     assert_eq!(evaluate_approval_input("Y"), ApprovalDecision::Approve);
     // Modal y routes approve
     let mut state = TuiState::new();
-    state.pending_approval = Some(ApprovalModal::new(vec!["req".to_owned()]));
+    state.pending_approval = Some(PendingApproval::ToolApproval {
+        modal: ApprovalModal::new(vec!["req".to_owned()]),
+        exchange_id: 0,
+    });
     let key = crossterm::event::KeyEvent::new(
         crossterm::event::KeyCode::Char('y'),
         crossterm::event::KeyModifiers::NONE,
@@ -328,7 +333,10 @@ fn approval_n_and_esc_route_deny() {
     assert_eq!(evaluate_approval_input("Esc"), ApprovalDecision::Deny);
     assert_eq!(evaluate_approval_input(""), ApprovalDecision::Deny);
     let mut state = TuiState::new();
-    state.pending_approval = Some(ApprovalModal::new(vec!["req".to_owned()]));
+    state.pending_approval = Some(PendingApproval::ToolApproval {
+        modal: ApprovalModal::new(vec!["req".to_owned()]),
+        exchange_id: 0,
+    });
     let n = crossterm::event::KeyEvent::new(
         crossterm::event::KeyCode::Char('n'),
         crossterm::event::KeyModifiers::NONE,
@@ -348,7 +356,10 @@ fn approval_n_and_esc_route_deny() {
 fn keys_ignored_while_modal_pending() {
     let mut state = TuiState::new();
     state.input = "hello".to_owned();
-    state.pending_approval = Some(ApprovalModal::new(vec!["req".to_owned()]));
+    state.pending_approval = Some(PendingApproval::ToolApproval {
+        modal: ApprovalModal::new(vec!["req".to_owned()]),
+        exchange_id: 0,
+    });
     // Typing should be ignored
     let ch = crossterm::event::KeyEvent::new(
         crossterm::event::KeyCode::Char('a'),
@@ -386,9 +397,12 @@ fn modal_line_bound_with_truncation_marker() {
     assert_eq!(modal2.lines, exact);
     // Modal never renders unsanitized — input already sanitized, modal stores verbatim
     let mut state = TuiState::new();
-    state.pending_approval = Some(ApprovalModal::new(vec![
-        "sanitized \x1b[31mred\x1b[0m".to_owned(),
-    ]));
+    state.pending_approval = Some(PendingApproval::ToolApproval {
+        modal: ApprovalModal::new(vec![
+            "sanitized \x1b[31mred\x1b[0m".to_owned(),
+        ]),
+        exchange_id: 0,
+    });
     let buf = render(&state, 50, 14);
     let content: String = buf.content().iter().map(|c| c.symbol()).collect();
     assert!(content.contains("sanitized"));
@@ -566,10 +580,13 @@ mod t4_frame_snapshot_tests {
             "Awaiting approval for the prepared change set.".to_owned(),
         ];
         state.status = "awaiting approval".to_owned();
-        state.pending_approval = Some(ApprovalModal::new(vec![
-            "Approve applying 1 change to src/app.ts?".to_owned(),
-            "  + export const greeting = \"hello\";".to_owned(),
-        ]));
+        state.pending_approval = Some(PendingApproval::ToolApproval {
+            modal: ApprovalModal::new(vec![
+                "Approve applying 1 change to src/app.ts?".to_owned(),
+                "  + export const greeting = \"hello\";".to_owned(),
+            ]),
+            exchange_id: 0,
+        });
         let frame = canonical_frame(&state, None, 80, 24);
         assert_eq!(frame.len(), 24);
         let joined = frame.join("\n");
@@ -1751,7 +1768,6 @@ fn mouse_wheel_ignored_while_modal_or_form_open() {
     assert_eq!(state, before);
     // Provider add-form.
     state.pending_approval = None;
-    state.confirming_provider_removal = false;
     open_provider_add_form(&mut state);
     state.scroll_offset = 5;
     let before = state.clone();
@@ -2424,8 +2440,17 @@ fn provider_picker_remove_row_opens_confirm_modal() {
     );
     assert!(!handle_key(&mut state, enter, 10));
     assert!(state.provider_picker.is_none());
-    assert!(state.confirming_provider_removal);
-    let modal = state.pending_approval.as_ref().expect("confirm modal");
+    assert!(
+        state
+            .pending_approval
+            .as_ref()
+            .is_some_and(|approval| approval.is_removal_confirm())
+    );
+    let modal = state
+        .pending_approval
+        .as_ref()
+        .and_then(|approval| approval.modal())
+        .expect("confirm modal");
     assert!(
         modal.lines.iter().any(|line| line.contains("Remove")),
         "modal must name the removal, got: {:?}",
@@ -2452,7 +2477,12 @@ fn provider_remove_confirm_modal_renders() {
     // The armed confirmation renders deterministically in the frame.
     let mut state = TuiState::new();
     open_provider_remove_confirm(&mut state);
-    assert!(state.confirming_provider_removal);
+    assert!(
+        state
+            .pending_approval
+            .as_ref()
+            .is_some_and(|approval| approval.is_removal_confirm())
+    );
     let first = render(&state, 80, 24);
     let second = render(&state, 80, 24);
     assert_eq!(first, second);

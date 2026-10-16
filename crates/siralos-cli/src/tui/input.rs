@@ -178,7 +178,11 @@ pub fn handle_mouse(
     viewport_height: u16,
 ) {
     use crossterm::event::MouseEventKind;
-    if state.pending_approval.is_some()
+    if state
+        .pending_approval
+        .as_ref()
+        .and_then(|approval| approval.modal())
+        .is_some()
         || state.provider_add_form.is_some()
         || state.provider_picker.is_some()
         || state.model_switch_picker.is_some()
@@ -213,7 +217,12 @@ pub fn handle_key(
     viewport_height: u16,
 ) -> bool {
     use crossterm::event::{KeyCode, KeyModifiers};
-    if state.pending_approval.is_some() {
+    if state
+        .pending_approval
+        .as_ref()
+        .and_then(|approval| approval.modal())
+        .is_some()
+    {
         // T2: while a modal is pending, ALL other keys are ignored.
         return false;
     }

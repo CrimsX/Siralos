@@ -358,8 +358,8 @@ pub(super) fn dispatch_tui_command(
             // turn -- deltas through the sanitizer, the thinking to its sink,
             // the pane snapshots, the demand tick's effect and the end signal.
             // A tool approval suspends the turn mid-round instead of ending
-            // it: the relay arms the modal (with the exchange id in
-            // `pending_tool_approval`) and the main loop below routes its
+            // it: the relay arms the modal (with the exchange id in the
+            // `ToolApproval` state) and the main loop below routes its
             // keys, delivers the verdict, and resumes the turn.
             let _ = ask_worker_effects(
                 worker,
@@ -380,7 +380,7 @@ pub(super) fn dispatch_tui_command(
 /// exchange (Part B).
 ///
 /// Provider-removal confirmations resolve locally and never reach
-/// here (their `pending_tool_approval` stays `None`). Returns
+/// here (their approval carries no exchange id). Returns
 /// whether a verdict was delivered: `false` means no tool approval
 /// was pending (nothing to do) or the exchange no longer holds the
 /// id (stale double keypress after a shutdown unblocked the hook —
@@ -391,7 +391,12 @@ pub(super) fn deliver_tool_approval_verdict(
     sink: &mut crate::tui::TuiSink,
     decision: crate::tui::ApprovalDecision,
 ) -> bool {
-    let Some(id) = state.borrow().pending_tool_approval else {
+    let Some(id) = state
+        .borrow()
+        .pending_approval
+        .as_ref()
+        .and_then(|approval| approval.suspended_exchange_id())
+    else {
         return false;
     };
     let verdict = match decision {
@@ -431,12 +436,18 @@ pub(super) fn resume_suspended_turn(
     progress: &mut dyn FnMut() -> bool,
     reasoning: &mut dyn FnMut(&str),
 ) -> Result<(), InteractiveError> {
-    state.borrow_mut().pending_tool_approval = None;
+    state.borrow_mut().pending_approval = None;
     relay_suspended_turn(worker, sink, state, pane, progress, reasoning)?;
     // A fresh suspension re-arms the exchange id above; only a
     // completed turn ends (ending a re-suspended turn would stop the
     // `working` clock and disarm the thinking anchor mid-turn).
-    if state.borrow().pending_tool_approval.is_none() {
+    if state
+        .borrow()
+        .pending_approval
+        .as_ref()
+        .and_then(|approval| approval.suspended_exchange_id())
+        .is_none()
+    {
         state.borrow_mut().end_turn();
     }
     Ok(())
@@ -763,11 +774,17 @@ pub fn run_interactive_tui_with_options(
                             } else if tui_state
                                 .borrow()
                                 .pending_approval
+                                .as_ref()
+                                .and_then(|approval| approval.modal())
                                 .is_some()
                             {
                                 let removing_provider = tui_state
                                     .borrow()
-                                    .confirming_provider_removal;
+                                    .pending_approval
+                                    .as_ref()
+                                    .is_some_and(|approval| {
+                                        approval.is_removal_confirm()
+                                    });
                                 let outcome =
                                     handle_pending_approval_key_outcome(
                                         &tui_state,
@@ -908,8 +925,18 @@ pub fn run_interactive_tui_with_options(
             // it, re-enters the still-running turn, and ends it on
             // completion. A Ctrl+C exit above skips this (the worker
             // shutdown unblocks the hook through the stop flag).
-            if tui_state.borrow().pending_tool_approval.is_some()
-                && tui_state.borrow().pending_approval.is_none()
+            if tui_state
+                .borrow()
+                .pending_approval
+                .as_ref()
+                .and_then(|approval| approval.suspended_exchange_id())
+                .is_some()
+                && tui_state
+                    .borrow()
+                    .pending_approval
+                    .as_ref()
+                    .and_then(|approval| approval.modal())
+                    .is_none()
             {
                 resume_suspended_turn(
                     worker.source(),
@@ -1136,7 +1163,11 @@ pub fn run_interactive_tui_with_options(
                     let observed =
                         load_workspace_profile_write_token(&workspace_root);
                     let mut state = tui_state.borrow_mut();
-                    state.pending_profile_write_token = observed;
+                    state.pending_approval = Some(
+                        crate::tui::PendingApproval::ProviderRemovalArmed {
+                            token: observed,
+                        },
+                    );
                     if entries.is_empty() {
                         crate::tui::open_provider_add_form(&mut state);
                     } else {
@@ -1169,7 +1200,11 @@ pub fn run_interactive_tui_with_options(
                         load_workspace_profile_write_token(&workspace_root)
                     {
                         let mut state = tui_state.borrow_mut();
-                        state.pending_profile_write_token = Some(observed);
+                        state.pending_approval = Some(
+                            crate::tui::PendingApproval::ProviderRemovalArmed {
+                                token: Some(observed),
+                            },
+                        );
                         crate::tui::open_provider_remove_confirm(&mut state);
                     } else {
                         let _ = sink.write_all(
@@ -1229,7 +1264,13 @@ pub fn run_interactive_tui_with_options(
                     // mid-turn.
                     command_exit = should_exit;
                 }
-                if tui_state.borrow().pending_tool_approval.is_none() {
+                if tui_state
+                    .borrow()
+                    .pending_approval
+                    .as_ref()
+                    .and_then(|approval| approval.suspended_exchange_id())
+                    .is_none()
+                {
                     tui_state.borrow_mut().end_turn();
                 }
                 if command_exit {

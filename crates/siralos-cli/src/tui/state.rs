@@ -40,6 +40,82 @@ pub fn command_catalog() -> Vec<(String, String)> {
         .collect()
 }
 
+/// One pending approval: the modal (when open) plus what its
+/// verdict resolves. This replaces four parallel fields (modal,
+/// removal flag, exchange id, profile token) whose combinations
+/// admitted impossible states (an exchange id with no modal, a
+/// staged revision lingering past an unrelated tool approval).
+///
+/// Lifecycle: a worker approval request opens `ToolApproval`; the
+/// modal verdict closes it into `ToolApprovalDecided` for resume;
+/// provider removal arms `ProviderRemovalArmed` (revision staged,
+/// no modal yet) and opens `ProviderRemovalConfirm`. Arming any
+/// variant replaces the previous one: a stale staged revision
+/// never survives an unrelated approval (the removal path reloads
+/// a fresh token when none is staged).
+#[derive(Clone, PartialEq)]
+pub enum PendingApproval {
+    /// Suspended tool-approval turn: modal open, verdict goes
+    /// into the exchange under this id.
+    ToolApproval {
+        /// The open y/N modal.
+        modal: ApprovalModal,
+        /// Exchange the verdict is delivered into.
+        exchange_id: u64,
+    },
+    /// Verdict delivered, modal closed, exchange id still armed
+    /// for resume.
+    ToolApprovalDecided {
+        /// Exchange the resume helper clears.
+        exchange_id: u64,
+    },
+    /// Provider-removal revision staged; no modal open yet. The
+    /// token is `None` when no profile existed to observe.
+    ProviderRemovalArmed {
+        /// Staged revision, if one was observable.
+        token: Option<WorkspaceProfileWriteToken>,
+    },
+    /// Provider-removal y/N modal open with its staged revision.
+    ProviderRemovalConfirm {
+        /// The open y/N modal.
+        modal: ApprovalModal,
+        /// Staged revision, if one was observable.
+        token: Option<WorkspaceProfileWriteToken>,
+    },
+}
+
+impl PendingApproval {
+    /// The open modal, if this state shows one.
+    #[must_use]
+    pub fn modal(&self) -> Option<&ApprovalModal> {
+        match self {
+            Self::ToolApproval { modal, .. }
+            | Self::ProviderRemovalConfirm { modal, .. } => Some(modal),
+            Self::ToolApprovalDecided { .. }
+            | Self::ProviderRemovalArmed { .. } => None,
+        }
+    }
+
+    /// The suspended tool-approval exchange id, if a tool turn is
+    /// suspended (modal open or verdict delivered, awaiting
+    /// resume).
+    #[must_use]
+    pub fn suspended_exchange_id(&self) -> Option<u64> {
+        match self {
+            Self::ToolApproval { exchange_id, .. }
+            | Self::ToolApprovalDecided { exchange_id } => Some(*exchange_id),
+            Self::ProviderRemovalArmed { .. }
+            | Self::ProviderRemovalConfirm { .. } => None,
+        }
+    }
+
+    /// Whether this is an open provider-removal confirmation.
+    #[must_use]
+    pub fn is_removal_confirm(&self) -> bool {
+        matches!(self, Self::ProviderRemovalConfirm { .. })
+    }
+}
+
 /// Pure render model for the TUI shell.
 ///
 /// `Eq` is deliberately absent: the reveal debt (S3c) is a float, and `f64`
@@ -58,24 +134,11 @@ pub struct TuiState {
     pub status: String,
     /// Scroll offset from the tail (0 = show tail, n = n lines up).
     pub scroll_offset: u16,
-    /// Pending approval modal — when `Some`, all non-modal keys are ignored and
-    /// the modal renders centered over a dimmed transcript (T2).
-    pub pending_approval: Option<ApprovalModal>,
-    /// When `true`, the pending approval modal is a provider-removal
-    /// confirmation (armed by the "- Remove provider" picker row or
-    /// `/provider remove`): `y` removes via `remove_profile_config_at`,
-    /// `n`/`Esc` cancels. `false` for ordinary tool approvals.
-    pub confirming_provider_removal: bool,
-    /// Exchange id of a suspended tool-approval turn (Part B). Set
-    /// with the modal when a worker approval request suspends the
-    /// turn; the main loop delivers the modal verdict into the
-    /// exchange under this id and resumes the turn. `None` for
-    /// provider-removal confirmations (which resolve locally) and
-    /// whenever no approval suspends a turn.
-    pub pending_tool_approval: Option<u64>,
-    /// Secret-free profile revision observed when provider removal was armed.
-    /// It keeps a confirmation prompt from turning into a stale merge.
-    pub pending_profile_write_token: Option<WorkspaceProfileWriteToken>,
+    /// Pending approval — when it carries an open modal, all
+    /// non-modal keys are ignored and the modal renders centered
+    /// over a dimmed transcript (T2). `None` whenever no approval
+    /// suspends a turn or arms a confirmation.
+    pub pending_approval: Option<PendingApproval>,
     /// Command palette popup (I2): when `Some`, the input starts with `/` and
     /// this holds the filtered catalog entries (case-insensitive prefix filter).
     pub palette: Option<Vec<(String, String)>>,
@@ -236,9 +299,6 @@ impl Default for TuiState {
             status: String::from("ready"),
             scroll_offset: 0,
             pending_approval: None,
-            confirming_provider_removal: false,
-            pending_tool_approval: None,
-            pending_profile_write_token: None,
             palette: None,
             palette_selected: None,
             provider: None,
@@ -726,12 +786,20 @@ pub fn open_provider_picker(
 /// interactive loop through the single removal outcome.
 pub fn open_provider_remove_confirm(state: &mut TuiState) {
     state.provider_picker = None;
-    state.pending_approval = Some(ApprovalModal::new(vec![
-        "Remove the configured provider from siralos.toml?".to_owned(),
-        "This deletes the [profile] section. Restart the session to apply."
-            .to_owned(),
-    ]));
-    state.confirming_provider_removal = true;
+    // Preserve a staged revision if one is armed; otherwise the
+    // removal path reloads a fresh token when deciding.
+    let token = match state.pending_approval.take() {
+        Some(PendingApproval::ProviderRemovalArmed { token }) => token,
+        _ => None,
+    };
+    state.pending_approval = Some(PendingApproval::ProviderRemovalConfirm {
+        modal: ApprovalModal::new(vec![
+            "Remove the configured provider from siralos.toml?".to_owned(),
+            "This deletes the [profile] section. Restart the session to apply."
+                .to_owned(),
+        ]),
+        token,
+    });
     state.input.clear();
     state.update_palette();
 }

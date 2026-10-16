@@ -496,7 +496,14 @@ pub(in crate::harness) fn tui_render_record(
     state.input = input_text.to_owned();
     state.status = status.to_owned();
     state.scroll_offset = scroll_offset.min(u16::MAX as u64) as u16;
-    state.pending_approval = pending.clone().map(ApprovalModal::new);
+    state.pending_approval = pending.clone().map(|lines| {
+        siralos_cli::tui::PendingApproval::ToolApproval {
+            modal: ApprovalModal::new(lines),
+            // Fixture display only: no exchange suspends a turn in
+            // the render harness, so the id is never delivered.
+            exchange_id: 0,
+        }
+    });
     state.palette = None;
 
     // Production draw path over the fixed viewport — no re-implementation.
