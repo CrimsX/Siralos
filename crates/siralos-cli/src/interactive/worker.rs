@@ -186,13 +186,7 @@ pub(super) fn pump_worker(
                 // waiting for nothing, and it runs on every frame -- announcing
                 // a vanished worker there would print one line twenty times a
                 // second.
-                if until != Until::Drain {
-                    let message = sanitize_for_display(&format!(
-                        "{WORKER_STOPPED_MESSAGE}\n"
-                    ));
-                    sink.write_all(message.as_bytes())
-                        .map_err(InteractiveError::Io)?;
-                }
+                announce_worker_stopped(sink, until)?;
                 break;
             }
         };
@@ -230,13 +224,7 @@ pub(super) fn pump_worker(
                 effects.stopped = true;
                 effects.stopped_event = true;
                 stop = true;
-                if until != Until::Drain {
-                    let message = sanitize_for_display(&format!(
-                        "{WORKER_STOPPED_MESSAGE}\n"
-                    ));
-                    sink.write_all(message.as_bytes())
-                        .map_err(InteractiveError::Io)?;
-                }
+                announce_worker_stopped(sink, until)?;
             }
             // A tool approval suspends the turn mid-round: arm the
             // modal and yield to the dispatcher, which pumps the
@@ -403,6 +391,35 @@ pub(super) fn ask_worker(
     .answer)
 }
 
+/// Announce a vanished or stopped worker on the sink. A DRAIN
+/// relay runs on every frame, so announcing there would print one
+/// line twenty times a second. Single wording via
+/// [`WORKER_STOPPED_MESSAGE`].
+fn announce_worker_stopped(
+    sink: &mut crate::tui::TuiSink,
+    until: Until,
+) -> Result<(), InteractiveError> {
+    if until != Until::Drain {
+        let message =
+            sanitize_for_display(&format!("{WORKER_STOPPED_MESSAGE}\n"));
+        sink.write_all(message.as_bytes()).map_err(InteractiveError::Io)?;
+    }
+    Ok(())
+}
+
+/// Shared relay tail: a worker that stopped before it finished
+/// is a loud error, never a silent partial relay.
+fn finish_relay(
+    effects: ReplyEffects,
+) -> Result<ReplyEffects, InteractiveError> {
+    if effects.stopped {
+        return Err(InteractiveError::Worker(
+            WORKER_STOPPED_MESSAGE.to_owned(),
+        ));
+    }
+    Ok(effects)
+}
+
 /// Ask the worker one request command and return the full relay
 /// effects (C2 step 3, Part B).
 ///
@@ -425,14 +442,9 @@ pub(super) fn ask_worker_effects(
             "worker is unavailable; command was not applied".to_owned(),
         ));
     }
-    let effects =
-        pump_worker(worker, sink, state, pane, progress, reasoning, until)?;
-    if effects.stopped {
-        return Err(InteractiveError::Worker(
-            WORKER_STOPPED_MESSAGE.to_owned(),
-        ));
-    }
-    Ok(effects)
+    finish_relay(pump_worker(
+        worker, sink, state, pane, progress, reasoning, until,
+    )?)
 }
 
 /// Resume a tool-approval-suspended turn after its verdict was
@@ -450,7 +462,7 @@ pub(super) fn relay_suspended_turn(
     progress: &mut dyn FnMut() -> bool,
     reasoning: &mut dyn FnMut(&str),
 ) -> Result<ReplyEffects, InteractiveError> {
-    let effects = pump_worker(
+    finish_relay(pump_worker(
         worker,
         sink,
         state,
@@ -458,13 +470,7 @@ pub(super) fn relay_suspended_turn(
         progress,
         reasoning,
         Until::TurnFinished,
-    )?;
-    if effects.stopped {
-        return Err(InteractiveError::Worker(
-            WORKER_STOPPED_MESSAGE.to_owned(),
-        ));
-    }
-    Ok(effects)
+    )?)
 }
 
 /// Bare `/model`: ask the worker for the provider's models and open the
