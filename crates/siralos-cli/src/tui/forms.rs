@@ -997,12 +997,7 @@ impl UiSpecForm {
         form.id = Some(id.to_owned());
         form.title = Some(existing.title().to_owned());
         form.feed = Some(existing.feed().as_str().to_owned());
-        form.placement = Some(match existing.placement() {
-            siralos_core::ui::UiPlacement::Tab => "tab".to_owned(),
-            siralos_core::ui::UiPlacement::Cell { row, col } => {
-                format!("cell:{row},{col}")
-            }
-        });
+        form.placement = Some(existing.placement().to_string());
         form.max_rows = Some(existing.max_rows() as i64);
         form.max_cols = Some(existing.max_cols() as i64);
         form.enabled = Some(existing.enabled());
@@ -1049,84 +1044,91 @@ impl UiSpecForm {
     }
 }
 
-/// Validate spec id: `[a-z0-9_-]{1,64}`.
+/// Known-good probe spec for field validation: every field is
+/// valid by construction, so a parse failure is attributable to
+/// the one field under test. This keeps the form validators on
+/// the single [`siralos_core::ui::UiComponentSpec::parse`] rule
+/// set instead of a twin copy; only the human-readable messages
+/// stay form-specific.
+fn probe_raw() -> siralos_core::ui::UnvalidatedSpec {
+    use siralos_core::ui::{DEFAULT_SPEC_MAX_COLS, DEFAULT_SPEC_MAX_ROWS};
+    siralos_core::ui::UnvalidatedSpec {
+        id: "probe".to_owned(),
+        title: "Probe".to_owned(),
+        feed: "tools.catalog".to_owned(),
+        enabled: true,
+        placement: "tab".to_owned(),
+        max_rows: DEFAULT_SPEC_MAX_ROWS,
+        max_cols: DEFAULT_SPEC_MAX_COLS,
+        params: Vec::new(),
+    }
+}
+
+/// Validate spec id through the core parser: `[a-z0-9_-]{1,64}`.
 pub(super) fn validate_ui_spec_id(value: &str) -> Result<(), String> {
-    if value.is_empty()
-        || value.len() > siralos_core::ui::MAX_SPEC_ID_BYTES
-        || !value.bytes().all(|byte| {
-            byte.is_ascii_lowercase()
-                || byte.is_ascii_digit()
-                || byte == b'_'
-                || byte == b'-'
-        })
-    {
-        return Err(
+    let mut raw = probe_raw();
+    raw.id = value.to_owned();
+    match siralos_core::ui::UiComponentSpec::parse(&raw) {
+        Ok(_) => Ok(()),
+        // Any failure carries the valid dummies, so only the id
+        // rule can fire; fail closed with the field message.
+        Err(_) => Err(
             "Component id must be 1 to 64 characters: lowercase letters, numbers, hyphens, underscores."
-                .to_owned(),
-        );
-    }
-    Ok(())
-}
-
-/// Validate spec title: 1..=128 chars, no controls.
-pub(super) fn validate_ui_title(value: &str) -> Result<(), String> {
-    if value.is_empty()
-        || value.chars().count() > siralos_core::ui::MAX_SPEC_TITLE_CHARS
-        || value.chars().any(|cell| cell.is_control() || cell == '\u{7f}')
-    {
-        return Err(
-            "Component title must be 1 to 128 characters with no control characters."
-                .to_owned(),
-        );
-    }
-    Ok(())
-}
-
-/// Validate feed wire string: the closed six-feed vocabulary.
-pub(super) fn validate_ui_feed(value: &str) -> Result<(), String> {
-    match value {
-        "workspace.list" | "workspace.search" | "context.summary"
-        | "tools.catalog" | "modules.status" | "checkpoints.list" => Ok(()),
-        _ => Err(
-            "Feed must be workspace.list, workspace.search, context.summary, tools.catalog, modules.status, or checkpoints.list."
                 .to_owned(),
         ),
     }
 }
 
-/// Validate placement: `tab` or `cell:<row>,<col>` in the 2x2 grid.
-pub(super) fn validate_ui_placement(value: &str) -> Result<(), String> {
-    use siralos_core::ui::{GRID_COLS, GRID_ROWS};
-    if value == "tab" {
-        return Ok(());
+/// Validate spec title through the core parser: 1..=128 chars,
+/// no controls.
+pub(super) fn validate_ui_title(value: &str) -> Result<(), String> {
+    let mut raw = probe_raw();
+    raw.title = value.to_owned();
+    match siralos_core::ui::UiComponentSpec::parse(&raw) {
+        Ok(_) => Ok(()),
+        Err(_) => Err(
+            "Component title must be 1 to 128 characters with no control characters."
+                .to_owned(),
+        ),
     }
-    let error = "Placement must be \"tab\" or \"cell:<row>,<col>\" with row and column 0 or 1.".to_owned();
-    let Some(tail) = value.strip_prefix("cell:") else {
-        return Err(error);
-    };
-    let Some((row, col)) = tail.split_once(',') else {
-        return Err(error);
-    };
-    let (Ok(row), Ok(col)) = (row.parse::<usize>(), col.parse::<usize>())
-    else {
-        return Err(error);
-    };
-    if row >= GRID_ROWS || col >= GRID_COLS {
-        return Err(error);
-    }
-    Ok(())
 }
 
-/// Validate size hint: integer 1..=99.
+/// Validate feed wire string through the core parser: the closed
+/// six-feed vocabulary.
+pub(super) fn validate_ui_feed(value: &str) -> Result<(), String> {
+    siralos_core::ui::UiFeed::parse(value).map(|_| ()).map_err(|_| {
+        "Feed must be workspace.list, workspace.search, context.summary, tools.catalog, modules.status, or checkpoints.list."
+            .to_owned()
+    })
+}
+
+/// Validate placement through the core parser: `tab` or
+/// `cell:<row>,<col>` in the 2x2 grid.
+pub(super) fn validate_ui_placement(value: &str) -> Result<(), String> {
+    siralos_core::ui::UiPlacement::parse(value).map(|_| ()).map_err(
+        |_| {
+            "Placement must be \"tab\" or \"cell:<row>,<col>\" with row and column 0 or 1."
+                .to_owned()
+        },
+    )
+}
+
+/// Validate size hint through the core parser: integer 1..=99.
+/// The string-to-integer step stays here (form input is text);
+/// the range rule lives in the core parser.
 pub(super) fn validate_ui_size(value: &str) -> Result<(), String> {
-    match value.trim().parse::<i64>() {
-        Ok(size)
-            if size >= siralos_core::ui::MIN_SPEC_SIZE_HINT as i64
-                && size <= siralos_core::ui::MAX_SPEC_SIZE_HINT as i64 =>
-        {
-            Ok(())
+    let size = match value.trim().parse::<i64>() {
+        Ok(size) => size,
+        _ => {
+            return Err("Size must be an integer from 1 to 99.".to_owned());
         }
-        _ => Err("Size must be an integer from 1 to 99.".to_owned()),
+    };
+    let mut raw = probe_raw();
+    raw.max_rows = size;
+    raw.max_cols = size;
+    match siralos_core::ui::UiComponentSpec::parse(&raw) {
+        Ok(_) => Ok(()),
+        Err(_) => Err("Size must be an integer from 1 to 99.".to_owned()),
     }
 }
 
@@ -1238,9 +1240,15 @@ pub(super) fn advance_ui_spec_form(form: &mut UiSpecForm) {
                     }
                     let (key, value) =
                         input.split_once('=').expect("validated shape");
-                    if value.len()
-                        > siralos_core::ui::MAX_SPEC_PARAM_VALUE_BYTES
-                    {
+                    // The key already passed `validate_ui_param_line`
+                    // above, so with valid probe dummies only the
+                    // value-size rule can fire here.
+                    let mut raw = probe_raw();
+                    raw.params = vec![(key.to_owned(), value.to_owned())];
+                    if matches!(
+                        siralos_core::ui::UiComponentSpec::parse(&raw),
+                        Err(siralos_core::ui::UiSpecError::ParamTooLarge)
+                    ) {
                         form.error =
                             Some("Param values must fit 1KiB.".to_owned());
                         return;

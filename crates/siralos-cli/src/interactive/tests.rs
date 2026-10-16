@@ -6436,3 +6436,151 @@ fn panels_refresh_fetches_once_when_view_opens_empty() {
         &mut reasoning,
     ));
 }
+
+fn write_module_manifest(root: &std::path::Path, text: &str) {
+    std::fs::create_dir_all(root.join("mod")).expect("module dir");
+    std::fs::write(root.join("mod").join("module-manifest.toml"), text)
+        .expect("manifest");
+}
+
+fn module_manifest_text(specs: &str) -> String {
+    format!(
+        "id = \"demo\"\ndigest = \"{}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncapabilities = [\"workspace-read\"]\n{specs}",
+        "b".repeat(64)
+    )
+}
+
+const MODULE_TWO_SPECS: &str = "[ui]\n[[ui.components]]\nid = \"mod-list\"\ntitle = \"Mod list\"\nfeed = \"workspace.list\"\nplacement = \"tab\"\n[[ui.components]]\nid = \"mod-check\"\ntitle = \"Mod check\"\nfeed = \"checkpoints.list\"\nplacement = \"tab\"\n";
+
+#[test]
+fn module_ui_specs_gate_lifecycle_and_authority() {
+    use siralos_core::module::capability::{HostAuthority, decide_grant};
+    use siralos_core::module::lifecycle::LifecycleState;
+    let root = temporary_directory("module-ui-specs");
+    write_module_manifest(&root, &module_manifest_text(MODULE_TWO_SPECS));
+    let manifest = siralos_adapters::module::manifest::load_manifest(
+        &root,
+        std::path::Path::new("mod"),
+    )
+    .expect("manifest loads");
+    assert_eq!(manifest.ui_specs().len(), 2);
+    let requested = manifest.package().requested_capabilities().clone();
+    let wide = HostAuthority::parse(&["workspace-read".to_owned()])
+        .expect("authority parses");
+    let grant = match decide_grant(&requested, &wide) {
+        siralos_core::module::capability::GrantDecision::Granted(grant) => {
+            grant
+        }
+        siralos_core::module::capability::GrantDecision::Denied { .. } => {
+            panic!("wide authority grants")
+        }
+    };
+    // Installed-but-disabled modules contribute nothing.
+    for state in [LifecycleState::Absent, LifecycleState::Installed] {
+        let sources = vec![super::ui::ModuleUiSource {
+            id: "demo".to_owned(),
+            manifest: &manifest,
+            state,
+            grant: None,
+        }];
+        assert!(super::ui::module_ui_specs(&sources).is_empty(), "{state:?}");
+    }
+    // Enabled consults the requested set: both gated feeds pass
+    // (workspace.list and checkpoints.list share workspace-read).
+    let sources = vec![super::ui::ModuleUiSource {
+        id: "demo".to_owned(),
+        manifest: &manifest,
+        state: LifecycleState::Enabled,
+        grant: None,
+    }];
+    let enabled = super::ui::module_ui_specs(&sources);
+    assert_eq!(enabled.len(), 2);
+    assert_eq!(enabled[0].0, "demo");
+    assert_eq!(enabled[0].1.id(), "mod-list");
+    assert_eq!(enabled[1].1.id(), "mod-check");
+    // Active consults the effective grant.
+    let sources = vec![super::ui::ModuleUiSource {
+        id: "demo".to_owned(),
+        manifest: &manifest,
+        state: LifecycleState::Active,
+        grant: Some(&grant),
+    }];
+    let active = super::ui::module_ui_specs(&sources);
+    assert_eq!(active.len(), 2);
+    assert_eq!(active[0].1.id(), "mod-list");
+    assert_eq!(active[1].1.id(), "mod-check");
+    let _ = remove_dir_all(root);
+}
+
+#[test]
+fn module_ui_specs_refuse_feeds_outside_authority() {
+    use siralos_core::module::lifecycle::LifecycleState;
+    // Manifest requesting only an unrelated capability: the gated
+    // workspace.list feed refuses, the open tools.catalog renders.
+    let root = temporary_directory("module-ui-narrow");
+    let text = module_manifest_text(MODULE_TWO_SPECS)
+        .replace(
+            "capabilities = [\"workspace-read\"]",
+            "capabilities = [\"other-cap\"]",
+        )
+        .replace(
+            "[[ui.components]]\nid = \"mod-list\"\ntitle = \"Mod list\"\nfeed = \"workspace.list\"\nplacement = \"tab\"\n",
+            "[[ui.components]]\nid = \"mod-list\"\ntitle = \"Mod list\"\nfeed = \"workspace.list\"\nplacement = \"tab\"\n[[ui.components]]\nid = \"mod-open\"\ntitle = \"Mod open\"\nfeed = \"tools.catalog\"\nplacement = \"tab\"\n",
+        );
+    write_module_manifest(&root, &text);
+    let manifest = siralos_adapters::module::manifest::load_manifest(
+        &root,
+        std::path::Path::new("mod"),
+    )
+    .expect("manifest loads");
+    assert_eq!(manifest.ui_specs().len(), 3);
+    let sources = vec![super::ui::ModuleUiSource {
+        id: "narrow".to_owned(),
+        manifest: &manifest,
+        state: LifecycleState::Enabled,
+        grant: None,
+    }];
+    let rendered = super::ui::module_ui_specs(&sources);
+    assert_eq!(rendered.len(), 1);
+    assert_eq!(rendered[0].1.id(), "mod-open");
+    let _ = remove_dir_all(root);
+}
+
+#[test]
+fn uninstall_removes_declared_specs_with_the_manifest() {
+    use siralos_core::module::lifecycle::LifecycleState;
+    // Declared specs derive from the manifests map: dropping the
+    // manifest (uninstall) drops its specs with no separate
+    // cleanup step.
+    let root = temporary_directory("module-ui-uninstall");
+    write_module_manifest(&root, &module_manifest_text(MODULE_TWO_SPECS));
+    let manifest = siralos_adapters::module::manifest::load_manifest(
+        &root,
+        std::path::Path::new("mod"),
+    )
+    .expect("manifest loads");
+    let mut manifests = std::collections::BTreeMap::new();
+    manifests.insert("demo".to_owned(), manifest);
+    let sources: Vec<super::ui::ModuleUiSource<'_, '_>> = manifests
+        .iter()
+        .map(|(id, manifest)| super::ui::ModuleUiSource {
+            id: id.clone(),
+            manifest,
+            state: LifecycleState::Enabled,
+            grant: None,
+        })
+        .collect();
+    assert_eq!(super::ui::module_ui_specs(&sources).len(), 2);
+    manifests.remove("demo");
+    let sources: Vec<super::ui::ModuleUiSource<'_, '_>> = manifests
+        .iter()
+        .map(|(id, manifest)| super::ui::ModuleUiSource {
+            id: id.clone(),
+            manifest,
+            state: LifecycleState::Enabled,
+            grant: None,
+        })
+        .collect();
+    assert!(super::ui::module_ui_specs(&sources).is_empty());
+    let _ = remove_dir_all(root);
+}

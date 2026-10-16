@@ -13,6 +13,7 @@
 use std::path::Path;
 
 use siralos_adapters::atomic::stage_atomic;
+use siralos_adapters::module::manifest::{ModuleRecord, load_module_records};
 use siralos_adapters::observed_write::{
     ObservedRevision, ObservedWriteToken, observe_file_for_write,
 };
@@ -35,10 +36,21 @@ pub struct UiFeedInputs<'a> {
     pub tools: &'a [RegisteredToolInfo],
     /// Effective permission policy.
     pub policy: &'a PermissionPolicy,
+    /// Installed module records backing the `modules.status`
+    /// feed (ADR 0039 §2: install records, never live state).
+    pub modules: &'a [ModuleRecord],
     /// Latest projection snapshot, when computed.
     pub last_projection: Option<&'a LastProjection>,
     /// Caller state directory for the checkpoint store.
     pub checkpoint_state_dir: Option<&'a Path>,
+}
+
+/// Load the installed module records for feed resolution. An
+/// unreadable record set resolves as empty (no installed
+/// modules), matching the empty install state.
+#[must_use]
+pub fn load_feed_module_records(root: &Path) -> Vec<ModuleRecord> {
+    load_module_records(root).unwrap_or_default()
 }
 
 /// Resolve one spec's feed to sanitized display lines. Sanitizing
@@ -91,7 +103,7 @@ pub fn resolve_spec_content(
         workspace_root: inputs.root,
         tools: inputs.tools,
         policy: inputs.policy,
-        modules: &[],
+        modules: inputs.modules,
         context,
         checkpoint_state_dir: inputs.checkpoint_state_dir,
     };
@@ -114,18 +126,45 @@ pub const MAX_UI_DOCUMENT_BYTES: usize = 64 * 1024;
 /// Maximum components per UI document.
 pub const MAX_UI_COMPONENTS: usize = 32;
 
-/// One UI document read failure. Human-readable reasons only;
-///
-/// phrases are stable so tests and the differential harness can pin
-/// them.
+/// One UI document read failure. The `message` phrases are
+/// stable so display text and the differential harness can pin
+/// them; control flow and tests match on `kind`, never on the
+/// human-readable string.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UiFileError {
+    /// Machine-branchable failure class.
+    pub kind: UiFileErrorKind,
     /// Deterministic, human-readable reason.
     pub message: String,
 }
 
-fn error(message: impl Into<String>) -> UiFileError {
-    UiFileError { message: message.into() }
+/// Machine-branchable class of a [`UiFileError`]. Variants group
+/// failures by caller behavior (retry after reload, fix the spec,
+/// pick another id), not by prose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiFileErrorKind {
+    /// A spec failed validation; the source error is preserved.
+    InvalidSpec(UiSpecError),
+    /// The document bytes are missing, unreadable, oversized, or
+    /// not valid UTF-8.
+    Unreadable,
+    /// The document parses but has the wrong shape, or does not
+    /// parse as TOML at all.
+    Malformed,
+    /// An id already exists.
+    AlreadyExists,
+    /// No component carries the addressed id.
+    MissingComponent,
+    /// An edit renames the addressed id.
+    RenameRefused,
+    /// No write authority exists or it is spent or stale:
+    /// observation refused, one-shot consumed, concurrent change,
+    /// or a staging/commit failure. Callers reload and retry.
+    WriteRefused,
+}
+
+fn error(kind: UiFileErrorKind, message: impl Into<String>) -> UiFileError {
+    UiFileError { kind, message: message.into() }
 }
 
 /// One UI document: validated user specs in file order.
@@ -140,16 +179,28 @@ fn ui_path(root: &Path) -> std::path::PathBuf {
 }
 
 fn parse_document(text: &str) -> Result<Vec<UnvalidatedSpec>, UiFileError> {
-    let document: toml_edit::DocumentMut =
-        text.parse().map_err(|_| error("ui.toml does not parse"))?;
+    // TOML extraction stays per-surface: this reads the workspace
+    // `components` envelope with `toml_edit` (order-preserving
+    // merge on save), while manifests read the `ui.components`
+    // envelope with the `toml` crate in adapters. Only the
+    // validation rules are shared, in `UiComponentSpec::parse`.
+    let document: toml_edit::DocumentMut = text.parse().map_err(|_| {
+        error(UiFileErrorKind::Malformed, "ui.toml does not parse")
+    })?;
     let Some(components) = document.get("components") else {
         return Ok(Vec::new());
     };
     let tables = components.as_array_of_tables().ok_or_else(|| {
-        error("ui.toml components must be an array of tables")
+        error(
+            UiFileErrorKind::Malformed,
+            "ui.toml components must be an array of tables",
+        )
     })?;
     if tables.len() > MAX_UI_COMPONENTS {
-        return Err(error("ui.toml carries too many components"));
+        return Err(error(
+            UiFileErrorKind::Malformed,
+            "ui.toml carries too many components",
+        ));
     }
     let mut specs = Vec::new();
     for table in tables {
@@ -166,16 +217,20 @@ fn table_string(
     match table.get(key) {
         None => {
             if required {
-                Err(error(format!("ui.toml component is missing {key:?}")))
+                Err(error(
+                    UiFileErrorKind::Malformed,
+                    format!("ui.toml component is missing {key:?}"),
+                ))
             } else {
                 Ok(None)
             }
         }
         Some(item) => match item.as_str() {
             Some(text) => Ok(Some(text.to_owned())),
-            None => Err(error(format!(
-                "ui.toml component {key:?} must be a string"
-            ))),
+            None => Err(error(
+                UiFileErrorKind::Malformed,
+                format!("ui.toml component {key:?} must be a string"),
+            )),
         },
     }
 }
@@ -188,9 +243,10 @@ fn parse_entry(
             "id" | "title" | "feed" | "enabled" | "placement" | "max_rows"
             | "max_cols" | "params" => {}
             _ => {
-                return Err(error(format!(
-                    "ui.toml component has unknown key {key:?}"
-                )));
+                return Err(error(
+                    UiFileErrorKind::Malformed,
+                    format!("ui.toml component has unknown key {key:?}"),
+                ));
             }
         }
     }
@@ -200,31 +256,43 @@ fn parse_entry(
     let enabled = match table.get("enabled") {
         None => true,
         Some(item) => item.as_bool().ok_or_else(|| {
-            error("ui.toml component \"enabled\" must be a boolean")
+            error(
+                UiFileErrorKind::Malformed,
+                "ui.toml component \"enabled\" must be a boolean",
+            )
         })?,
     };
     let placement = table_string(table, "placement", true)?.expect("required");
     let max_rows = table
         .get("max_rows")
         .and_then(toml_edit::Item::as_integer)
-        .unwrap_or(20);
+        .unwrap_or(siralos_core::ui::DEFAULT_SPEC_MAX_ROWS);
     let max_cols = table
         .get("max_cols")
         .and_then(toml_edit::Item::as_integer)
-        .unwrap_or(60);
+        .unwrap_or(siralos_core::ui::DEFAULT_SPEC_MAX_COLS);
     if table.get("max_rows").is_some_and(|item| !item.is_integer())
         || table.get("max_cols").is_some_and(|item| !item.is_integer())
     {
-        return Err(error("ui.toml component size hints must be integers"));
+        return Err(error(
+            UiFileErrorKind::Malformed,
+            "ui.toml component size hints must be integers",
+        ));
     }
     let mut params = Vec::new();
     if let Some(item) = table.get("params") {
         let table = item.as_table_like().ok_or_else(|| {
-            error("ui.toml component params must be a table")
+            error(
+                UiFileErrorKind::Malformed,
+                "ui.toml component params must be a table",
+            )
         })?;
         for (key, value) in table.iter() {
             let text = value.as_str().ok_or_else(|| {
-                error("ui.toml component params must be strings")
+                error(
+                    UiFileErrorKind::Malformed,
+                    "ui.toml component params must be strings",
+                )
             })?;
             params.push((key.to_owned(), text.to_owned()));
         }
@@ -240,7 +308,10 @@ fn parse_entry(
         params,
     };
     UiComponentSpec::parse(&raw).map_err(|parse_error| {
-        error(format!("ui.toml component invalid: {}", parse_error.message()))
+        error(
+            UiFileErrorKind::InvalidSpec(parse_error),
+            format!("ui.toml component invalid: {}", parse_error.message()),
+        )
     })?;
     Ok(raw)
 }
@@ -256,14 +327,21 @@ pub fn load_ui_document(root: &Path) -> Result<UiDocument, UiFileError> {
             return Ok(UiDocument::default());
         }
         Err(_) => {
-            return Err(error("ui.toml cannot be read"));
+            return Err(error(
+                UiFileErrorKind::Unreadable,
+                "ui.toml cannot be read",
+            ));
         }
     };
     if bytes.len() > MAX_UI_DOCUMENT_BYTES {
-        return Err(error("ui.toml exceeds the byte bound"));
+        return Err(error(
+            UiFileErrorKind::Unreadable,
+            "ui.toml exceeds the byte bound",
+        ));
     }
-    let text = std::str::from_utf8(&bytes)
-        .map_err(|_| error("ui.toml is not valid UTF-8"))?;
+    let text = std::str::from_utf8(&bytes).map_err(|_| {
+        error(UiFileErrorKind::Unreadable, "ui.toml is not valid UTF-8")
+    })?;
     if text.trim().is_empty() {
         return Ok(UiDocument::default());
     }
@@ -272,10 +350,13 @@ pub fn load_ui_document(root: &Path) -> Result<UiDocument, UiFileError> {
     for raw in &raws {
         specs.push(UiComponentSpec::parse(raw).map_err(
             |parse_error: UiSpecError| {
-                error(format!(
-                    "ui.toml component invalid: {}",
-                    parse_error.message()
-                ))
+                error(
+                    UiFileErrorKind::InvalidSpec(parse_error),
+                    format!(
+                        "ui.toml component invalid: {}",
+                        parse_error.message()
+                    ),
+                )
             },
         )?);
     }
@@ -286,7 +367,6 @@ pub fn load_ui_document(root: &Path) -> Result<UiDocument, UiFileError> {
 /// document order preserved. Built fresh every save so output is
 /// byte-stable for identical specs.
 fn serialize_document(specs: &[UiComponentSpec]) -> String {
-    use siralos_core::ui::UiPlacement;
     let mut document = toml_edit::DocumentMut::new();
     let mut array = toml_edit::ArrayOfTables::new();
     for spec in specs {
@@ -295,13 +375,10 @@ fn serialize_document(specs: &[UiComponentSpec]) -> String {
         table.insert("title", toml_edit::value(spec.title()));
         table.insert("feed", toml_edit::value(spec.feed().as_str()));
         table.insert("enabled", toml_edit::value(spec.enabled()));
-        let placement = match spec.placement() {
-            UiPlacement::Tab => "tab".to_owned(),
-            UiPlacement::Cell { row, col } => {
-                format!("cell:{row},{col}")
-            }
-        };
-        table.insert("placement", toml_edit::value(placement));
+        table.insert(
+            "placement",
+            toml_edit::value(spec.placement().to_string()),
+        );
         table.insert("max_rows", toml_edit::value(spec.max_rows() as i64));
         table.insert("max_cols", toml_edit::value(spec.max_cols() as i64));
         let mut params = toml_edit::Table::new();
@@ -326,9 +403,10 @@ pub fn observe_ui_document(
     let relative =
         std::path::PathBuf::from(UI_TOML_DIR_NAME).join(UI_TOML_FILE_NAME);
     match observe_file_for_write(root, &relative, MAX_UI_DOCUMENT_BYTES) {
-        ObservedRevision::Unbindable { reason } => {
-            Err(error(format!("ui.toml cannot authorize a write: {reason}")))
-        }
+        ObservedRevision::Unbindable { reason } => Err(error(
+            UiFileErrorKind::WriteRefused,
+            format!("ui.toml cannot authorize a write: {reason}"),
+        )),
         ObservedRevision::Bound { bytes, token } => {
             let document = if bytes.is_empty() {
                 UiDocument::default()
@@ -353,24 +431,41 @@ pub fn save_ui_document(
 ) -> Result<(), UiFileError> {
     if !observed.consume() {
         return Err(error(
+            UiFileErrorKind::WriteRefused,
             "ui.toml write authority is one-shot; reload before retrying",
         ));
     }
     let path = ui_path(root);
     let current = std::fs::read(&path).ok();
     if !observed.matches_bytes(current.as_deref()) {
-        return Err(error("ui.toml changed concurrently; reload first"));
+        return Err(error(
+            UiFileErrorKind::WriteRefused,
+            "ui.toml changed concurrently; reload first",
+        ));
     }
-    if !observed.matches_path(&path) && current.is_some() {
-        return Err(error("ui.toml changed concurrently; reload first"));
+    // Absence needs no extra guard: `matches_path` takes the same
+    // bytes and only matches an absent target against absent
+    // authority.
+    if !observed.matches_path(&path, current.as_deref()) {
+        return Err(error(
+            UiFileErrorKind::WriteRefused,
+            "ui.toml changed concurrently; reload first",
+        ));
     }
     let serialized = serialize_document(&document.specs);
     if serialized.len() > MAX_UI_DOCUMENT_BYTES {
-        return Err(error("ui.toml exceeds the byte bound"));
+        return Err(error(
+            UiFileErrorKind::WriteRefused,
+            "ui.toml exceeds the byte bound",
+        ));
     }
     let directory = root.join(UI_TOML_DIR_NAME);
-    std::fs::create_dir_all(&directory)
-        .map_err(|_| error("ui.toml directory cannot be created"))?;
+    std::fs::create_dir_all(&directory).map_err(|_| {
+        error(
+            UiFileErrorKind::WriteRefused,
+            "ui.toml directory cannot be created",
+        )
+    })?;
     let staged = stage_atomic(
         &directory,
         UI_TOML_FILE_NAME,
@@ -378,21 +473,41 @@ pub fn save_ui_document(
         serialized.as_bytes(),
         Some(0o600),
     )
-    .map_err(|_| error("ui.toml could not be staged"))?;
-    let staged_bytes = std::fs::read(staged.path())
-        .map_err(|_| error("ui.toml staged bytes cannot be verified"))?;
-    let staged_text = std::str::from_utf8(&staged_bytes)
-        .map_err(|_| error("ui.toml staged bytes are not UTF-8"))?;
-    parse_document(staged_text)
-        .map_err(|_| error("ui.toml staged document failed verification"))?;
+    .map_err(|_| {
+        error(UiFileErrorKind::WriteRefused, "ui.toml could not be staged")
+    })?;
+    let staged_bytes = std::fs::read(staged.path()).map_err(|_| {
+        error(
+            UiFileErrorKind::WriteRefused,
+            "ui.toml staged bytes cannot be verified",
+        )
+    })?;
+    let staged_text = std::str::from_utf8(&staged_bytes).map_err(|_| {
+        error(
+            UiFileErrorKind::WriteRefused,
+            "ui.toml staged bytes are not UTF-8",
+        )
+    })?;
+    parse_document(staged_text).map_err(|_| {
+        error(
+            UiFileErrorKind::WriteRefused,
+            "ui.toml staged document failed verification",
+        )
+    })?;
     if let Some(previous) = current {
         let digest = siralos_core::identity::sha256_hex(&previous);
         staged.commit_if_digest(&digest).map_err(|_| {
-            error("ui.toml changed during commit; reload first")
+            error(
+                UiFileErrorKind::WriteRefused,
+                "ui.toml changed during commit; reload first",
+            )
         })?;
     } else {
         staged.commit_if_absent().map_err(|_| {
-            error("ui.toml changed during commit; reload first")
+            error(
+                UiFileErrorKind::WriteRefused,
+                "ui.toml changed during commit; reload first",
+            )
         })?;
     }
     Ok(())
@@ -408,6 +523,66 @@ pub fn load_sourced_user_specs(
         load_ui_document(root)?.specs,
         Vec::new(),
     ))
+}
+
+/// One module's contribution input: its manifest plus live
+/// lifecycle position. The grant is the Active grant when the
+/// module is active; otherwise authority falls back to the
+/// install-time requested set (already ceiling-checked).
+pub struct ModuleUiSource<'m, 'g> {
+    /// Declaring module id.
+    pub id: String,
+    /// Loaded manifest carrying the declared specs.
+    pub manifest: &'m siralos_adapters::module::manifest::ModuleManifest,
+    /// Current lifecycle state.
+    pub state: siralos_core::module::lifecycle::LifecycleState,
+    /// Effective grant while Active, `None` otherwise.
+    pub grant: Option<&'g siralos_core::module::CapabilityGrant>,
+}
+
+/// Collect module-declared specs gated by lifecycle and feed
+/// authority (ADR 0039 §2/§5): installed-but-disabled modules
+/// contribute nothing; a spec naming a feed outside the
+/// module's authority is dropped, never rendered. Returns
+/// `(module id, spec)` pairs in manifest order for
+/// [`merge_specs`](siralos_core::ui::merge_specs).
+#[must_use]
+pub fn module_ui_specs(
+    sources: &[ModuleUiSource<'_, '_>],
+) -> Vec<(String, UiComponentSpec)> {
+    use siralos_core::module::capability::CapabilityId;
+    use siralos_core::module::lifecycle::LifecycleState;
+    let mut collected = Vec::new();
+    for source in sources {
+        match source.state {
+            LifecycleState::Enabled | LifecycleState::Active => {}
+            LifecycleState::Absent | LifecycleState::Installed => continue,
+        }
+        for spec in source.manifest.ui_specs() {
+            let allowed =
+                match siralos_adapters::ui_feeds::feed_capability(spec.feed())
+                {
+                    None => true,
+                    Some(capability) => {
+                        let Ok(id) = CapabilityId::parse(capability) else {
+                            continue;
+                        };
+                        match source.grant {
+                            Some(grant) => grant.contains(&id),
+                            None => source
+                                .manifest
+                                .package()
+                                .requested_capabilities()
+                                .contains(&id),
+                        }
+                    }
+                };
+            if allowed {
+                collected.push((source.id.clone(), spec.clone()));
+            }
+        }
+    }
+    collected
 }
 
 /// Render the merged component list, mapping file failures to
@@ -446,19 +621,11 @@ pub fn execute_ui_remove(root: &Path, id: &str) -> String {
 /// Render one component preview with live feed content, mapping
 /// every outcome to display text. Raw text; dispatch sanitizes.
 #[must_use]
-#[allow(clippy::too_many_arguments)]
-pub fn render_ui_preview_text(
-    root: &Path,
-    tools: &[RegisteredToolInfo],
-    policy: &PermissionPolicy,
-    last_projection: Option<&LastProjection>,
-    checkpoint_state_dir: Option<&Path>,
-    id: &str,
-) -> String {
+pub fn render_ui_preview_text(inputs: &UiFeedInputs<'_>, id: &str) -> String {
     if id.is_empty() {
         return "usage: /ui-preview <id>\n".to_owned();
     }
-    let specs = match load_sourced_user_specs(root) {
+    let specs = match load_sourced_user_specs(inputs.root) {
         Ok(sourced) => sourced,
         Err(error) => {
             return format!("ui preview unavailable: {}\n", error.message);
@@ -467,14 +634,7 @@ pub fn render_ui_preview_text(
     let Some(item) = specs.iter().find(|each| each.spec.id() == id) else {
         return format!("no ui component {id:?}\n");
     };
-    let inputs = UiFeedInputs {
-        root,
-        tools,
-        policy,
-        last_projection,
-        checkpoint_state_dir,
-    };
-    match resolve_spec_content(&inputs, &item.spec) {
+    match resolve_spec_content(inputs, &item.spec) {
         Ok(content) => render_ui_preview(&item.spec, &content),
         Err(message) => format!("ui preview refused: {message}\n"),
     }
@@ -542,18 +702,10 @@ pub fn render_ui_list(sourced: &[SourcedSpec]) -> String {
             item.spec.id(),
             item.spec.title(),
             item.spec.feed().as_str(),
-            placement_text(&item.spec),
+            item.spec.placement(),
         ));
     }
     out
-}
-
-fn placement_text(spec: &UiComponentSpec) -> String {
-    use siralos_core::ui::UiPlacement;
-    match spec.placement() {
-        UiPlacement::Tab => "tab".to_owned(),
-        UiPlacement::Cell { row, col } => format!("cell:{row},{col}"),
-    }
 }
 
 /// Render one spec preview with resolved feed lines. Raw text;
@@ -568,7 +720,7 @@ pub fn render_ui_preview(
         spec.id(),
         spec.title(),
         spec.feed().as_str(),
-        placement_text(spec),
+        spec.placement(),
     );
     if content.is_empty() {
         out.push_str("(no content)\n");
@@ -588,14 +740,17 @@ pub fn add_ui_spec(
     observed: &ObservedWriteToken,
 ) -> Result<String, UiFileError> {
     let spec = UiComponentSpec::parse(raw).map_err(|parse_error| {
-        error(format!("ui spec invalid: {}", parse_error.message()))
+        error(
+            UiFileErrorKind::InvalidSpec(parse_error),
+            format!("ui spec invalid: {}", parse_error.message()),
+        )
     })?;
     let document = load_ui_document(root)?;
     if document.specs.iter().any(|each| each.id() == spec.id()) {
-        return Err(error(format!(
-            "ui component {:?} already exists",
-            spec.id()
-        )));
+        return Err(error(
+            UiFileErrorKind::AlreadyExists,
+            format!("ui component {:?} already exists", spec.id()),
+        ));
     }
     let mut specs = document.specs;
     specs.push(spec.clone());
@@ -612,15 +767,24 @@ pub fn edit_ui_spec(
     observed: &ObservedWriteToken,
 ) -> Result<String, UiFileError> {
     let spec = UiComponentSpec::parse(raw).map_err(|parse_error| {
-        error(format!("ui spec invalid: {}", parse_error.message()))
+        error(
+            UiFileErrorKind::InvalidSpec(parse_error),
+            format!("ui spec invalid: {}", parse_error.message()),
+        )
     })?;
     if spec.id() != id {
-        return Err(error("ui component id renames are refused"));
+        return Err(error(
+            UiFileErrorKind::RenameRefused,
+            "ui component id renames are refused",
+        ));
     }
     let document = load_ui_document(root)?;
     let mut specs = document.specs;
     let Some(slot) = specs.iter_mut().find(|each| each.id() == id) else {
-        return Err(error(format!("no ui component {id:?}")));
+        return Err(error(
+            UiFileErrorKind::MissingComponent,
+            format!("no ui component {id:?}"),
+        ));
     };
     *slot = spec;
     save_ui_document(root, &UiDocument { specs }, observed)?;
@@ -638,7 +802,10 @@ pub fn remove_ui_spec(
     let before = specs.len();
     specs.retain(|each| each.id() != id);
     if specs.len() == before {
-        return Err(error(format!("no ui component {id:?}")));
+        return Err(error(
+            UiFileErrorKind::MissingComponent,
+            format!("no ui component {id:?}"),
+        ));
     }
     save_ui_document(root, &UiDocument { specs }, observed)?;
     Ok(format!("Removed ui component {id}."))
@@ -647,9 +814,10 @@ pub fn remove_ui_spec(
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_UI_COMPONENTS, UiDocument, add_ui_spec, edit_ui_spec,
-        load_ui_document, observe_ui_document, remove_ui_spec, render_ui_list,
-        render_ui_preview, save_ui_document,
+        MAX_UI_COMPONENTS, UiDocument, UiFeedInputs, UiFileErrorKind,
+        add_ui_spec, edit_ui_spec, load_feed_module_records, load_ui_document,
+        observe_ui_document, remove_ui_spec, render_ui_list,
+        render_ui_preview, resolve_spec_content, save_ui_document,
     };
     use siralos_core::ui::{UnvalidatedSpec, merge_specs};
 
@@ -720,52 +888,44 @@ mod tests {
         let (_, token) = observe_ui_document(&root).expect("observes");
         let token = token.expect("bindable");
         let message = add_ui_spec(&root, &raw("one"), &token).expect("adds");
-        assert!(message.contains("one"), "{message:?}");
+        assert_eq!(message, "Added ui component one.");
         // The one-shot authority is spent: a second mutation with
         // the same token refuses stale instead of writing.
-        assert!(
-            add_ui_spec(&root, &raw("two"), &token)
-                .unwrap_err()
-                .message
-                .contains("one-shot")
-        );
+        assert!(matches!(
+            add_ui_spec(&root, &raw("two"), &token).unwrap_err().kind,
+            UiFileErrorKind::WriteRefused
+        ));
         let (_, token) = observe_ui_document(&root).expect("observes");
         let token = token.expect("bindable");
-        assert!(
-            add_ui_spec(&root, &raw("one"), &token)
-                .unwrap_err()
-                .message
-                .contains("already exists")
-        );
+        assert!(matches!(
+            add_ui_spec(&root, &raw("one"), &token).unwrap_err().kind,
+            UiFileErrorKind::AlreadyExists
+        ));
         let (_, token) = observe_ui_document(&root).expect("observes");
         let token = token.expect("bindable");
         let mut renamed = raw("two");
         renamed.id = "other".to_owned();
-        assert!(
-            edit_ui_spec(&root, "two", &renamed, &token)
-                .unwrap_err()
-                .message
-                .contains("renames are refused")
-        );
+        assert!(matches!(
+            edit_ui_spec(&root, "two", &renamed, &token).unwrap_err().kind,
+            UiFileErrorKind::RenameRefused
+        ));
         let (_, token) = observe_ui_document(&root).expect("observes");
         let token = token.expect("bindable");
-        assert!(
+        assert!(matches!(
             edit_ui_spec(&root, "missing", &raw("missing"), &token)
                 .unwrap_err()
-                .message
-                .contains("no ui component")
-        );
+                .kind,
+            UiFileErrorKind::MissingComponent
+        ));
         let (_, token) = observe_ui_document(&root).expect("observes");
         let token = token.expect("bindable");
         edit_ui_spec(&root, "one", &raw("one"), &token).expect("edits");
         let (_, token) = observe_ui_document(&root).expect("observes");
         let token = token.expect("bindable");
-        assert!(
-            remove_ui_spec(&root, "missing", &token)
-                .unwrap_err()
-                .message
-                .contains("no ui component")
-        );
+        assert!(matches!(
+            remove_ui_spec(&root, "missing", &token).unwrap_err().kind,
+            UiFileErrorKind::MissingComponent
+        ));
         let (_, token) = observe_ui_document(&root).expect("observes");
         let token = token.expect("bindable");
         remove_ui_spec(&root, "one", &token).expect("removes");
@@ -794,6 +954,74 @@ mod tests {
                 .expect("seed");
             assert!(load_ui_document(&root).is_err(), "{label} must refuse");
         }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn load_preserves_spec_error_kind() {
+        use siralos_core::ui::UiSpecError;
+        let root = fixture_root("speckind");
+        std::fs::create_dir_all(root.join(".siralos")).expect("dir");
+        std::fs::write(
+            root.join(".siralos").join("ui.toml"),
+            "[[components]]\nid = \"x\"\ntitle = \"x\"\nfeed = \"nope\"\nplacement = \"tab\"\n",
+        )
+        .expect("seed");
+        assert!(matches!(
+            load_ui_document(&root).unwrap_err().kind,
+            UiFileErrorKind::InvalidSpec(UiSpecError::UnknownFeed)
+        ));
+        std::fs::write(
+            root.join(".siralos").join("ui.toml"),
+            "[[components]]\nid = \"x\"\ntitle = \"x\"\nfeed = \"tools.catalog\"\nplacement = \"cell:2,0\"\n",
+        )
+        .expect("seed");
+        assert!(matches!(
+            load_ui_document(&root).unwrap_err().kind,
+            UiFileErrorKind::InvalidSpec(UiSpecError::InvalidPlacement)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn modules_status_lists_declared_install_records() {
+        let root = fixture_root("modstatus");
+        std::fs::write(
+            root.join("siralos.toml"),
+            "[modules.demo]\npath = \"mods/demo\"\ndigest = \"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"\n",
+        )
+        .expect("seed");
+        let records = load_feed_module_records(&root);
+        assert_eq!(records.len(), 1, "{records:?}");
+        let policy = siralos_core::tool::PermissionPolicy::default();
+        let tools: Vec<siralos_core::tool::registry::RegisteredToolInfo> =
+            Vec::new();
+        let inputs = UiFeedInputs {
+            root: &root,
+            tools: &tools,
+            policy: &policy,
+            modules: &records,
+            last_projection: None,
+            checkpoint_state_dir: None,
+        };
+        let spec =
+            siralos_core::ui::UiComponentSpec::parse(&UnvalidatedSpec {
+                id: "mod-status".to_owned(),
+                title: "Modules".to_owned(),
+                feed: "modules.status".to_owned(),
+                enabled: true,
+                placement: "tab".to_owned(),
+                max_rows: 20,
+                max_cols: 60,
+                params: Vec::new(),
+            })
+            .expect("parses");
+        let lines = resolve_spec_content(&inputs, &spec).expect("resolves");
+        assert!(lines.iter().any(|line| line.contains("demo")), "{lines:?}");
+        assert!(
+            !lines.iter().any(|line| line.contains("none installed")),
+            "{lines:?}"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

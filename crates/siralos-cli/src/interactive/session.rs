@@ -345,25 +345,56 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
         // holds the registry snapshot, policy, and application, so
         // feed content resolves here (decision 168 R4).
         let state_dir = siralos_adapters::paths::state_dir().ok();
-        render_ui_preview_text(
+        let modules = crate::interactive::ui::load_feed_module_records(
             &self.workspace_root,
-            &self.tool_definitions,
-            &self.policy,
-            self.application.last_projection(),
-            state_dir.as_deref(),
-            id,
-        )
+        );
+        let inputs = crate::interactive::ui::UiFeedInputs {
+            root: &self.workspace_root,
+            tools: &self.tool_definitions,
+            policy: &self.policy,
+            modules: &modules,
+            last_projection: self.application.last_projection(),
+            checkpoint_state_dir: state_dir.as_deref(),
+        };
+        render_ui_preview_text(&inputs, id)
     }
 
     fn panels_report(&self) -> crate::tui::UiPanels {
         use siralos_core::ui::{UiRegistry, content_for, project_components};
-        // User specs only; module-declared specs join in P5.
-        // Unreadable documents render as the empty host here; the
-        // typed refusal surfaces through `/ui-list`.
-        let sourced =
-            load_sourced_user_specs(&self.workspace_root).unwrap_or_default();
+        // User specs plus module-declared specs gated by
+        // lifecycle and feed authority (ADR 0039 §5); user ids win
+        // every conflict. Unreadable user documents render as the
+        // empty host here; the typed refusal surfaces through
+        // `/ui-list`.
+        let user = load_sourced_user_specs(&self.workspace_root)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|sourced| sourced.spec)
+            .collect::<Vec<_>>();
+        let mut sources = Vec::new();
+        for (id, manifest) in &self.manifests {
+            let (state, grant) = match self.hosts.get(id) {
+                Some(host) => {
+                    (host.state(), host.active().map(|active| active.grant()))
+                }
+                None => {
+                    use siralos_core::module::lifecycle::LifecycleState;
+                    (LifecycleState::Absent, None)
+                }
+            };
+            sources.push(crate::interactive::ui::ModuleUiSource {
+                id: id.clone(),
+                manifest,
+                state,
+                grant,
+            });
+        }
+        let merged = siralos_core::ui::merge_specs(
+            user,
+            crate::interactive::ui::module_ui_specs(&sources),
+        );
         let mut registry = UiRegistry::new();
-        for item in &sourced {
+        for item in &merged {
             if !item.spec.enabled() {
                 continue;
             }
@@ -372,12 +403,16 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
             }
         }
         let state_dir = siralos_adapters::paths::state_dir().ok();
+        let modules = crate::interactive::ui::load_feed_module_records(
+            &self.workspace_root,
+        );
         let mut contents = std::collections::BTreeMap::new();
         for spec in registry.specs() {
             let inputs = UiFeedInputs {
                 root: &self.workspace_root,
                 tools: &self.tool_definitions,
                 policy: &self.policy,
+                modules: &modules,
                 last_projection: self.application.last_projection(),
                 checkpoint_state_dir: state_dir.as_deref(),
             };

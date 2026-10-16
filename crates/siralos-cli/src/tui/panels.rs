@@ -97,8 +97,8 @@ pub fn starter_specs() -> Vec<UiComponentSpec> {
             feed: (*feed).to_owned(),
             enabled: true,
             placement: (*placement).to_owned(),
-            max_rows: 20,
-            max_cols: 60,
+            max_rows: siralos_core::ui::DEFAULT_SPEC_MAX_ROWS,
+            max_cols: siralos_core::ui::DEFAULT_SPEC_MAX_COLS,
             params: Vec::new(),
         })
         .expect("starter specs are valid by construction")

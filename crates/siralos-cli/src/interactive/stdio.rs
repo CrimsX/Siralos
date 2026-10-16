@@ -418,12 +418,19 @@ where
         }
         SlashCommand::UiPreview(id) => {
             let state_dir = siralos_adapters::paths::state_dir().ok();
-            let rendered = sanitize_for_display(&render_ui_preview_text(
+            let modules = crate::interactive::ui::load_feed_module_records(
                 workspace_root,
-                tool_definitions,
+            );
+            let inputs = crate::interactive::ui::UiFeedInputs {
+                root: workspace_root,
+                tools: tool_definitions,
                 policy,
-                application.last_projection(),
-                state_dir.as_deref(),
+                modules: &modules,
+                last_projection: application.last_projection(),
+                checkpoint_state_dir: state_dir.as_deref(),
+            };
+            let rendered = sanitize_for_display(&render_ui_preview_text(
+                &inputs,
                 id.unwrap_or(""),
             ));
             writer

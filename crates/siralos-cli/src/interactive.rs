@@ -105,7 +105,7 @@ mod profile;
 mod session;
 mod stdio;
 mod tui_loop;
-mod ui;
+pub mod ui;
 mod worker;
 
 use approval::StdioApprovalPrompter;
