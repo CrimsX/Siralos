@@ -18,10 +18,6 @@ use std::sync::{
 
 use crate::workspace::fs::FileIdentity;
 
-fn token_identity(metadata: &std::fs::Metadata) -> Option<FileIdentity> {
-    crate::workspace::fs::capture_file_identity(metadata)
-}
-
 /// One exact file read plus its write authority, or the reason the
 /// revision cannot authorize a write.
 pub enum ObservedRevision {
@@ -98,19 +94,33 @@ impl ObservedWriteToken {
         }
     }
 
-    /// Return whether `path` still carries the observed identity.
-    /// Content equality is checked separately via
-    /// [`matches_bytes`](Self::matches_bytes); identity alone
-    /// never authorizes.
+    /// Return whether the path and bytes still represent the
+    /// exact observed filesystem revision. The absence case is
+    /// expressible through `bytes`: `None` matches only when the
+    /// target was absent when observed and is still absent, so
+    /// callers need no absence guard beside this check. Identity
+    /// alone never authorizes.
     #[must_use]
-    pub fn matches_path(&self, path: &Path) -> bool {
-        let identity = std::fs::symlink_metadata(path)
-            .ok()
-            .and_then(|metadata| token_identity(&metadata));
-        match (&self.file_identity, identity) {
-            (None, _) => false,
-            (Some(_), None) => false,
-            (Some(expected), Some(observed)) => expected == &observed,
+    pub fn matches_path(&self, path: &Path, bytes: Option<&[u8]>) -> bool {
+        if !self.matches_bytes(bytes) {
+            return false;
+        }
+        match (&self.file_identity, bytes) {
+            (None, None) => matches!(
+                std::fs::symlink_metadata(path),
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::NotFound
+            ),
+            (Some(expected), Some(_)) => {
+                let Ok(metadata) = std::fs::symlink_metadata(path) else {
+                    return false;
+                };
+                !metadata.file_type().is_symlink()
+                    && crate::workspace::fs::capture_file_identity(&metadata)
+                        .as_ref()
+                        == Some(expected)
+            }
+            _ => false,
         }
     }
 
@@ -177,7 +187,9 @@ pub fn observe_file_for_write(
             reason: "target changed during observation".to_owned(),
         };
     }
-    let Some(identity) = token_identity(&metadata) else {
+    let Some(identity) =
+        crate::workspace::fs::capture_file_identity(&metadata)
+    else {
         return ObservedRevision::Unbindable {
             reason: "target identity is unavailable".to_owned(),
         };
@@ -240,11 +252,52 @@ mod tests {
         };
         assert_eq!(bytes, b"v = 1\n");
         assert!(token.matches_bytes(Some(b"v = 1\n")));
-        assert!(token.matches_path(&root.join("doc.toml")));
+        assert!(token.matches_path(&root.join("doc.toml"), Some(b"v = 1\n")));
+        assert!(
+            !token.matches_path(&root.join("doc.toml"), Some(b"v = 2\n")),
+            "bytes mismatch refuses before identity"
+        );
         assert!(token.consume());
         assert!(!token.consume(), "second consume refuses");
         std::fs::write(root.join("doc.toml"), b"v = 2\n").expect("mutate");
         assert!(!token.matches_bytes(Some(b"v = 2\n")));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn matches_path_models_absence_without_a_caller_guard() {
+        let root = scratch("absence");
+        let relative = std::path::Path::new("missing.toml");
+        let path = root.join("missing.toml");
+        // Absent authority matches an absent target with no guard.
+        let ObservedRevision::Bound { token: absent, .. } =
+            observe_file_for_write(&root, relative, 1024)
+        else {
+            panic!("absent target must bind");
+        };
+        assert!(absent.matches_path(&path, None));
+        // A created file no longer matches absent authority.
+        std::fs::write(&path, b"v = 1\n").expect("seed");
+        assert!(!absent.matches_path(&path, None));
+        assert!(!absent.matches_path(&path, Some(b"v = 1\n")));
+        // Present authority binds bytes plus identity: identical
+        // bytes at another path do not match.
+        let ObservedRevision::Bound { token: present, .. } =
+            observe_file_for_write(&root, relative, 1024)
+        else {
+            panic!("present target must bind");
+        };
+        let twin = root.join("twin.toml");
+        std::fs::write(&twin, b"v = 1\n").expect("seed twin");
+        assert!(present.matches_path(&path, Some(b"v = 1\n")));
+        assert!(
+            !present.matches_path(&twin, Some(b"v = 1\n")),
+            "same bytes at another identity must not match"
+        );
+        // Deleting the target breaks the match either way.
+        std::fs::remove_file(&path).expect("remove");
+        assert!(!present.matches_path(&path, None));
+        assert!(!present.matches_path(&path, Some(b"v = 1\n")));
         let _ = std::fs::remove_dir_all(&root);
     }
 

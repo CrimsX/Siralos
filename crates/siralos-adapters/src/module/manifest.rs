@@ -51,6 +51,8 @@ pub const MAX_MANIFEST_BYTES: usize = 4 * 1024;
 pub const MAX_SIRALOS_TOML_BYTES: usize = 1024 * 1024;
 /// Maximum component file bytes accepted at add time.
 pub const MAX_COMPONENT_BYTES: usize = 16 * 1024 * 1024;
+/// Maximum declared UI component specs per manifest (ADR 0039 §5).
+pub const MAX_MANIFEST_UI_SPECS: usize = 8;
 
 /// A structurally valid module manifest parsed from
 /// `module-manifest.toml`.
@@ -58,6 +60,7 @@ pub const MAX_COMPONENT_BYTES: usize = 16 * 1024 * 1024;
 pub struct ModuleManifest {
     package: ModulePackage,
     component: Option<PathBuf>,
+    ui_specs: Vec<siralos_core::ui::UiComponentSpec>,
 }
 
 impl fmt::Debug for ModuleManifest {
@@ -66,6 +69,7 @@ impl fmt::Debug for ModuleManifest {
             .debug_struct("ModuleManifest")
             .field("package", &"validated")
             .field("component", &self.component.as_ref().map(|_| "<redacted>"))
+            .field("ui_specs", &self.ui_specs.len())
             .finish()
     }
 }
@@ -80,6 +84,12 @@ impl ModuleManifest {
     /// inside the workspace; never absolute in the source text).
     pub fn component(&self) -> Option<&Path> {
         self.component.as_deref()
+    }
+
+    /// Validated module-declared UI component specs (ADR 0039 §5):
+    /// data only, rendered by the Host when the module is enabled.
+    pub fn ui_specs(&self) -> &[siralos_core::ui::UiComponentSpec] {
+        &self.ui_specs
     }
 }
 
@@ -346,7 +356,124 @@ pub fn load_manifest(
                 "manifest package identity is invalid".to_owned(),
             )
         })?;
-    Ok(ModuleManifest { package, component })
+    let ui_specs = parse_manifest_ui_specs(&table)?;
+    Ok(ModuleManifest { package, component, ui_specs })
+}
+
+/// Parse the optional `[ui]` manifest section into validated
+/// component specs (ADR 0039 §5). Module input is hostile:
+/// oversized, misshaped, or unknown-key sections are typed
+/// refusals. Unknown TOP-LEVEL keys stay ignored (legacy
+/// tolerance); inside the explicitly new `[ui]` section, unknown
+/// entry keys refuse so typos cannot silently drop fields.
+fn parse_manifest_ui_specs(
+    table: &toml::Table,
+) -> Result<Vec<siralos_core::ui::UiComponentSpec>, ModuleManifestFailure> {
+    // TOML extraction stays per-surface: this reads the manifest
+    // `ui.components` envelope with the `toml` crate, while the
+    // workspace document reads `components` with `toml_edit` in
+    // the cli. Only the validation rules are shared, in
+    // `UiComponentSpec::parse`.
+    use siralos_core::ui::{UiComponentSpec, UnvalidatedSpec};
+    let invalid = |reason: &str| {
+        ModuleManifestFailure::ManifestInvalid(format!(
+            "manifest ui section invalid: {reason}"
+        ))
+    };
+    let Some(ui) = table.get("ui") else {
+        return Ok(Vec::new());
+    };
+    let ui = ui.as_table().ok_or_else(|| invalid("`ui` must be a table"))?;
+    let Some(components) = ui.get("components") else {
+        return Ok(Vec::new());
+    };
+    let components = components.as_array().ok_or_else(|| {
+        invalid("`ui.components` must be an array of tables")
+    })?;
+    if components.len() > MAX_MANIFEST_UI_SPECS {
+        return Err(invalid("too many ui components"));
+    }
+    let mut specs = Vec::new();
+    for entry in components {
+        let entry = entry
+            .as_table()
+            .ok_or_else(|| invalid("ui components must be tables"))?;
+        for key in entry.keys() {
+            match key.as_str() {
+                "id" | "title" | "feed" | "enabled" | "placement"
+                | "max_rows" | "max_cols" | "params" => {}
+                _ => {
+                    return Err(invalid("ui components carry unknown keys"));
+                }
+            }
+        }
+        let string = |key: &str| -> Result<String, ModuleManifestFailure> {
+            match entry.get(key) {
+                Some(toml::Value::String(value)) => Ok(value.clone()),
+                _ => Err(invalid("ui component fields must be strings")),
+            }
+        };
+        let params = match entry.get("params") {
+            None => Vec::new(),
+            Some(toml::Value::Table(table)) => {
+                let mut collected = Vec::new();
+                for (key, value) in table {
+                    match value {
+                        toml::Value::String(text) => {
+                            collected.push((key.clone(), text.clone()));
+                        }
+                        _ => {
+                            return Err(invalid(
+                                "ui component params must be strings",
+                            ));
+                        }
+                    }
+                }
+                collected
+            }
+            Some(_) => {
+                return Err(invalid("ui component params must be a table"));
+            }
+        };
+        let raw = UnvalidatedSpec {
+            id: string("id")?,
+            title: string("title")?,
+            feed: string("feed")?,
+            enabled: match entry.get("enabled") {
+                None => true,
+                Some(toml::Value::Boolean(flag)) => *flag,
+                Some(_) => {
+                    return Err(invalid(
+                        "ui component `enabled` must be a boolean",
+                    ));
+                }
+            },
+            placement: string("placement")?,
+            max_rows: match entry.get("max_rows") {
+                None => siralos_core::ui::DEFAULT_SPEC_MAX_ROWS,
+                Some(toml::Value::Integer(size)) => *size,
+                Some(_) => {
+                    return Err(invalid(
+                        "ui component size hints must be integers",
+                    ));
+                }
+            },
+            max_cols: match entry.get("max_cols") {
+                None => siralos_core::ui::DEFAULT_SPEC_MAX_COLS,
+                Some(toml::Value::Integer(size)) => *size,
+                Some(_) => {
+                    return Err(invalid(
+                        "ui component size hints must be integers",
+                    ));
+                }
+            },
+            params,
+        };
+        specs.push(UiComponentSpec::parse(&raw).map_err(|error| {
+            invalid(&format!("ui component invalid: {}", error.message()))
+        })?);
+    }
+    Ok(specs)
 }
 
 /// Express an absolute folder path as its workspace-relative string.
@@ -1117,6 +1244,95 @@ mod tests {
         )
         .expect("write manifest");
         assert!(load_manifest(&temp, &temp).is_ok());
+        let _ = remove_dir_all(temp);
+    }
+
+    fn ui_manifest_text(specs: &str) -> String {
+        format!(
+            "id = \"godot\"\ndigest = \"{}\"\nabi = \"{ABI}\"\ncapabilities = [\"workspace-read\"]\n{specs}",
+            digest_hex(0x01)
+        )
+    }
+
+    const UI_ONE_SPEC: &str = "[ui]\n[[ui.components]]\nid = \"panel-one\"\ntitle = \"One\"\nfeed = \"tools.catalog\"\nenabled = true\nplacement = \"tab\"\nmax_rows = 20\nmax_cols = 60\n";
+
+    #[test]
+    fn manifest_ui_section_parses_validated_specs() {
+        let temp = workspace();
+        write(
+            temp.join(MODULE_MANIFEST_FILE_NAME),
+            ui_manifest_text(&format!(
+                "{UI_ONE_SPEC}[[ui.components]]\nid = \"panel-two\"\ntitle = \"Two\"\nfeed = \"workspace.list\"\nplacement = \"cell:0,0\"\n"
+            )),
+        )
+        .expect("write manifest");
+        let manifest = load_manifest(&temp, &temp).expect("manifest loads");
+        let specs = manifest.ui_specs();
+        assert_eq!(specs.len(), 2);
+        assert_eq!(specs[0].id(), "panel-one");
+        assert_eq!(specs[0].title(), "One");
+        assert!(specs[0].enabled());
+        assert_eq!(specs[1].id(), "panel-two");
+        // Defaults apply where the manifest omits keys.
+        assert!(specs[1].enabled());
+        assert_eq!(specs[1].max_rows(), 20);
+        assert_eq!(specs[1].max_cols(), 60);
+        let _ = remove_dir_all(temp);
+    }
+
+    #[test]
+    fn manifest_without_ui_section_has_no_specs() {
+        let temp = workspace();
+        write(
+            temp.join(MODULE_MANIFEST_FILE_NAME),
+            manifest_text("godot", &digest_hex(0x01), ABI, None),
+        )
+        .expect("write manifest");
+        let manifest = load_manifest(&temp, &temp).expect("manifest loads");
+        assert!(manifest.ui_specs().is_empty());
+        let _ = remove_dir_all(temp);
+    }
+
+    #[test]
+    fn manifest_ui_section_refusals_are_typed() {
+        let temp = workspace();
+        let cases = [
+            // Nine specs exceed the per-manifest bound.
+            ("oversized", "[ui]\n".to_owned() + &"[[ui.components]]\nid = \"x\"\ntitle = \"x\"\nfeed = \"tools.catalog\"\nplacement = \"tab\"\n".repeat(9)),
+            // Unknown feed.
+            (
+                "feed",
+                format!(
+                    "{UI_ONE_SPEC}[[ui.components]]\nid = \"bad\"\ntitle = \"b\"\nfeed = \"nope\"\nplacement = \"tab\"\n"
+                ),
+            ),
+            // Unknown entry key.
+            (
+                "keys",
+                format!(
+                    "{UI_ONE_SPEC}[[ui.components]]\nid = \"bad\"\ntitle = \"b\"\nfeed = \"tools.catalog\"\nplacement = \"tab\"\nfuture = 1\n"
+                ),
+            ),
+            // Non-table entries.
+            (
+                "entries",
+                "[ui]\ncomponents = [42]\n".to_owned(),
+            ),
+            // Non-array components.
+            ("array", "[ui]\ncomponents = 42\n".to_owned()),
+        ];
+        for (label, specs) in cases {
+            write(
+                temp.join(MODULE_MANIFEST_FILE_NAME),
+                ui_manifest_text(&specs),
+            )
+            .expect("write manifest");
+            assert_eq!(
+                load_manifest(&temp, &temp).expect_err("must refuse").code(),
+                "MANIFEST_INVALID",
+                "{label}"
+            );
+        }
         let _ = remove_dir_all(temp);
     }
 

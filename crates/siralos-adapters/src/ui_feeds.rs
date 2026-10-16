@@ -28,6 +28,24 @@ pub const MAX_FEED_CHECKPOINTS: usize = 20;
 /// bounds on top.
 pub const MAX_FEED_LINES: usize = 200;
 
+/// The existing module-namespace capability one feed draws on,
+/// if any (dash form: `workspace-read`, matching manifest and
+/// grant vocabularies — not the dotted tool capability ids).
+/// Feeds with no gate show already-visible host state and are open
+/// to every spec; gated feeds require the capability in the
+/// declaring module's authority (ADR 0039 §2).
+pub fn feed_capability(feed: UiFeed) -> Option<&'static str> {
+    match feed {
+        UiFeed::WorkspaceList | UiFeed::WorkspaceSearch => {
+            Some("workspace-read")
+        }
+        UiFeed::CheckpointsList => Some("workspace-read"),
+        UiFeed::ContextSummary
+        | UiFeed::ToolsCatalog
+        | UiFeed::ModulesStatus => None,
+    }
+}
+
 /// Bounded context summary, built from a projection snapshot by
 /// the caller. Numbers and closed-vocabulary state only — no raw
 /// content ever crosses this type.
@@ -230,11 +248,35 @@ fn resolve_context_summary(
     ])
 }
 
-fn tool_kind(capability: &str) -> &'static str {
-    match capability {
-        "workspace.write" => "write",
-        "process.execute" => "execute",
-        _ => "read-only",
+/// Display class of one catalog tool: mutation, execution, or
+/// read-only. The fallback is intentional contract, not an
+/// oversight: the capability vocabulary is open (`CapabilityId`
+/// parses any well-formed id, including future ones), so an
+/// unknown capability must render as the weakest class, never as
+/// a stronger one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToolKind {
+    Write,
+    Execute,
+    ReadOnly,
+}
+
+impl ToolKind {
+    /// The exact display word used in catalog lines.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Write => "write",
+            Self::Execute => "execute",
+            Self::ReadOnly => "read-only",
+        }
+    }
+}
+
+fn tool_kind(capability: &siralos_core::tool::CapabilityId) -> ToolKind {
+    match capability.as_str() {
+        "workspace.write" => ToolKind::Write,
+        "process.execute" => ToolKind::Execute,
+        _ => ToolKind::ReadOnly,
     }
 }
 
@@ -255,7 +297,7 @@ fn resolve_tools_catalog(
         lines.push(format!(
             "{} ({}, {})",
             info.definition.name,
-            tool_kind(info.capability.as_str()),
+            tool_kind(&info.capability).as_str(),
             status
         ));
     }
@@ -372,7 +414,7 @@ mod tests {
 
     use super::{
         ContextSummary, FeedContext, FeedError, MAX_FEED_CHECKPOINTS,
-        resolve_feed,
+        ToolKind, resolve_feed, tool_kind,
     };
     use crate::module::manifest::ModuleRecord;
     use crate::tool::WriteTool;
@@ -605,6 +647,32 @@ mod tests {
         assert!(lines[0].contains("workspace.read"), "{lines:?}");
         assert!(lines[0].contains("allowed"), "{lines:?}");
         assert!(lines[1].contains("approval required"), "{lines:?}");
+    }
+
+    #[test]
+    fn tool_kind_maps_the_closed_vocabulary() {
+        let kind =
+            |id: &str| tool_kind(&CapabilityId::parse(id).expect("parses"));
+        assert_eq!(kind("workspace.write"), ToolKind::Write);
+        assert_eq!(kind("process.execute"), ToolKind::Execute);
+        // Every other capability renders as read-only, including
+        // future ids: unknown capabilities must never display as a
+        // stronger class.
+        for id in [
+            "workspace.read",
+            "git.inspect",
+            "network.outbound",
+            "reference.inspect",
+            "research.fetch",
+            "self.inspect",
+            "context.read",
+            "future.domain",
+        ] {
+            assert_eq!(kind(id), ToolKind::ReadOnly, "{id}");
+        }
+        assert_eq!(ToolKind::Write.as_str(), "write");
+        assert_eq!(ToolKind::Execute.as_str(), "execute");
+        assert_eq!(ToolKind::ReadOnly.as_str(), "read-only");
     }
 
     #[test]
