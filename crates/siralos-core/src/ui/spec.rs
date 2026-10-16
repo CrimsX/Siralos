@@ -23,10 +23,22 @@ pub const MAX_SPEC_PARAM_VALUE_BYTES: usize = 1024;
 pub const MIN_SPEC_SIZE_HINT: usize = 1;
 /// Maximum size hint (rows or columns).
 pub const MAX_SPEC_SIZE_HINT: usize = 99;
+/// Default row hint when a document omits `max_rows`.
+pub const DEFAULT_SPEC_MAX_ROWS: i64 = 20;
+/// Default column hint when a document omits `max_cols`.
+pub const DEFAULT_SPEC_MAX_COLS: i64 = 60;
 /// Grid rows addressable by `cell:<row>,<col>` placement.
 pub const GRID_ROWS: usize = 2;
 /// Grid columns addressable by `cell:<row>,<col>` placement.
 pub const GRID_COLS: usize = 2;
+/// Fixed panel-snapshot viewport width (columns). This single-sources
+/// the harness-pinned 80x24 render viewport also used by the
+/// `tui-render` snapshot; panel content itself stays bounded by
+/// the per-spec size hints.
+pub const UI_VIEWPORT_WIDTH: u16 = 80;
+/// Fixed panel-snapshot viewport height (rows). See
+/// [`UI_VIEWPORT_WIDTH`].
+pub const UI_VIEWPORT_HEIGHT: u16 = 24;
 
 /// Closed feed vocabulary (ADR 0039 §2). Feeds map to existing
 /// authority classes; no feed grants new authority.
@@ -110,6 +122,24 @@ impl UiPlacement {
             return Err(UiSpecError::InvalidPlacement);
         }
         Ok(Self::Cell { row, col })
+    }
+}
+
+impl std::fmt::Display for UiPlacement {
+    /// The canonical wire string: `"tab"` or `"cell:<row>,<col>"`.
+    /// This is the single spelling; every surface renders
+    /// placements through here and parses them with
+    /// [`UiPlacement::parse`].
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        match self {
+            Self::Tab => formatter.write_str("tab"),
+            Self::Cell { row, col } => {
+                write!(formatter, "cell:{row},{col}")
+            }
+        }
     }
 }
 
@@ -448,6 +478,29 @@ mod tests {
                 "{bad:?}"
             );
         }
+    }
+
+    #[test]
+    fn placement_display_round_trips_through_parse() {
+        for placement in [
+            UiPlacement::Tab,
+            UiPlacement::Cell { row: 0, col: 0 },
+            UiPlacement::Cell { row: 0, col: 1 },
+            UiPlacement::Cell { row: 1, col: 0 },
+            UiPlacement::Cell { row: 1, col: 1 },
+        ] {
+            let text = placement.to_string();
+            assert_eq!(
+                UiPlacement::parse(&text).expect("display output parses"),
+                placement,
+                "{text:?}"
+            );
+        }
+        assert_eq!(UiPlacement::Tab.to_string(), "tab");
+        assert_eq!(
+            UiPlacement::Cell { row: 1, col: 0 }.to_string(),
+            "cell:1,0"
+        );
     }
 
     #[test]

@@ -14,9 +14,10 @@ pub use projection::{
     project_components,
 };
 pub use spec::{
-    GRID_COLS, GRID_ROWS, MAX_SPEC_ID_BYTES, MAX_SPEC_PARAM_KEY_BYTES,
-    MAX_SPEC_PARAM_VALUE_BYTES, MAX_SPEC_PARAMS, MAX_SPEC_SIZE_HINT,
-    MAX_SPEC_TITLE_CHARS, MIN_SPEC_SIZE_HINT, SourcedSpec, SpecSource,
-    UiComponentSpec, UiFeed, UiPlacement, UiSpecError, UnvalidatedSpec,
-    merge_specs,
+    DEFAULT_SPEC_MAX_COLS, DEFAULT_SPEC_MAX_ROWS, GRID_COLS, GRID_ROWS,
+    MAX_SPEC_ID_BYTES, MAX_SPEC_PARAM_KEY_BYTES, MAX_SPEC_PARAM_VALUE_BYTES,
+    MAX_SPEC_PARAMS, MAX_SPEC_SIZE_HINT, MAX_SPEC_TITLE_CHARS,
+    MIN_SPEC_SIZE_HINT, SourcedSpec, SpecSource, UI_VIEWPORT_HEIGHT,
+    UI_VIEWPORT_WIDTH, UiComponentSpec, UiFeed, UiPlacement, UiSpecError,
+    UnvalidatedSpec, merge_specs,
 };
