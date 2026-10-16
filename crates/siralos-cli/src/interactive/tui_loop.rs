@@ -816,9 +816,8 @@ pub fn run_interactive_tui_with_options(
                                 // A tool-approval verdict goes straight
                                 // into the exchange (never a command: the
                                 // worker is blocked in the hook and serves
-                                // no queue). Provider removal leaves
-                                // `pending_tool_approval` clear and never
-                                // reaches here.
+                                // no queue). Provider removal carries no
+                                // exchange id and never reaches here.
                                 if let Some(outcome) = outcome {
                                     deliver_tool_approval_verdict(
                                         &tui_state,
