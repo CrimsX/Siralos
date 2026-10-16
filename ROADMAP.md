@@ -803,8 +803,8 @@ later session needs must appear here or in a commit.
    delete tool), undo surfaces (`apply_undo` is a tested primitive with
    no wired surface), `bash` (typed `sandbox_unavailable`; no enforcing
    backend is pinned), private run directories, Git inspection, and
-   Godot surfaces. Corpus v85 (321 scenarios) pins the new behavior
-   with candidate-authored `default-tools` expectation records and a
+   Godot surfaces. Corpus v86 (333 scenarios) pins the new behavior
+   with candidate-authored `default-tools` and `ui-components` expectation records and a
    printed audit; no frozen record was edited.
 
 ### Blocked

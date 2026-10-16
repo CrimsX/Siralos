@@ -167,6 +167,14 @@ sets its ceiling: an unoptimized debug build sustains roughly 650 characters a
 second and a release build roughly 2800 (measured; decision 173). Use the release
 path when a fast model should be tracked exactly.
 
+`F2` toggles the declarative UI panels: a tab bar plus 2x2 split of
+host-rendered data views over the same terminal (`[` and `]` switch tabs,
+`F2`/`Esc` returns to the transcript). Panels are declared in workspace
+`.siralos/ui.toml` (`/ui-list`, `/ui-add`, `/ui-edit`, `/ui-remove`,
+`/ui-preview`) or contributed by installed modules; they are data, never
+code — every feed reuses an existing read-only surface and all text passes
+the terminal sanitizer ([ADR 0039](docs/adr/0039-modular-terminal-ui-components.md)).
+
 ## Configure a profile
 
 A profile is the composition unit: declarative, versioned, and **narrowing-only**

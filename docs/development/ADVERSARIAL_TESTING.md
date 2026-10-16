@@ -102,6 +102,20 @@ validation, state transitions). There is no repository-wide percentage
 objective; generated/error-only boilerplate is not artificially tested.
 Results are recorded per milestone in the R2.5 report.
 
+## UI component adversarial coverage
+
+The declarative UI surface ([ADR 0039](../adr/0039-modular-terminal-ui-components.md))
+is covered by Rust adversarial suites plus a differential subject, not by
+the contract parts above: spec-boundary refusal (unknown feeds, bad
+placements, oversize titles/params), projector truncation and precedence,
+feed refusals (unknown params, denied containment, checkpoint preimage
+exclusion), lifecycle/authority-gated merge (disabled modules contribute
+nothing, gated feeds drop without authority, user ids win), authoring
+refusals (duplicates, renames, missing ids, concurrent modification), and
+the protected-path refusal for model writes to `.siralos/ui.toml`. The
+`ui-components` differential subject pins the same outcomes with
+candidate-authored expectation records.
+
 ## Local tool limitations (recorded evidence)
 
 - The three adversarial tools are unavailable from this repository's pin, and

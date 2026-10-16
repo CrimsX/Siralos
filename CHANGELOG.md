@@ -25,6 +25,21 @@ and the number does not change any of it.
   subjects pinned by candidate-authored expectation records and a
   printed audit; the frozen oracle bundle is byte-identical.
 
+- **Modular terminal UI components**
+  ([ADR 0039](docs/adr/0039-modular-terminal-ui-components.md)).
+  Declarative panels declared in workspace `.siralos/ui.toml`
+  (protected behavioral configuration, host-written through the
+  observed-byte + atomic-writer path) or contributed by installed
+  modules (`[ui]` manifest section, lifecycle- and authority-gated
+  with user ids winning conflicts). The host projects them into a
+  tab bar plus 2x2 split drawn through the terminal sanitizer
+  (`F2` toggles, `[`/`]` switch tabs; `/ui-list`, `/ui-add`,
+  `/ui-edit`, `/ui-remove`, `/ui-preview`). Feeds reuse existing
+  read-only surfaces and grant no new authority. The corpus moved
+  to v86 with twelve new `ui-components` subjects pinned by
+  candidate-authored expectation records and a printed audit; the
+  frozen oracle bundle is byte-identical.
+
 - **Headless mode.** `siralos --print "<prompt>" [--json] [--cwd <dir>]` answers
   one prompt with no interactive frontend, which is what makes scripted and CI
   use possible. The grammar refuses a repeated flag instead of silently taking

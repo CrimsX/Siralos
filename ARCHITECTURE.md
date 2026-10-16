@@ -100,6 +100,13 @@ The Application Tool Loop pairs one call with one result, and a cancelled tail
 stays paired. The projection decides what the model may see; the permission
 evaluator decides what it may do. Neither implies the other.
 
+The terminal UI panel host projects the same way: `siralos-core::ui` owns
+the declarative component spec/projection seam (feeding only existing
+read-only surfaces, never new authority), and `siralos-cli` draws the tab
+bar plus 2x2 split through the terminal sanitizer
+([ADR 0039](docs/adr/0039-modular-terminal-ui-components.md)). Components
+are data the Host renders, not code the model runs.
+
 ## Composition
 
 A **Profile** is the composition unit

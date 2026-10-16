@@ -369,7 +369,10 @@ core thesis). Canonical product primitives:
   typed input/output, side-effect classification, capability requirements).
 - **View** — a Module-contributed presentation surface; it renders public
   state and requests typed Tools through the Host and has no direct
-  authority.
+  authority. Declarative terminal UI panels are the current View
+  realization ([ADR 0039](../adr/0039-modular-terminal-ui-components.md)):
+  user specs in `.siralos/ui.toml` plus module-declared specs, projected
+  by the Host and drawn through the terminal sanitizer.
 - **Run** — one bounded Siralos execution under an explicit Effective Profile
   and Host authority state; one Run uses one stable Profile identity.
 - **Evolve** — a bounded evaluation workflow that proposes measured

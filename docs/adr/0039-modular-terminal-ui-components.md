@@ -80,18 +80,21 @@ passes the terminal sanitizer (§6).
 
 | feed               | source (reuse, not new code)                                                                                                                           | capability gate                 |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------- |
-| `workspace.list`   | `adapters::workspace::list` (sorted, bounded)                                                                                                          | `workspace.read`                |
-| `workspace.search` | existing search adapter                                                                                                                                | `workspace.read`                |
+| `workspace.list`   | `adapters::workspace::list` (sorted, bounded)                                                                                                          | `workspace-read`                |
+| `workspace.search` | existing search adapter                                                                                                                                | `workspace-read`                |
 | `context.summary`  | `LastProjection` bytes/pressure/counts only — no raw content                                                                                           | none (already-visible state)    |
 | `tools.catalog`    | registry definitions snapshot (name/description/status)                                                                                                | none (already provider-visible) |
 | `modules.status`   | install records (`format_modules` input)                                                                                                               | none (local user config)        |
-| `checkpoints.list` | `CheckpointStore::list` metadata only: id, path, created-at, state, byte counts — preimage bytes are structurally excluded, pinned by adversarial test | `workspace.read`                |
+| `checkpoints.list` | `CheckpointStore::list` metadata only: id, path, created-at, state, byte counts — preimage bytes are structurally excluded, pinned by adversarial test | `workspace-read`                |
 
 Unknown feed → typed refusal. A module spec naming a feed
 outside the module's authority is refused at projection: the
 feed's required capability must be in the module's requested set
 (ceiling-checked at install) and, when the module is Active, in
-its effective grant. Feeds with no gate are open to every spec.
+its effective grant. Capability ids here are the module-namespace
+dash form (`workspace-read`, matching manifest and grant
+vocabularies), not the dotted tool capability ids. Feeds with no
+gate are open to every spec.
 
 ## 3. Storage and protection
 
