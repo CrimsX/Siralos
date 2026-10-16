@@ -157,10 +157,19 @@ pub enum UiFileErrorKind {
     MissingComponent,
     /// An edit renames the addressed id.
     RenameRefused,
-    /// No write authority exists or it is spent or stale:
-    /// observation refused, one-shot consumed, concurrent change,
-    /// or a staging/commit failure. Callers reload and retry.
-    WriteRefused,
+    /// No write authority exists or it is spent or stale.
+    /// Callers reload and retry. The variants distinguish what
+    /// failed so callers branch on kinds, never on prose.
+    ObservationRefused,
+    /// The one-shot authority was already consumed.
+    OneShotConsumed,
+    /// Bytes or identity moved under the observation.
+    StaleConcurrent,
+    /// Staging the replacement failed (bound, directory,
+    /// stage, or staged-byte verification).
+    StagingFailed,
+    /// The digest-bound commit lost its race.
+    CommitFailed,
 }
 
 fn error(kind: UiFileErrorKind, message: impl Into<String>) -> UiFileError {
@@ -404,7 +413,7 @@ pub fn observe_ui_document(
         std::path::PathBuf::from(UI_TOML_DIR_NAME).join(UI_TOML_FILE_NAME);
     match observe_file_for_write(root, &relative, MAX_UI_DOCUMENT_BYTES) {
         ObservedRevision::Unbindable { reason } => Err(error(
-            UiFileErrorKind::WriteRefused,
+            UiFileErrorKind::ObservationRefused,
             format!("ui.toml cannot authorize a write: {reason}"),
         )),
         ObservedRevision::Bound { bytes, token } => {
@@ -431,38 +440,33 @@ pub fn save_ui_document(
 ) -> Result<(), UiFileError> {
     if !observed.consume() {
         return Err(error(
-            UiFileErrorKind::WriteRefused,
+            UiFileErrorKind::OneShotConsumed,
             "ui.toml write authority is one-shot; reload before retrying",
         ));
     }
     let path = ui_path(root);
     let current = std::fs::read(&path).ok();
-    if !observed.matches_bytes(current.as_deref()) {
-        return Err(error(
-            UiFileErrorKind::WriteRefused,
-            "ui.toml changed concurrently; reload first",
-        ));
-    }
-    // Absence needs no extra guard: `matches_path` takes the same
-    // bytes and only matches an absent target against absent
-    // authority.
+    // One check covers bytes and identity: `matches_path` refuses
+    // on a byte mismatch before comparing identity, and matches an
+    // absent target only against absent authority — no absence
+    // guard beside it.
     if !observed.matches_path(&path, current.as_deref()) {
         return Err(error(
-            UiFileErrorKind::WriteRefused,
+            UiFileErrorKind::StaleConcurrent,
             "ui.toml changed concurrently; reload first",
         ));
     }
     let serialized = serialize_document(&document.specs);
     if serialized.len() > MAX_UI_DOCUMENT_BYTES {
         return Err(error(
-            UiFileErrorKind::WriteRefused,
+            UiFileErrorKind::StagingFailed,
             "ui.toml exceeds the byte bound",
         ));
     }
     let directory = root.join(UI_TOML_DIR_NAME);
     std::fs::create_dir_all(&directory).map_err(|_| {
         error(
-            UiFileErrorKind::WriteRefused,
+            UiFileErrorKind::StagingFailed,
             "ui.toml directory cannot be created",
         )
     })?;
@@ -474,23 +478,23 @@ pub fn save_ui_document(
         Some(0o600),
     )
     .map_err(|_| {
-        error(UiFileErrorKind::WriteRefused, "ui.toml could not be staged")
+        error(UiFileErrorKind::StagingFailed, "ui.toml could not be staged")
     })?;
     let staged_bytes = std::fs::read(staged.path()).map_err(|_| {
         error(
-            UiFileErrorKind::WriteRefused,
+            UiFileErrorKind::StagingFailed,
             "ui.toml staged bytes cannot be verified",
         )
     })?;
     let staged_text = std::str::from_utf8(&staged_bytes).map_err(|_| {
         error(
-            UiFileErrorKind::WriteRefused,
+            UiFileErrorKind::StagingFailed,
             "ui.toml staged bytes are not UTF-8",
         )
     })?;
     parse_document(staged_text).map_err(|_| {
         error(
-            UiFileErrorKind::WriteRefused,
+            UiFileErrorKind::StagingFailed,
             "ui.toml staged document failed verification",
         )
     })?;
@@ -498,14 +502,14 @@ pub fn save_ui_document(
         let digest = siralos_core::identity::sha256_hex(&previous);
         staged.commit_if_digest(&digest).map_err(|_| {
             error(
-                UiFileErrorKind::WriteRefused,
+                UiFileErrorKind::CommitFailed,
                 "ui.toml changed during commit; reload first",
             )
         })?;
     } else {
         staged.commit_if_absent().map_err(|_| {
             error(
-                UiFileErrorKind::WriteRefused,
+                UiFileErrorKind::CommitFailed,
                 "ui.toml changed during commit; reload first",
             )
         })?;
@@ -893,7 +897,7 @@ mod tests {
         // the same token refuses stale instead of writing.
         assert!(matches!(
             add_ui_spec(&root, &raw("two"), &token).unwrap_err().kind,
-            UiFileErrorKind::WriteRefused
+            UiFileErrorKind::OneShotConsumed
         ));
         let (_, token) = observe_ui_document(&root).expect("observes");
         let token = token.expect("bindable");
@@ -1022,6 +1026,26 @@ mod tests {
             !lines.iter().any(|line| line.contains("none installed")),
             "{lines:?}"
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn concurrent_modification_refuses_stale() {
+        let root = fixture_root("stale");
+        let (_, token) = observe_ui_document(&root).expect("observes");
+        let token = token.expect("bindable");
+        // An external write between observation and save breaks the
+        // single identity check: bytes and identity refuse together.
+        std::fs::create_dir_all(root.join(".siralos")).expect("dir");
+        std::fs::write(
+            root.join(".siralos").join("ui.toml"),
+            "[[components]]\nid = \"other\"\ntitle = \"Other\"\nfeed = \"tools.catalog\"\nplacement = \"tab\"\n",
+        )
+        .expect("external write");
+        assert!(matches!(
+            add_ui_spec(&root, &raw("one"), &token).unwrap_err().kind,
+            UiFileErrorKind::StaleConcurrent
+        ));
         let _ = std::fs::remove_dir_all(&root);
     }
 
