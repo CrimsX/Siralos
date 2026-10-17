@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "corpusVersion": 86,
-  "entriesSha256": "d7d72fadbd7553e9bd605d2f1318aab67faa7fe78618c669f89dd43fbaba1ab3",
+  "corpusVersion": 88,
+  "entriesSha256": "278dcd87c246056fe0bb38ee38a86c0fc08a4a31ff268a1b01b874bbb873b831",
   "supersessions": [
     {
       "scenarioId": "user-config-matrix",
       "reason": "The frozen record echoes the rejected local-directory PATH VALUE. A configured path can be an absolute host path, so the candidate reports the failure class without the value.",
-      "supersededIn": 86,
+      "supersededIn": 88,
       "decision": "Diagnostics never echo configured path values, field names, or transport text; absolute host paths never reach report-safe output. Recorded 2026-09-23 during the security and lifecycle repair.",
       "oracleRecordSha256": "d88458bdd5519c6b9d8d7a550705804261dee150322ab9e86d47ac40829bb38c",
       "record": {
@@ -663,7 +663,7 @@
     {
       "scenarioId": "command-catalog-snapshot",
       "reason": "The frozen record pins the /domains-* catalog entries, descriptions, group, and content-bound revision digest. The product vocabulary is now /modules-* (ADR 0037).",
-      "supersededIn": 86,
+      "supersededIn": 88,
       "decision": "Supersede the frozen command-catalog-snapshot record with the candidate-authored modules-vocabulary record. Recorded 2026-10-10 during the modules reconsolidation (ADR 0037).",
       "oracleRecordSha256": "c7853d0899d356f9dc9cddf10752bb851465d7a2a79b676eb92949bbd5e34a37",
       "record": {
@@ -1016,7 +1016,7 @@
     {
       "scenarioId": "cli-session-set",
       "reason": "The frozen record pins the /domains-* command ids, help text, and catalog parses. The product vocabulary is now /modules-* (ADR 0037); renders changed with it.",
-      "supersededIn": 86,
+      "supersededIn": 88,
       "decision": "Supersede the frozen cli-session-set record with the candidate-authored modules-vocabulary record. Recorded 2026-10-10 during the modules reconsolidation (ADR 0037).",
       "oracleRecordSha256": "c56777e07d6c8c2fc07b694821ecb9b9c1a6158524a76980f073a107fc8d460c",
       "record": {

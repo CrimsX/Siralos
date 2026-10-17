@@ -1,0 +1,26 @@
+{
+  "env": {},
+  "id": "default-tools.bash-executes.nonzero",
+  "input": {
+    "calls": [
+      {
+        "input": { "command": "exit 3" },
+        "stub": {
+          "cancelled": false,
+          "status": 3,
+          "stderr": "err\n",
+          "stderrTruncated": false,
+          "stdout": "out\n",
+          "stdoutTruncated": false,
+          "timedOut": false
+        },
+        "tool": "bash"
+      }
+    ],
+    "files": [],
+    "verifyPaths": []
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "default-tools"
+}

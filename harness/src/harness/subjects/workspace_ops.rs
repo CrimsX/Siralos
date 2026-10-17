@@ -990,6 +990,18 @@ fn write_fixture_checkpoint(
                 format!("cannot write fixture checkpoint metadata: {error}"),
             )
         })?;
+    if let Some(preimage) = spec.get("preimage").and_then(Value::as_str) {
+        std::fs::write(directory.join("preimage.bin"), preimage).map_err(
+            |error| {
+                HarnessError::new(
+                    HarnessErrorKind::ProbeSpawn,
+                    format!(
+                        "cannot write fixture checkpoint preimage: {error}"
+                    ),
+                )
+            },
+        )?;
+    }
     Ok(())
 }
 
@@ -1172,6 +1184,193 @@ pub(in crate::harness) fn checkpoint_record(
     Ok(json!({ "ops": ops }))
 }
 
+// Undo subject (ADR 0038, Phase B): drive the user `/undo`
+// flow through the production cli undo paths — list, plan,
+// confirmed restore, `--last` resolution — against fixture
+// checkpoint stores with hand-written metadata (fixed ids and
+// timestamps, so records are deterministic). The confirmation
+// gate is covered by the Rust adversarial suite; the corpus pins
+// outcome texts. Records pin stable fields only: op names,
+// list/plan/prompt/outcome texts, resolved ids, verified file
+// identities. Checkpoint ids are fixture-declared here (unlike
+// the minted ids production creates), never behavior.
+// ---------------------------------------------------------------------------
+
+/// Seed one undo fixture: workspace files, checkpoint records
+/// (with preimages), and stray store files, then open the store.
+fn open_undo_fixture(
+    scenario_id: &str,
+    input: &Value,
+) -> Result<
+    (
+        std::path::PathBuf,
+        std::path::PathBuf,
+        siralos_adapters::workspace::checkpoint::CheckpointStore,
+    ),
+    HarnessError,
+> {
+    use siralos_adapters::workspace::checkpoint::open_checkpoint_store;
+    let workspace =
+        std::env::temp_dir().join(format!("siralos-cand-uws-{scenario_id}"));
+    let store_root = std::env::temp_dir()
+        .join(format!("siralos-cand-uproot-{scenario_id}"));
+    let _ = std::fs::remove_dir_all(&workspace);
+    let _ = std::fs::remove_dir_all(&store_root);
+    std::fs::create_dir_all(&workspace).map_err(|error| {
+        HarnessError::new(
+            HarnessErrorKind::ProbeSpawn,
+            format!("cannot create undo fixture workspace: {error}"),
+        )
+    })?;
+    if let Ok(files) = scenario_object(input, "workspaceFiles") {
+        for (path, content) in files {
+            let target = workspace.join(path);
+            if let Some(parent) = target.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            std::fs::write(&target, content.as_str().unwrap_or("")).map_err(
+                |error| {
+                    HarnessError::new(
+                        HarnessErrorKind::ProbeSpawn,
+                        format!("cannot write undo fixture file: {error}"),
+                    )
+                },
+            )?;
+        }
+    }
+    let store =
+        open_checkpoint_store(&workspace, &store_root).map_err(|error| {
+            HarnessError::new(
+                HarnessErrorKind::ProbeSpawn,
+                format!("cannot open undo fixture store: {error}"),
+            )
+        })?;
+    let fingerprint = store.workspace_fingerprint().to_owned();
+    if let Ok(checkpoints) = scenario_array(input, "checkpoints") {
+        for spec in checkpoints {
+            write_fixture_checkpoint(&store_root, &fingerprint, spec)?;
+        }
+    }
+    if let Ok(store_files) = scenario_object(input, "storeFiles") {
+        for (name, content) in store_files {
+            std::fs::write(
+                store_root.join(&fingerprint).join(name),
+                content.as_str().unwrap_or(""),
+            )
+            .map_err(|error| {
+                HarnessError::new(
+                    HarnessErrorKind::ProbeSpawn,
+                    format!("cannot write undo fixture store file: {error}"),
+                )
+            })?;
+        }
+    }
+    Ok((workspace, store_root, store))
+}
+
+/// Run one undo scenario: fixture store, ops in order, verified
+/// file identities.
+pub(in crate::harness) fn undo_record(
+    scenario_id: &str,
+    input: &Value,
+) -> Result<Value, HarnessError> {
+    use siralos_cli::interactive::undo::{
+        UndoConfirmation, execute_undo_restore, plan_undo_restore,
+        render_undo_list, render_undo_prompt, resolve_last_restorable,
+    };
+    let (workspace, store_root, store) =
+        open_undo_fixture(scenario_id, input)?;
+    let mut ops = Vec::new();
+    for entry in scenario_array(input, "ops")? {
+        let op = scenario_string(entry, "op")?;
+        ops.push(match op.as_str() {
+            "list" => {
+                json!({
+                    "op": "list",
+                    "text": render_undo_list(&store),
+                })
+            }
+            "plan" => {
+                let id = scenario_string(entry, "id")?;
+                match plan_undo_restore(&store, &id) {
+                    Ok(plan) => json!({
+                        "op": "plan",
+                        "status": "ok",
+                        "text": render_undo_prompt(&plan),
+                    }),
+                    Err(error) => json!({
+                        "op": "plan",
+                        "status": "refused",
+                        "message": error.message,
+                    }),
+                }
+            }
+            "restore" => {
+                let id = scenario_string(entry, "id")?;
+                let confirmed = entry
+                    .get("confirmed")
+                    .and_then(Value::as_bool)
+                    .ok_or_else(|| {
+                        HarnessError::corpus(
+                            "undo restore confirmed must be a boolean"
+                                .to_owned(),
+                        )
+                    })?;
+                // The corpus keeps the boolean wire field; the
+                // production path takes the typed decision.
+                let confirmation = if confirmed {
+                    UndoConfirmation::Confirmed
+                } else {
+                    UndoConfirmation::Unconfirmed
+                };
+                json!({
+                    "op": "restore",
+                    "confirmed": confirmed,
+                    "text": execute_undo_restore(&store, &id, confirmation),
+                })
+            }
+            "last" => match resolve_last_restorable(&store) {
+                Ok(id) => json!({
+                    "op": "last",
+                    "status": "ok",
+                    "id": id,
+                }),
+                Err(error) => json!({
+                    "op": "last",
+                    "status": "refused",
+                    "message": error.message,
+                }),
+            },
+            other => {
+                return Err(HarnessError::corpus(format!(
+                    "unsupported undo op {other}"
+                )));
+            }
+        });
+    }
+    let mut files = Vec::new();
+    for path in scenario_array(input, "verifyPaths")? {
+        let relative = path.as_str().ok_or_else(|| {
+            HarnessError::corpus(
+                "verifyPaths entries must be strings".to_owned(),
+            )
+        })?;
+        let sha256 = std::fs::read(workspace.join(relative))
+            .ok()
+            .map(|bytes| sha256_hex(&bytes));
+        files.push(json!({
+            "path": relative,
+            "sha256": sha256,
+        }));
+    }
+    let _ = std::fs::remove_dir_all(&workspace);
+    let _ = std::fs::remove_dir_all(&store_root);
+    Ok(json!({
+        "ops": ops,
+        "files": files,
+    }))
+}
+
 // Default-tools subject (ADR 0038): drive the `write` / `edit` /
 // `bash` Tool adapters directly under a fixture workspace. The
 // per-action approval gate is covered by the Rust adversarial
@@ -1181,6 +1380,86 @@ pub(in crate::harness) fn checkpoint_record(
 // identities, and the checkpoint count. Checkpoint ids are
 // sequential store state, never behavior: excluded.
 // ---------------------------------------------------------------------------
+
+/// Deterministic scripted backend for the `bash-executes`
+/// scenarios: reports full enforcement and replays one canned
+/// outcome, so the corpus pins the runner mapping (exit, timeout,
+/// cancellation, truncation flags) without spawning anything. The
+/// scripted outcome comes from the call's `stub` object, never from
+/// a live process.
+struct ScriptedSandboxBackend {
+    output: siralos_core::runtime::sandbox::SandboxOutput,
+}
+
+impl siralos_core::runtime::sandbox::SandboxBackend
+    for ScriptedSandboxBackend
+{
+    fn probe(&self) -> siralos_core::runtime::sandbox::SandboxAvailability {
+        siralos_core::runtime::sandbox::SandboxAvailability::Available(
+            siralos_core::runtime::sandbox::SandboxEnforcement::full(),
+        )
+    }
+
+    fn execute(
+        &self,
+        _command: &siralos_core::runtime::sandbox::SandboxCommand,
+        _limits: &siralos_core::runtime::sandbox::SandboxLimits,
+        _cancellation: siralos_core::provider::CancellationSignal<'_>,
+    ) -> Result<
+        siralos_core::runtime::sandbox::SandboxOutput,
+        siralos_core::runtime::sandbox::SandboxError,
+    > {
+        Ok(self.output.clone())
+    }
+}
+
+/// Parse one bash call's `stub` object into the canned outcome it
+/// replays: `{status, stdout, stderr, timedOut, cancelled}` with
+/// explicit truncation flags defaulting to false. `status: null`
+/// names a run killed before any status existed.
+fn scripted_stub_output(
+    entry: &Value,
+) -> Result<siralos_core::runtime::sandbox::SandboxOutput, HarnessError> {
+    let stub = entry.get("stub").ok_or_else(|| {
+        HarnessError::corpus(
+            "bash stub call requires a stub object".to_owned(),
+        )
+    })?;
+    let status = match stub.get("status") {
+        None | Some(Value::Null) => None,
+        Some(Value::Number(number)) => {
+            Some(number.as_i64().ok_or_else(|| {
+                HarnessError::corpus(
+                    "bash stub status must be an integer".to_owned(),
+                )
+            })? as i32)
+        }
+        Some(_) => {
+            return Err(HarnessError::corpus(
+                "bash stub status must be an integer or null".to_owned(),
+            ));
+        }
+    };
+    let stream = |key: &str| {
+        stub.get(key).and_then(Value::as_str).map(str::as_bytes).ok_or_else(
+            || HarnessError::corpus(format!("bash stub requires {key}")),
+        )
+    };
+    let flag = |key: &str| {
+        stub.get(key).and_then(Value::as_bool).ok_or_else(|| {
+            HarnessError::corpus(format!("bash stub requires {key}"))
+        })
+    };
+    Ok(siralos_core::runtime::sandbox::SandboxOutput {
+        status_code: status,
+        stdout: stream("stdout")?.to_vec(),
+        stderr: stream("stderr")?.to_vec(),
+        stdout_truncated: flag("stdoutTruncated")?,
+        stderr_truncated: flag("stderrTruncated")?,
+        timed_out: flag("timedOut")?,
+        cancelled: flag("cancelled")?,
+    })
+}
 
 /// Run one default-tools scenario: fixture files, tool calls in
 /// order, verified file identities, checkpoint count.
@@ -1241,14 +1520,29 @@ pub(in crate::harness) fn default_tools_record(
                         })?;
                     tool.execute(&call_input, token.signal())
                 }
-                "bash" => BashTool::new(root)
+                "bash" => {
+                    // A `stub` object drives the deterministic
+                    // scripted backend (runner-mapping scenarios);
+                    // without one the host refusal applies (the
+                    // pinned `bash-unavailable` posture).
+                    let tool = if entry.get("stub").is_some() {
+                        BashTool::with_backend(
+                            root,
+                            Box::new(ScriptedSandboxBackend {
+                                output: scripted_stub_output(entry)?,
+                            }),
+                        )
+                    } else {
+                        BashTool::new(root)
+                    }
                     .map_err(|error| {
                         HarnessError::new(
                             HarnessErrorKind::ProbeSpawn,
                             format!("cannot build bash tool: {error}"),
                         )
-                    })?
-                    .execute(&call_input, token.signal()),
+                    })?;
+                    tool.execute(&call_input, token.signal())
+                }
                 other => {
                     return Err(HarnessError::corpus(format!(
                         "unknown default tool {other}"

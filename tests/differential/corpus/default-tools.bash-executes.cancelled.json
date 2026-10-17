@@ -1,0 +1,26 @@
+{
+  "env": {},
+  "id": "default-tools.bash-executes.cancelled",
+  "input": {
+    "calls": [
+      {
+        "input": { "command": "sleep 30" },
+        "stub": {
+          "cancelled": true,
+          "status": null,
+          "stderr": "",
+          "stderrTruncated": false,
+          "stdout": "",
+          "stdoutTruncated": false,
+          "timedOut": false
+        },
+        "tool": "bash"
+      }
+    ],
+    "files": [],
+    "verifyPaths": []
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "default-tools"
+}

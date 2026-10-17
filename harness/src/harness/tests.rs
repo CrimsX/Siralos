@@ -126,7 +126,7 @@ fn strict_loader_accepts_the_checked_in_digest_bound_corpus() {
     let loaded =
         load_corpus(&root.join("tests/differential/corpus"), platform_name())
             .expect("checked-in corpus");
-    assert_eq!(loaded.len(), 333);
+    assert_eq!(loaded.len(), 350);
 }
 
 #[test]

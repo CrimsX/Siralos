@@ -1,0 +1,48 @@
+{
+  "env": {},
+  "id": "undo.protected",
+  "input": {
+    "checkpoints": [
+      {
+        "id": "cp_9000000051",
+        "preimage": "undo before\n",
+        "record": {
+          "after": {
+            "byteLength": 8,
+            "exists": true,
+            "sha256": "60f97c7b5bf55c5f186c5d1c79c8e3b6929c83bf2766434df9f1e1b9069db73a"
+          },
+          "before": {
+            "byteLength": 12,
+            "exists": true,
+            "sha256": "89815cb5a18729bf7759055eefc4ba4df2bccb5f8d199e08d562659001c9dcd8"
+          },
+          "createdAt": "2026-01-01T00:00:00Z",
+          "operation": "update",
+          "preview": {
+            "addedLines": 1,
+            "removedLines": 0
+          },
+          "relativePath": ".siralos/x.toml",
+          "state": "applied",
+          "toolName": "write"
+        }
+      }
+    ],
+    "fingerprint": "fixture-undo-protected",
+    "ops": [
+      {
+        "confirmed": true,
+        "id": "cp_9000000051",
+        "op": "restore"
+      }
+    ],
+    "verifyPaths": [".siralos/x.toml"],
+    "workspaceFiles": {
+      ".siralos/x.toml": "planted\n"
+    }
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "undo"
+}

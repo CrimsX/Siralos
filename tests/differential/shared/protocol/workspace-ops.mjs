@@ -366,6 +366,79 @@ function validateCheckpointResult(record, label) {
   }
 }
 
+// Statuses a user undo plan can report: the plan either resolves
+// to the exact restore prompt or refuses typed.
+const UNDO_PLAN_STATUSES = new Set(["ok", "refused"]);
+
+function validateUndoResult(record, label) {
+  assertExactKeys(record.result, ["files", "ops"], `${label}.result`);
+  if (!Array.isArray(record.result.ops) || record.result.ops.length > 16) {
+    throw new Error(`${label}.result.ops must be a bounded array`);
+  }
+  for (const [index, entry] of record.result.ops.entries()) {
+    const entryLabel = `${label}.result.ops[${index}]`;
+    if (!isObject(entry)) {
+      throw new Error(`${entryLabel} must be an object`);
+    }
+    if (entry.op === "list") {
+      assertExactKeys(entry, ["op", "text"], entryLabel);
+      if (typeof entry.text !== "string") {
+        throw new Error(`${entryLabel}.text must be a string`);
+      }
+      continue;
+    }
+    if (entry.op === "plan" || entry.op === "last") {
+      if (!UNDO_PLAN_STATUSES.has(entry.status)) {
+        throw new Error(`${entryLabel}.status is invalid`);
+      }
+      if (entry.status === "ok") {
+        assertExactKeys(
+          entry,
+          entry.op === "plan" ? ["op", "status", "text"] : ["id", "op", "status"],
+          entryLabel,
+        );
+        if (entry.op === "plan" && typeof entry.text !== "string") {
+          throw new Error(`${entryLabel}.text must be a string`);
+        }
+        if (entry.op === "last" && typeof entry.id !== "string") {
+          throw new Error(`${entryLabel}.id must be a string`);
+        }
+      } else {
+        assertExactKeys(entry, ["message", "op", "status"], entryLabel);
+        assertNonEmptyString(entry.message, `${entryLabel}.message is invalid`);
+      }
+      continue;
+    }
+    if (entry.op === "restore") {
+      assertExactKeys(entry, ["confirmed", "op", "text"], entryLabel);
+      if (typeof entry.confirmed !== "boolean") {
+        throw new Error(`${entryLabel}.confirmed must be a boolean`);
+      }
+      if (typeof entry.text !== "string") {
+        throw new Error(`${entryLabel}.text must be a string`);
+      }
+      continue;
+    }
+    throw new Error(`${entryLabel}.op is invalid`);
+  }
+  if (!Array.isArray(record.result.files)) {
+    throw new Error(`${label}.result.files must be an array`);
+  }
+  for (const [index, entry] of record.result.files.entries()) {
+    const entryLabel = `${label}.result.files[${index}]`;
+    assertExactKeys(entry, ["path", "sha256"], entryLabel);
+    if (typeof entry.path !== "string") {
+      throw new Error(`${entryLabel}.path is invalid`);
+    }
+    if (
+      entry.sha256 !== null &&
+      (typeof entry.sha256 !== "string" || !LOWER_SHA256.test(entry.sha256))
+    ) {
+      throw new Error(`${entryLabel}.sha256 is invalid`);
+    }
+  }
+}
+
 function validateGitResult(record, label) {
   assertExactKeys(record.result, ["disposition", "code"], `${label}.result`);
   if (record.result.disposition !== "unavailable") {
@@ -377,17 +450,21 @@ function validateGitResult(record, label) {
 }
 
 // Statuses a default-tools runner can emit through scenario inputs
-// today: approvals are driven directly, the token is never
-// cancelled, and no backend executes. `cancelled`, `timed_out`,
-// `output_limit`, `sandbox_denied`, `workspace_violation`, and
-// `unavailable` are admitted only when a runner can emit them;
-// until then they fail validation instead of passing silently.
+// today: approvals are driven directly and no live backend
+// executes, but the scripted stub backend replays timeout and
+// cancellation outcomes deterministically (`bash-executes`
+// scenarios, ADR 0038 Phase C). `output_limit`,
+// `sandbox_denied`, `workspace_violation`, and `unavailable` are
+// admitted only when a runner can emit them; until then they fail
+// validation instead of passing silently.
 const DEFAULT_TOOLS_STATUSES = new Set([
   "success",
   "invalid_input",
   "denied",
   "conflict",
   "failed",
+  "cancelled",
+  "timed_out",
   "sandbox_unavailable",
 ]);
 
@@ -467,6 +544,7 @@ export {
   validateRevisionResult,
   validateSearchResult,
   validateUiComponentsResult,
+  validateUndoResult,
 };
 
 // Statuses a ui-components authoring op can report: production

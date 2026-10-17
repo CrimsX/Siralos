@@ -1,0 +1,46 @@
+{
+  "env": {},
+  "id": "undo.restore-recreate",
+  "input": {
+    "checkpoints": [
+      {
+        "id": "cp_9000000021",
+        "preimage": "undo before\n",
+        "record": {
+          "after": {
+            "byteLength": null,
+            "exists": false,
+            "sha256": null
+          },
+          "before": {
+            "byteLength": 12,
+            "exists": true,
+            "sha256": "89815cb5a18729bf7759055eefc4ba4df2bccb5f8d199e08d562659001c9dcd8"
+          },
+          "createdAt": "2026-01-01T00:00:00Z",
+          "operation": "delete",
+          "preview": {
+            "addedLines": 1,
+            "removedLines": 0
+          },
+          "relativePath": "gone.txt",
+          "state": "applied",
+          "toolName": "write"
+        }
+      }
+    ],
+    "fingerprint": "fixture-undo-restore-recreate",
+    "ops": [
+      {
+        "confirmed": true,
+        "id": "cp_9000000021",
+        "op": "restore"
+      }
+    ],
+    "verifyPaths": ["gone.txt"],
+    "workspaceFiles": {}
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "undo"
+}

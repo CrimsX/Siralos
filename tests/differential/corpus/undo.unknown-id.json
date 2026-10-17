@@ -1,0 +1,22 @@
+{
+  "env": {},
+  "id": "undo.unknown-id",
+  "input": {
+    "checkpoints": [],
+    "fingerprint": "fixture-undo-unknown-id",
+    "ops": [
+      {
+        "id": "cp_0000000000",
+        "op": "plan"
+      },
+      {
+        "op": "last"
+      }
+    ],
+    "verifyPaths": [],
+    "workspaceFiles": {}
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "undo"
+}

@@ -280,6 +280,19 @@ fn run_scenario(
                 "result": result,
             }))
         }
+        SUBJECT_UNDO => {
+            let input = scenario
+                .input
+                .as_ref()
+                .expect("undo input was validated while loading the corpus");
+            let result = undo_record(&scenario.id, input)?;
+            Ok(json!({
+                "scenarioId": scenario.id,
+                "subject": scenario.subject,
+                "outcome": "COMPLETED",
+                "result": result,
+            }))
+        }
         SUBJECT_LANGUAGE_DIAGNOSTICS => {
             let input = scenario.input.as_ref().expect(
                 "language input was validated while loading the corpus",

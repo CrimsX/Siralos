@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 86,
+  "corpusVersion": 88,
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -401,6 +401,22 @@
     {
       "file": "context-tool.json",
       "sha256": "5012c57af2c9eb68b390882ace6a9260c1c77d0fb4a349aacc0f8ede4274f4fc"
+    },
+    {
+      "file": "default-tools.bash-executes.cancelled.json",
+      "sha256": "1de67c58f2dece9d4dfa875b70f692f22e1cfb82c457d7e1ede88a3d11474864"
+    },
+    {
+      "file": "default-tools.bash-executes.nonzero.json",
+      "sha256": "8960853ed6e36a4aba94a3193f2b0db8946d8cdd74b815b2e3ca193455bd8b9e"
+    },
+    {
+      "file": "default-tools.bash-executes.success.json",
+      "sha256": "e7450ff0430bb7e2ac874cf423a57022c5a5fd409e4688abdb35edcbbe24ddab"
+    },
+    {
+      "file": "default-tools.bash-executes.timeout.json",
+      "sha256": "59999041de20dfdb28d1ffff3e4367107f088940ecbb55c1357a81f05a82ab4c"
     },
     {
       "file": "default-tools.bash-unavailable.json",
@@ -1231,6 +1247,58 @@
       "sha256": "22743ef7e304e367fcde08b1f78c32a30d47b93d58a88e5365af570c777d9e7c"
     },
     {
+      "file": "undo.double-restore.json",
+      "sha256": "d8587e8956271af01d4c616dee1a04904ccf8e3f50d57deb6e34694301589da1"
+    },
+    {
+      "file": "undo.intruder.json",
+      "sha256": "1b4e7859f2e820ccb55fdfbf20ece0027c92e86486d5d3790ea88319e9f57c5a"
+    },
+    {
+      "file": "undo.last.json",
+      "sha256": "9270c7a1be87c26bfc25f823c7eca21a66676676aee8573c48e7cfe2722c01f5"
+    },
+    {
+      "file": "undo.list.json",
+      "sha256": "c722a16e1f55a9f888209a129a98d7d4b7015754a305dcf11957bc67a96134aa"
+    },
+    {
+      "file": "undo.poison.json",
+      "sha256": "c16a449c632e593f538896f08d9213104c6279e54f471dc204c6f59248b3d7aa"
+    },
+    {
+      "file": "undo.protected.json",
+      "sha256": "854042b14e2b422a9958a93baf7e136eabd1b74a397ba189d6c0a4540e054ce4"
+    },
+    {
+      "file": "undo.restore-ok.json",
+      "sha256": "88cf8c1c550fa6c078abdbec2d3d8383a7e76e1069cc34acfb32d476afb21573"
+    },
+    {
+      "file": "undo.restore-recreate.json",
+      "sha256": "a9026ab0be61e56f44b0250484f45ca1c502086acd8fffa12d3982f4139856d5"
+    },
+    {
+      "file": "undo.stale.json",
+      "sha256": "cea4568a9e1559dfea24e6a767848ff04b1c3047815bac1709791bbaa0b482bb"
+    },
+    {
+      "file": "undo.tamper.json",
+      "sha256": "7d6bcd29d68d902d898b718081eb2f11398851bfbf258e3eeb3c2e6292554428"
+    },
+    {
+      "file": "undo.traversal.json",
+      "sha256": "37d787237ae8ca0330a0ddb1a0b8b3903c88ed15e0a1adf62bec752397f5a8da"
+    },
+    {
+      "file": "undo.unconfirmed.json",
+      "sha256": "b3d44bc8f9b9fe4b2cb1acfd0be2b146d0df10eefa6c32918d95c441b367cb69"
+    },
+    {
+      "file": "undo.unknown-id.json",
+      "sha256": "2ea1a98a35eeb4fa3c19fa24bad4f745b3083814d6eee525e62acedf8a9d9497"
+    },
+    {
       "file": "user-config-matrix.json",
       "sha256": "5c50ed7508faa104a8f186043c0ba076c32f97bd8f3c9470fda5bdaeea94ad7f"
     },
@@ -1335,5 +1403,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "7602e5788250c9afe21ebe320b1e11aa1a1ef0962b6a8a8c8ab6be702ea572a3"
+  "corpusSha256": "287e5d78348adcaa4889028cb6f6fee223cb3715cccc27ade7427752a75b1193"
 }

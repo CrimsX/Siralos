@@ -1,0 +1,27 @@
+{
+  "env": {},
+  "id": "undo.poison",
+  "input": {
+    "checkpoints": [
+      {
+        "id": "cp_9000000081",
+        "raw": "{oops"
+      }
+    ],
+    "fingerprint": "fixture-undo-poison",
+    "ops": [
+      {
+        "confirmed": true,
+        "id": "cp_9000000081",
+        "op": "restore"
+      }
+    ],
+    "verifyPaths": ["a.txt"],
+    "workspaceFiles": {
+      "a.txt": "undo after\n"
+    }
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "undo"
+}

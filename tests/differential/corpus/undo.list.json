@@ -1,0 +1,123 @@
+{
+  "env": {},
+  "id": "undo.list",
+  "input": {
+    "checkpoints": [
+      {
+        "id": "cp_9000000001",
+        "preimage": "undo before\n",
+        "record": {
+          "after": {
+            "byteLength": 11,
+            "exists": true,
+            "sha256": "42edaaaa4e483c9b605662b6997296ce1428549bbde35bf3d83150866c762a7e"
+          },
+          "before": {
+            "byteLength": 12,
+            "exists": true,
+            "sha256": "89815cb5a18729bf7759055eefc4ba4df2bccb5f8d199e08d562659001c9dcd8"
+          },
+          "createdAt": "2026-01-01T00:00:00Z",
+          "operation": "update",
+          "preview": {
+            "addedLines": 1,
+            "removedLines": 0
+          },
+          "relativePath": "a.txt",
+          "state": "applied",
+          "toolName": "write"
+        }
+      },
+      {
+        "id": "cp_9000000002",
+        "record": {
+          "after": {
+            "byteLength": 11,
+            "exists": true,
+            "sha256": "42edaaaa4e483c9b605662b6997296ce1428549bbde35bf3d83150866c762a7e"
+          },
+          "before": {
+            "byteLength": null,
+            "exists": false,
+            "sha256": null
+          },
+          "createdAt": "2026-01-01T00:00:01Z",
+          "operation": "create",
+          "preview": {
+            "addedLines": 1,
+            "removedLines": 0
+          },
+          "relativePath": "b.txt",
+          "state": "applied",
+          "toolName": "write"
+        }
+      },
+      {
+        "id": "cp_9000000003",
+        "preimage": "undo before\n",
+        "record": {
+          "after": {
+            "byteLength": 11,
+            "exists": true,
+            "sha256": "42edaaaa4e483c9b605662b6997296ce1428549bbde35bf3d83150866c762a7e"
+          },
+          "before": {
+            "byteLength": 12,
+            "exists": true,
+            "sha256": "89815cb5a18729bf7759055eefc4ba4df2bccb5f8d199e08d562659001c9dcd8"
+          },
+          "createdAt": "2026-01-01T00:00:02Z",
+          "operation": "update",
+          "preview": {
+            "addedLines": 1,
+            "removedLines": 0
+          },
+          "relativePath": "c.txt",
+          "state": "prepared",
+          "toolName": "write"
+        }
+      },
+      {
+        "id": "cp_9000000004",
+        "preimage": "undo before\n",
+        "record": {
+          "after": {
+            "byteLength": 11,
+            "exists": true,
+            "sha256": "42edaaaa4e483c9b605662b6997296ce1428549bbde35bf3d83150866c762a7e"
+          },
+          "before": {
+            "byteLength": 12,
+            "exists": true,
+            "sha256": "89815cb5a18729bf7759055eefc4ba4df2bccb5f8d199e08d562659001c9dcd8"
+          },
+          "createdAt": "2026-01-01T00:00:03Z",
+          "operation": "update",
+          "preview": {
+            "addedLines": 1,
+            "removedLines": 0
+          },
+          "relativePath": "d.txt",
+          "state": "applied",
+          "toolName": "test-tool"
+        }
+      }
+    ],
+    "fingerprint": "fixture-undo-list",
+    "ops": [
+      {
+        "op": "list"
+      }
+    ],
+    "verifyPaths": [],
+    "workspaceFiles": {
+      "a.txt": "undo after\n",
+      "b.txt": "undo after\n",
+      "c.txt": "undo after\n",
+      "d.txt": "undo after\n"
+    }
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "undo"
+}

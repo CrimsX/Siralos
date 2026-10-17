@@ -91,6 +91,7 @@ import {
   validateRevisionResult,
   validateSearchResult,
   validateUiComponentsResult,
+  validateUndoResult,
 } from "./workspace-ops.mjs";
 
 function validateCompletedResult(record, label) {
@@ -145,6 +146,10 @@ function validateCompletedResult(record, label) {
   }
   if (record.subject === "checkpoint") {
     validateCheckpointResult(record, label);
+    return;
+  }
+  if (record.subject === "undo") {
+    validateUndoResult(record, label);
     return;
   }
   if (record.subject === "git-inspection") {
