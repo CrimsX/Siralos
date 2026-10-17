@@ -774,11 +774,32 @@ pub(crate) fn compose_session(
             );
         }
     }
-    // ADR 0038: the `bash` default tool joins the registry unconditionally
-    // (it needs no store). It reports typed `sandbox_unavailable`
-    // wherever no live probe proves enforcement — registration makes
-    // the refusal reachable, never execution.
-    tools.push(Box::new(BashTool::new(&workspace_root)?));
+    // ADR 0038 Phase C: the `bash` default tool joins the registry
+    // unconditionally (it needs no store). The production session
+    // prefers the pinned enforcing backend where its live canary
+    // passes right now, and takes the honest host refusal
+    // otherwise — registration makes the refusal reachable, and
+    // execution runs only under proven enforcement. The corpus
+    // keeps pinning the host refusal through `BashTool::new`, so
+    // this selection never perturbs byte-parity.
+    let bash_backend: Box<dyn siralos_core::runtime::sandbox::SandboxBackend> = {
+        use siralos_core::runtime::sandbox::{
+            SandboxAvailability, SandboxBackend,
+        };
+        let enforcing =
+            siralos_adapters::process::enforcing_backend::SrtEnforcingBackend::new(
+            );
+        match enforcing.probe() {
+            SandboxAvailability::Available(_) => Box::new(enforcing),
+            SandboxAvailability::Unavailable(_) => Box::new(
+                siralos_adapters::process::sandbox_backend::HostSandboxBackend,
+            ),
+        }
+    };
+    tools.push(Box::new(BashTool::with_backend(
+        &workspace_root,
+        bash_backend,
+    )?));
     // R7.4 profiles select the built-in fail-closed posture; they never
     // grant a Tool. Read-only workspace inspection is allowed and its
     // decision is still checked per call; workspace mutation defaults

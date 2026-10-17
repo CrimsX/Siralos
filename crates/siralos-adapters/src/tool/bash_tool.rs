@@ -88,9 +88,14 @@ fn parse_command(input: &Value) -> Result<String, ToolExecutionResult> {
 }
 
 /// Reviewable preview of a `bash` proposal: the exact command, its
-/// content identity, and the enforcement the probe reports today.
-/// Read-only: the probe spawns nothing.
-fn bash_preview(command: &str) -> ApprovalPreview {
+/// content identity, and the enforcement the backend's probe
+/// reports today. Read-only over the host backend; the enforcing
+/// backend's probe runs its live canary (a sandboxed no-op), never
+/// the proposed command.
+fn bash_preview(
+    backend: &dyn SandboxBackend,
+    command: &str,
+) -> ApprovalPreview {
     let hex = sha256_hex(command.as_bytes());
     // Character bound is the shared core approval bound; the marker
     // wording stays unit-accurate per tool (characters here, lines
@@ -106,7 +111,6 @@ fn bash_preview(command: &str) -> ApprovalPreview {
             command.chars().count() - MAX_APPROVAL_PREVIEW_LINE_CHARS
         ));
     }
-    let backend = HostSandboxBackend;
     match backend.probe() {
         SandboxAvailability::Available(_) => {
             lines.push("enforcement: live probe passed".to_owned());
@@ -123,20 +127,23 @@ fn bash_preview(command: &str) -> ApprovalPreview {
 /// Requires a one-time host approval for the exact command digest;
 /// reports typed `SandboxUnavailable` wherever enforcement is
 /// unproven. Registered in the interactive session tool set so the
-/// refusal is reachable; execution stays closed until a live probe
-/// passes.
+/// refusal is reachable; execution runs only under a backend whose
+/// live probe passes.
 pub struct BashTool {
     definition: ToolDefinition,
     capability: CapabilityId,
-    backend: HostSandboxBackend,
+    backend: Box<dyn SandboxBackend>,
     workdir: PathBuf,
 }
 
 impl BashTool {
     /// Construct the adapter over a canonicalized workspace root,
     /// which becomes the confined working directory for commands
-    /// run under a future enforcing backend. Infallible execution
-    /// posture is unchanged: the backend probes lazily at
+    /// run under an enforcing backend. The host backend answers
+    /// every probe honestly negative, so this posture refuses
+    /// without spawning on every platform: the differential corpus
+    /// pins it byte-exactly through this constructor. Infallible
+    /// execution posture is unchanged: the backend probes lazily at
     /// execution, never at construction.
     ///
     /// # Errors
@@ -144,6 +151,26 @@ impl BashTool {
     /// Returns [`WorkspaceRootError`] when the root cannot be
     /// canonicalized.
     pub fn new(root: &Path) -> Result<Self, WorkspaceRootError> {
+        Self::with_backend(root, Box::new(HostSandboxBackend))
+    }
+
+    /// Construct the adapter over an explicit backend: the
+    /// production session selects the enforcing backend
+    /// (`crate::process::enforcing_backend::SrtEnforcingBackend`)
+    /// where its live probe passes (falling back to the host
+    /// refusal), and the differential harness drives scripted
+    /// backends through this constructor to pin the runner mapping
+    /// deterministically. The backend probes lazily at execution,
+    /// never at construction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceRootError`] when the root cannot be
+    /// canonicalized.
+    pub fn with_backend(
+        root: &Path,
+        backend: Box<dyn SandboxBackend>,
+    ) -> Result<Self, WorkspaceRootError> {
         Ok(Self {
             definition: ToolDefinition {
                 name: BASH_TOOL_NAME.to_owned(),
@@ -163,7 +190,7 @@ impl BashTool {
                 }),
             },
             capability: bash_capability(),
-            backend: HostSandboxBackend,
+            backend,
             workdir: resolve_workspace_root(root)?,
         })
     }
@@ -187,7 +214,7 @@ impl Tool for BashTool {
         if command.len() > MAX_BASH_COMMAND_BYTES {
             return None;
         }
-        Some(bash_preview(&command))
+        Some(bash_preview(&*self.backend, &command))
     }
 
     fn execute(
@@ -195,7 +222,7 @@ impl Tool for BashTool {
         input: &Value,
         cancellation: CancellationSignal<'_>,
     ) -> ToolExecutionResult {
-        execute_bash(&self.backend, &self.workdir, input, cancellation)
+        execute_bash(&*self.backend, &self.workdir, input, cancellation)
     }
 }
 
