@@ -793,18 +793,30 @@ later session needs must appear here or in a commit.
    deliver; rejecting control characters in the path would change behaviour, so it
    needs its own reviewed decision.
 
-4. **The default-tools campaign (ADR 0038) lands in phases; the posture
-   has flipped for `write`/`edit` only.** `read`/`write`/`edit` are registered default tools
+4. **The default-tools campaign (ADR 0038) lands in phases; `write`/`edit`, undo, and `bash` enforcement are wired.** `read`/`write`/`edit` are registered default tools
    behind their gates (containment, protected paths, atomic writers,
    auto-checkpoint, per-action approval), each backed by its adversarial
    suite — the substitution-gate repair (requested-name stability plus
    commit-time parent identity, ADR 0038 §10) and the live interactive
-   approval prompt are in. What stays closed: file deletion (D5, no
-   delete tool), undo surfaces (`apply_undo` is a tested primitive with
-   no wired surface), `bash` (typed `sandbox_unavailable`; no enforcing
-   backend is pinned), private run directories, Git inspection, and
-   Godot surfaces. Corpus v86 (333 scenarios) pins the new behavior
-   with candidate-authored `default-tools` and `ui-components` expectation records and a
+   approval prompt are in. Checkpoint undo is a user operation (`/undo`,
+   `/undo <id>`, `/undo --last`) restoring `write`/`edit` preimages
+   byte-exactly behind an explicit confirmation (corpus v87, thirteen
+   `undo` subjects). `bash` runs under the pinned Sandbox Runtime
+   (`0.0.70`) where its live canary passes: version-pinned resolution,
+   per-execution offline settings (deny-root-re-allow grants), argv-mode
+   invocation, bounded streams, timeout/cancel kill, and a typed refusal
+   wherever enforcement is unproven — including all of Windows by
+   construction, which stays a named follow-up milestone. The runner
+   mapping is pinned by four `bash-executes` corpus subjects (stub
+   backend, v88); live enforcement rows (grandchild reaping,
+   timeout/cancel kill, loopback denial, allowlist env, closed stdin,
+   workdir confinement) are implemented as opt-in Unix tests
+   (`SIRALOS_PROVE_SRT=1`) and recorded unknown until CI proves them —
+   wiring CI to install the pinned runtime and set the variable is
+   itself a pending owner decision. What stays closed: file deletion (D5, no
+   delete tool), private run directories, Git inspection, and
+   Godot surfaces. Corpus v88 (350 scenarios) pins the new behavior
+   with candidate-authored `default-tools`, `ui-components`, and `undo` expectation records and a
    printed audit; no frozen record was edited.
 
 ### Blocked

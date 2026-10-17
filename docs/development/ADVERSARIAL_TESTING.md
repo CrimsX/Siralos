@@ -102,6 +102,30 @@ validation, state transitions). There is no repository-wide percentage
 objective; generated/error-only boilerplate is not artificially tested.
 Results are recorded per milestone in the R2.5 report.
 
+## Bash enforcement adversarial coverage
+
+The `bash` surface ([ADR 0038](../adr/0038-default-mutable-execution-tools.md),
+Phase C) is covered in three layers. Unit-pinned on every host:
+refusal without enforcement (host and enforcing backends, marker
+file absent), the `package.json` version gate (never `--version`),
+offline settings shape (deny-all network, deny-root-re-allow
+grants, relative workdirs refused), CLI-marker infrastructure
+mapping versus child-status passthrough, and stub-supervisor rows
+for argv shaping, exit passthrough, settings cleanup, timeout
+kill, and cancel kill. Corpus-pinned deterministically (v88):
+four `bash-executes` subjects (success, nonzero exit, timeout,
+cancellation) through the stub backend, plus the unchanged
+`bash-unavailable` host-refusal record. Live rows (Unix-only,
+opt-in behind `SIRALOS_PROVE_SRT=1`, failing — never skipping —
+when proof is requested but refused): grandchild reaping,
+timeout/cancel kill, loopback denial against a live listener,
+allowlist environment, closed stdin, and workdir confinement.
+Status on this Windows working tree: every live row is `unknown`
+(the Windows rows pin the refusal path and are green); CI wiring
+to install the pinned runtime and set the variable on the Linux
+gate and macOS platform jobs is a pending owner decision, so no
+live enforcement is claimed here.
+
 ## UI component adversarial coverage
 
 The declarative UI surface ([ADR 0039](../adr/0039-modular-terminal-ui-components.md))

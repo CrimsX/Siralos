@@ -31,7 +31,7 @@
   recorded only in [ROADMAP.md](ROADMAP.md), the canonical status source. This
   file states rules; it does not restate status.
 - Working read-only surfaces include the deterministic fake provider, bounded workspace list/read/search, local-directory references, denied-by-default bounded research adapters, self-reference, capability diagnostics, and the interactive CLI.
-- Default mutation and execution tools are live behind their gates: `read`/`write`/`edit` (containment, protected paths, atomic writers, auto-checkpoint, per-action approval; amended corpus) while `bash` reports typed `sandbox_unavailable` (no enforcing backend is pinned); file deletion stays unavailable (D5).
+- Default mutation and execution tools are live behind their gates: `read`/`write`/`edit` (containment, protected paths, atomic writers, auto-checkpoint, per-action approval; amended corpus) while `bash` runs under the pinned Sandbox Runtime (`0.0.70`) where its live canary passes (version-pinned resolution, per-execution offline settings, argv-mode invocation, bounded streams, timeout/cancel kill) and reports typed `sandbox_unavailable` wherever enforcement is unproven — including all of Windows by construction; file deletion stays unavailable (D5). Checkpoint undo is a user operation (`/undo`, `/undo <id>`, `/undo --last`) restoring `write`/`edit` preimages byte-exactly behind an explicit confirmation, covered by adversarial tests; the model gets no undo tool.
 - Task contracts, snapshots, plans, evidence, provider requests, tool definitions, and public result values must be detached from caller-owned mutable data. Task state is host-owned; model completion is only a request evaluated by host gates.
 - Provider streams and tool loops are bounded, protocol-checked, cancellation-aware, transcript-paired, and sanitized at the terminal boundary. Provider output and external content are always untrusted data.
 - Planning is host-routed and structurally read-only. Plan approval binds only to the exact plan and task revisions and never grants edit, command, checkpoint, sandbox, or research authority.
@@ -41,7 +41,7 @@
 
 The following surfaces intentionally report `unavailable` and perform no filesystem mutation or process launch:
 
-- workspace delete application and safe undo (no delete tool exists by D5; `apply_undo` is a tested primitive with no wired surface);
+- workspace delete application (no delete tool exists by D5);
 - private run-directory creation or cleanup;
 - `node-script` and `npm-script` command execution;
 - Git inspection;

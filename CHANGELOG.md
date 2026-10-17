@@ -40,6 +40,40 @@ and the number does not change any of it.
   candidate-authored expectation records and a printed audit; the
   frozen oracle bundle is byte-identical.
 
+- **Checkpoint undo as a user operation**
+  ([ADR 0038](docs/adr/0038-default-mutable-execution-tools.md)).
+  `/undo` lists restorable checkpoints, `/undo <id>` and
+  `/undo --last` restore `write`/`edit` preimages byte-exactly
+  behind an explicit confirmation (target, bytes, digest shown
+  first). Prepared, uncertain, conflicted, foreign-tool,
+  protected, and escaping records refuse typed; only the addressed
+  record's own unverifiable metadata or preimage blocks its
+  restore (unrelated store content never disables a valid undo
+  and is never repaired); undo-of-create stays
+  unavailable (D5). The model gets no undo tool. The corpus moved
+  to v87 with thirteen new `undo` subjects pinned by
+  candidate-authored expectation records and a printed audit; the
+  frozen oracle bundle is byte-identical.
+
+- **Pinned `bash` enforcement** (Phase C of the same ADR 0038
+  campaign). The production session prefers the enforcing backend
+  over the pinned Sandbox Runtime (`0.0.70`) where its live canary
+  passes — version-pinned resolution (never `--version`, which the
+  CLI reports unreliably), per-execution offline settings
+  (deny-all network, deny-root-re-allow filesystem grants around
+  the workspace), argv-mode invocation, closed stdin, allowlist
+  environment, bounded streams with explicit truncation flags, and
+  timeout/cancel kill — and takes the honest host refusal
+  otherwise, including all of Windows by construction. The corpus
+  moved to v88 with four new `bash-executes` subjects pinning the
+  runner mapping (success, nonzero exit, timeout, cancellation)
+  through a deterministic stub backend, plus re-stamped guards;
+  the frozen oracle bundle is byte-identical. Live enforcement
+  rows (grandchild reaping, timeout/cancel kill, loopback denial,
+  allowlist environment, closed stdin, workdir confinement) exist
+  as opt-in Unix tests and are recorded unknown until CI proves
+  them.
+
 - **Headless mode.** `siralos --print "<prompt>" [--json] [--cwd <dir>]` answers
   one prompt with no interactive frontend, which is what makes scripted and CI
   use possible. The grammar refuses a repeated flag instead of silently taking
