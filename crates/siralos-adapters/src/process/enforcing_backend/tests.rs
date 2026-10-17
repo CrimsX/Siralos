@@ -371,29 +371,48 @@ fn non_unix_execute_spawns_nothing() {
     );
 }
 
-// Live enforcement rows (C3). Unix-only and opt-in: they run
-// only with `SIRALOS_PROVE_SRT=1` and the pinned `srt` on PATH,
-// and they FAIL (never skip) when proof is requested but the
-// probe refuses — a skipped probe is never a pass. Without the
-// variable they pass vacuously and the ADR evidence table
-// records them `unknown`; the CI evidence is the test log
-// showing each row PROVEN.
+// Live enforcement rows (C3). Unix-only and opt-in: each row is
+// `#[ignore]`d and runs only when selected with `cargo test --
+// --ignored` together with `SIRALOS_PROVE_SRT=1` and the pinned
+// `srt` on PATH — an unrun check is never a green pass, so plain
+// `cargo test` creates no assertion about live enforcement at
+// all. A selected row that cannot prove (variable missing, probe
+// refusing) panics; a proven row prints `PROVEN` with the host
+// platform and the resolved runtime version. Only the loopback
+// row may report `UNKNOWN` without failing, when the tooling it
+// needs is absent — recorded, never a pass claimed on settings
+// alone.
 #[cfg(unix)]
-fn require_live_backend() -> Option<SrtEnforcingBackend> {
+fn require_live_backend() -> SrtEnforcingBackend {
     if std::env::var("SIRALOS_PROVE_SRT").is_err() {
-        eprintln!(
-            "SKIP live row: set SIRALOS_PROVE_SRT=1 with srt 0.0.70 on \
-             PATH to prove (recorded unknown until then)"
+        panic!(
+            "live row demands proof: run with SIRALOS_PROVE_SRT=1 and \
+             srt@{PINNED_SRT_VERSION} on PATH (an unrun check is never a \
+             pass)"
         );
-        return None;
     }
     let backend = SrtEnforcingBackend::new();
     match backend.probe() {
-        SandboxAvailability::Available(_) => Some(backend),
+        SandboxAvailability::Available(_) => backend,
         SandboxAvailability::Unavailable(reason) => {
             panic!("SIRALOS_PROVE_SRT=1 but the live probe refuses: {reason}")
         }
     }
+}
+
+/// The proof record: platform and runtime version travel with the
+/// PROVEN line, so the ADR evidence table is mechanically backed
+/// by the test log.
+#[cfg(unix)]
+fn print_proven(row: &str, backend: &SrtEnforcingBackend) {
+    let binary =
+        backend.binary().expect("a proven backend resolved its binary");
+    let version = read_srt_version(&binary)
+        .expect("a proven backend is the pinned distribution");
+    eprintln!(
+        "PROVEN {row} platform={} srt@{PINNED_SRT_VERSION}={version}",
+        std::env::consts::OS
+    );
 }
 
 #[cfg(unix)]
@@ -432,9 +451,10 @@ fn row_command(
 }
 
 #[cfg(unix)]
+#[ignore = "live row: run with --ignored, SIRALOS_PROVE_SRT=1, srt@0.0.70 on PATH"]
 #[test]
 fn live_row_grandchild_reaping_kills_the_tree() {
-    let Some(backend) = require_live_backend() else { return };
+    let backend = require_live_backend();
     let workdir = live_workdir("reap");
     let marker = workdir.join("late-marker");
     let token = CancellationToken::new();
@@ -459,14 +479,15 @@ fn live_row_grandchild_reaping_kills_the_tree() {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
     assert!(!marker.exists(), "tree confinement proved: no marker");
-    eprintln!("PROVEN live_row_grandchild_reaping_kills_the_tree");
+    print_proven("live_row_grandchild_reaping_kills_the_tree", &backend);
     let _ = std::fs::remove_dir_all(&workdir);
 }
 
 #[cfg(unix)]
+#[ignore = "live row: run with --ignored, SIRALOS_PROVE_SRT=1, srt@0.0.70 on PATH"]
 #[test]
 fn live_row_timeout_kill_terminates() {
-    let Some(backend) = require_live_backend() else { return };
+    let backend = require_live_backend();
     let workdir = live_workdir("timeout");
     let token = CancellationToken::new();
     let outcome = backend
@@ -478,14 +499,15 @@ fn live_row_timeout_kill_terminates() {
         .expect("timeout row returns a run");
     assert!(outcome.timed_out, "{outcome:?}");
     assert_eq!(outcome.status_code, None);
-    eprintln!("PROVEN live_row_timeout_kill_terminates");
+    print_proven("live_row_timeout_kill_terminates", &backend);
     let _ = std::fs::remove_dir_all(&workdir);
 }
 
 #[cfg(unix)]
+#[ignore = "live row: run with --ignored, SIRALOS_PROVE_SRT=1, srt@0.0.70 on PATH"]
 #[test]
 fn live_row_cancel_kills() {
-    let Some(backend) = require_live_backend() else { return };
+    let backend = require_live_backend();
     let workdir = live_workdir("cancel");
     // Single-threaded cooperative cancel: the token is already
     // cancelled, so the wait loop kills the supervisor right
@@ -501,14 +523,15 @@ fn live_row_cancel_kills() {
         .expect("cancel row returns a run");
     assert!(outcome.cancelled, "{outcome:?}");
     assert!(!outcome.timed_out);
-    eprintln!("PROVEN live_row_cancel_kills");
+    print_proven("live_row_cancel_kills", &backend);
     let _ = std::fs::remove_dir_all(&workdir);
 }
 
 #[cfg(unix)]
+#[ignore = "live row: run with --ignored, SIRALOS_PROVE_SRT=1, srt@0.0.70 on PATH"]
 #[test]
 fn live_row_loopback_connect_is_denied() {
-    let Some(backend) = require_live_backend() else { return };
+    let backend = require_live_backend();
     let workdir = live_workdir("network");
     let token = CancellationToken::new();
     // Tooling gate: the row needs a connect primitive inside the
@@ -559,7 +582,7 @@ fn live_row_loopback_connect_is_denied() {
         "loopback connected: network denial broken: {text:?}"
     );
     if text.contains("DENIED") {
-        eprintln!("PROVEN live_row_loopback_connect_is_denied");
+        print_proven("live_row_loopback_connect_is_denied", &backend);
     } else {
         eprintln!("UNKNOWN live_row_loopback: {text:?}");
     }
@@ -567,9 +590,10 @@ fn live_row_loopback_connect_is_denied() {
 }
 
 #[cfg(unix)]
+#[ignore = "live row: run with --ignored, SIRALOS_PROVE_SRT=1, srt@0.0.70 on PATH"]
 #[test]
 fn live_row_environment_is_allowlisted() {
-    let Some(backend) = require_live_backend() else { return };
+    let backend = require_live_backend();
     let workdir = live_workdir("env");
     let token = CancellationToken::new();
     // The fixed layer always wins over the parent: TERM arrives
@@ -584,14 +608,15 @@ fn live_row_environment_is_allowlisted() {
     let text = String::from_utf8_lossy(&outcome.stdout);
     assert_eq!(outcome.status_code, Some(0), "{outcome:?}");
     assert!(text.contains("TERM=dumb"), "fixed env must win, got: {text:?}");
-    eprintln!("PROVEN live_row_environment_is_allowlisted");
+    print_proven("live_row_environment_is_allowlisted", &backend);
     let _ = std::fs::remove_dir_all(&workdir);
 }
 
 #[cfg(unix)]
+#[ignore = "live row: run with --ignored, SIRALOS_PROVE_SRT=1, srt@0.0.70 on PATH"]
 #[test]
 fn live_row_stdin_is_closed() {
-    let Some(backend) = require_live_backend() else { return };
+    let backend = require_live_backend();
     let workdir = live_workdir("stdin");
     let token = CancellationToken::new();
     let outcome = backend
@@ -604,14 +629,15 @@ fn live_row_stdin_is_closed() {
     let text = String::from_utf8_lossy(&outcome.stdout);
     assert_eq!(outcome.status_code, Some(0), "{outcome:?}");
     assert_eq!(text.trim(), "0", "stdin must be EOF, got: {text:?}");
-    eprintln!("PROVEN live_row_stdin_is_closed");
+    print_proven("live_row_stdin_is_closed", &backend);
     let _ = std::fs::remove_dir_all(&workdir);
 }
 
 #[cfg(unix)]
+#[ignore = "live row: run with --ignored, SIRALOS_PROVE_SRT=1, srt@0.0.70 on PATH"]
 #[test]
 fn live_row_workdir_confinement_holds() {
-    let Some(backend) = require_live_backend() else { return };
+    let backend = require_live_backend();
     let workdir = live_workdir("confine");
     let generation = super::CANARY_SEQUENCE
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -648,4 +674,23 @@ fn live_row_workdir_confinement_holds() {
     eprintln!("PROVEN live_row_workdir_confinement_holds");
     let _ = std::fs::remove_dir_all(&workdir);
     let _ = std::fs::remove_file(&escape);
+}
+
+// Outside the Unix rows entirely (every other platform): the rows
+// are structural facts about a Unix backend, so here they neither
+// compile nor run. This inventory entry keeps the unrun state
+// discoverable on such hosts — a recorded `UNKNOWN`, never a pass
+// claimed for enforcement.
+#[cfg(not(unix))]
+#[test]
+fn live_rows_are_unrun_unknown_on_this_platform() {
+    eprintln!(
+        "UNKNOWN live rows (unix-only) did not run on platform {}: \
+         [live_row_grandchild_reaping_kills_the_tree, \
+         live_row_timeout_kill_terminates, live_row_cancel_kills, \
+         live_row_loopback_connect_is_denied, \
+         live_row_environment_is_allowlisted, live_row_stdin_is_closed, \
+         live_row_workdir_confinement_holds]",
+        std::env::consts::OS
+    );
 }
