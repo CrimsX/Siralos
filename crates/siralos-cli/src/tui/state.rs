@@ -82,6 +82,15 @@ pub enum PendingApproval {
         /// Staged revision, if one was observable.
         token: Option<WorkspaceProfileWriteToken>,
     },
+    /// Checkpoint-undo y/N modal open with its addressed record.
+    /// The verdict executes the restore behind the recorded
+    /// confirmation (ADR 0038); denial cancels with no effect.
+    UndoRestore {
+        /// The open y/N modal (the exact restore prompt).
+        modal: ApprovalModal,
+        /// Checkpoint id to restore on approval.
+        checkpoint_id: String,
+    },
 }
 
 impl PendingApproval {
@@ -90,7 +99,8 @@ impl PendingApproval {
     pub fn modal(&self) -> Option<&ApprovalModal> {
         match self {
             Self::ToolApproval { modal, .. }
-            | Self::ProviderRemovalConfirm { modal, .. } => Some(modal),
+            | Self::ProviderRemovalConfirm { modal, .. }
+            | Self::UndoRestore { modal, .. } => Some(modal),
             Self::ToolApprovalDecided { .. }
             | Self::ProviderRemovalArmed { .. } => None,
         }
@@ -105,7 +115,8 @@ impl PendingApproval {
             Self::ToolApproval { exchange_id, .. }
             | Self::ToolApprovalDecided { exchange_id } => Some(*exchange_id),
             Self::ProviderRemovalArmed { .. }
-            | Self::ProviderRemovalConfirm { .. } => None,
+            | Self::ProviderRemovalConfirm { .. }
+            | Self::UndoRestore { .. } => None,
         }
     }
 

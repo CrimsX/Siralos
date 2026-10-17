@@ -20,7 +20,6 @@ use super::{
     render_ui_preview_text, safe_alias_for_display, sanitize_for_display,
     slash_command_catalog,
 };
-
 /// Run the default interactive session over process stdin/stdout.
 pub fn run_interactive_stdio() -> Result<(), InteractiveError> {
     // Owned buffered handles (not held locks): the approval hook
@@ -270,6 +269,71 @@ where
     }
 }
 
+/// Plan one undo restore, prompt for confirmation on the input
+/// queue, and execute on approval: the stdio shape of the
+/// confirmation gate (mirrors the provider-removal prompt).
+fn run_stdio_undo_for_id<W, R>(
+    writer: &Rc<RefCell<W>>,
+    reader: &Rc<RefCell<R>>,
+    workspace_root: &Path,
+    id: &str,
+) -> Result<(), InteractiveError>
+where
+    W: Write,
+    R: BufRead,
+{
+    let store = match crate::interactive::undo::open_undo_store(workspace_root)
+    {
+        Ok(store) => store,
+        Err(error) => {
+            let rendered =
+                sanitize_for_display(&format!("{}\n", error.message));
+            writer
+                .borrow_mut()
+                .write_all(rendered.as_bytes())
+                .map_err(InteractiveError::Io)?;
+            return Ok(());
+        }
+    };
+    let plan = match crate::interactive::undo::plan_undo_restore(&store, id) {
+        Ok(plan) => plan,
+        Err(error) => {
+            let rendered =
+                sanitize_for_display(&format!("{}\n", error.message));
+            writer
+                .borrow_mut()
+                .write_all(rendered.as_bytes())
+                .map_err(InteractiveError::Io)?;
+            return Ok(());
+        }
+    };
+    let prompt = sanitize_for_display(
+        &crate::interactive::undo::render_undo_prompt(&plan),
+    );
+    writer
+        .borrow_mut()
+        .write_all(prompt.as_bytes())
+        .map_err(InteractiveError::Io)?;
+    writer.borrow_mut().flush().map_err(InteractiveError::Io)?;
+    let decision = read_approval_via_input_queue(&mut *reader.borrow_mut())?;
+    let confirmation = if decision == crate::tui::ApprovalDecision::Approve {
+        crate::interactive::undo::UndoConfirmation::Confirmed
+    } else {
+        crate::interactive::undo::UndoConfirmation::Unconfirmed
+    };
+    let text = crate::interactive::undo::execute_undo_restore(
+        &store,
+        &plan.id,
+        confirmation,
+    );
+    let rendered = sanitize_for_display(&text);
+    writer
+        .borrow_mut()
+        .write_all(rendered.as_bytes())
+        .map_err(InteractiveError::Io)?;
+    Ok(())
+}
+
 /// Dispatch one parsed [`SlashCommand`] to the stdio writer — one of the
 /// two thin per-frontend writers over the shared parse + render helpers.
 /// Returns `true` when the loop must exit (`/exit`).
@@ -415,6 +479,57 @@ where
                 .borrow_mut()
                 .write_all(rendered.as_bytes())
                 .map_err(InteractiveError::Io)?;
+        }
+        SlashCommand::Undo(argument) => match argument {
+            None => {
+                let text = match crate::interactive::undo::open_undo_store(
+                    workspace_root,
+                ) {
+                    Ok(store) => {
+                        crate::interactive::undo::render_undo_list(&store)
+                    }
+                    Err(error) => format!("{}\n", error.message),
+                };
+                let rendered = sanitize_for_display(&text);
+                writer
+                    .borrow_mut()
+                    .write_all(rendered.as_bytes())
+                    .map_err(InteractiveError::Io)?;
+            }
+            Some(id) => {
+                run_stdio_undo_for_id(writer, reader, workspace_root, id)?;
+            }
+        },
+        SlashCommand::UndoLast => {
+            let store = match crate::interactive::undo::open_undo_store(
+                workspace_root,
+            ) {
+                Ok(store) => store,
+                Err(error) => {
+                    let rendered =
+                        sanitize_for_display(&format!("{}\n", error.message));
+                    writer
+                        .borrow_mut()
+                        .write_all(rendered.as_bytes())
+                        .map_err(InteractiveError::Io)?;
+                    return Ok(false);
+                }
+            };
+            let id = match crate::interactive::undo::resolve_last_restorable(
+                &store,
+            ) {
+                Ok(id) => id,
+                Err(error) => {
+                    let rendered =
+                        sanitize_for_display(&format!("{}\n", error.message));
+                    writer
+                        .borrow_mut()
+                        .write_all(rendered.as_bytes())
+                        .map_err(InteractiveError::Io)?;
+                    return Ok(false);
+                }
+            };
+            run_stdio_undo_for_id(writer, reader, workspace_root, &id)?;
         }
         SlashCommand::UiPreview(id) => {
             let state_dir = siralos_adapters::paths::state_dir().ok();

@@ -164,6 +164,35 @@ pub(super) fn handle_pending_approval_key_outcome(
     // the decided state for resume; a removal consumes its staged
     // revision. Anything else leaves no approval behind.
     let taken = tui_state.borrow_mut().pending_approval.take();
+    // Checkpoint-undo resolves through the recorded confirmation:
+    // approval executes the restore, denial cancels with no effect.
+    // Either way the modal is consumed above.
+    if let Some(crate::tui::PendingApproval::UndoRestore {
+        checkpoint_id,
+        ..
+    }) = taken
+    {
+        let confirmation = if decision == crate::tui::ApprovalDecision::Approve
+        {
+            super::undo::UndoConfirmation::Confirmed
+        } else {
+            super::undo::UndoConfirmation::Unconfirmed
+        };
+        let text = match super::undo::open_undo_store(workspace_root) {
+            Ok(store) => super::undo::execute_undo_restore(
+                &store,
+                &checkpoint_id,
+                confirmation,
+            ),
+            Err(error) => format!("{}\n", error.message),
+        };
+        let rendered = sanitize_for_display(&text);
+        let _ = sink.write_all(rendered.as_bytes());
+        return Some(ApprovalKeyOutcome {
+            decision,
+            removal_committed: false,
+        });
+    }
     let (confirming_removal, observed, exchange_id) = match taken {
         Some(crate::tui::PendingApproval::ProviderRemovalConfirm {
             token,
@@ -176,6 +205,11 @@ pub(super) fn handle_pending_approval_key_outcome(
             exchange_id,
             ..
         }) => (false, None, Some(exchange_id)),
+        // Undo restores return above; this arm is unreachable but
+        // keeps the match exhaustive over future variants.
+        Some(crate::tui::PendingApproval::UndoRestore { .. }) => {
+            (false, None, None)
+        }
         Some(crate::tui::PendingApproval::ToolApprovalDecided { .. })
         | None => (false, None, None),
     };

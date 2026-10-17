@@ -68,6 +68,52 @@ pub(super) fn refresh_panels_if_requested(
 /// manifests, the module selection and the context control — went with it
 /// (decision 168 R4: capability is authority, and the frontend may not hold
 /// authority it cannot enforce). Returns `true` when the loop must exit.
+/// Resolve one undo target and arm its confirmation modal: the
+/// TUI shape of the confirmation gate. A refusal renders as text;
+/// approval executes the restore behind the recorded confirmation
+/// when the modal verdict arrives.
+fn arm_undo_modal(
+    state: &Rc<RefCell<TuiState>>,
+    sink: &mut crate::tui::TuiSink,
+    workspace_root: &Path,
+    id: &str,
+) {
+    let store = match crate::interactive::undo::open_undo_store(workspace_root)
+    {
+        Ok(store) => store,
+        Err(error) => {
+            let rendered =
+                sanitize_for_display(&format!("{}\n", error.message));
+            let _ = sink.write_all(rendered.as_bytes());
+            return;
+        }
+    };
+    match crate::interactive::undo::plan_undo_restore(&store, id) {
+        Err(error) => {
+            let rendered =
+                sanitize_for_display(&format!("{}\n", error.message));
+            let _ = sink.write_all(rendered.as_bytes());
+        }
+        Ok(plan) => {
+            let mut guard = state.borrow_mut();
+            guard.pending_approval =
+                Some(crate::tui::PendingApproval::UndoRestore {
+                    // Sanitize at arming (worker.rs does the same for
+                    // tool approvals): record fields are hostile data
+                    // until they pass the output boundary, even though
+                    // the render path sanitizes again.
+                    modal: crate::tui::ApprovalModal::new(
+                        crate::interactive::undo::render_undo_prompt(&plan)
+                            .lines()
+                            .map(sanitize_for_display)
+                            .collect(),
+                    ),
+                    checkpoint_id: plan.id.clone(),
+                });
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn dispatch_tui_command(
     command: &SlashCommand<'_>,
@@ -207,6 +253,48 @@ pub(super) fn dispatch_tui_command(
                 id.unwrap_or(""),
             ));
             let _ = sink.write_all(rendered.as_bytes());
+        }
+        SlashCommand::Undo(argument) => match argument {
+            None => {
+                let text = match crate::interactive::undo::open_undo_store(
+                    workspace_root,
+                ) {
+                    Ok(store) => {
+                        crate::interactive::undo::render_undo_list(&store)
+                    }
+                    Err(error) => format!("{}\n", error.message),
+                };
+                let rendered = sanitize_for_display(&text);
+                let _ = sink.write_all(rendered.as_bytes());
+            }
+            Some(id) => {
+                arm_undo_modal(state, sink, workspace_root, id);
+            }
+        },
+        SlashCommand::UndoLast => {
+            let store = match crate::interactive::undo::open_undo_store(
+                workspace_root,
+            ) {
+                Ok(store) => store,
+                Err(error) => {
+                    let rendered =
+                        sanitize_for_display(&format!("{}\n", error.message));
+                    let _ = sink.write_all(rendered.as_bytes());
+                    return Ok(false);
+                }
+            };
+            let id = match crate::interactive::undo::resolve_last_restorable(
+                &store,
+            ) {
+                Ok(id) => id,
+                Err(error) => {
+                    let rendered =
+                        sanitize_for_display(&format!("{}\n", error.message));
+                    let _ = sink.write_all(rendered.as_bytes());
+                    return Ok(false);
+                }
+            };
+            arm_undo_modal(state, sink, workspace_root, &id);
         }
         SlashCommand::UiPreview(id) => {
             let answer = ask_worker(

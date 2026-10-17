@@ -2440,6 +2440,10 @@ fn t4_compose_session_is_the_single_shared_definition() {
             "bash"
         ]
     );
+    // Undo is a user operation, never a model tool: the registry
+    // must not grow an undo entry (exact list above already pins
+    // the seven; this names the rule).
+    assert!(!names.contains(&"undo"));
     // OFF: no context session, flag off.
     assert!(!session.context_system_enabled);
     assert!(session.context_session_holder.is_none());
@@ -2646,7 +2650,10 @@ fn slash_command_catalog_lists_provider_model_evolve() {
     assert!(names.contains(&"/ui-edit"));
     assert!(names.contains(&"/ui-remove"));
     assert!(names.contains(&"/ui-preview"));
-    assert_eq!(names.len(), 20);
+    assert!(names.contains(&"/undo"));
+    assert!(names.contains(&"/undo <id>"));
+    assert!(names.contains(&"/undo --last"));
+    assert_eq!(names.len(), 23);
 }
 
 #[test]
@@ -2693,6 +2700,22 @@ fn parse_slash_recognizes_provider_model_evolve() {
         SlashCommand::UiPreview(Some("my-panel"))
     ));
     assert!(!is_unknown_slash_command("/ui-list"));
+    assert!(matches!(parse_slash_command("/undo"), SlashCommand::Undo(None)));
+    assert!(matches!(
+        parse_slash_command("/undo cp_abc123def4"),
+        SlashCommand::Undo(Some("cp_abc123def4"))
+    ));
+    assert!(matches!(
+        parse_slash_command("/undo --last"),
+        SlashCommand::UndoLast
+    ));
+    assert!(!is_unknown_slash_command("/undo"));
+    assert!(!is_unknown_slash_command("/undo --last"));
+    assert!(matches!(
+        parse_slash_command("/undo --last extra"),
+        SlashCommand::Prompt("/undo --last extra")
+    ));
+    assert!(is_unknown_slash_command("/undo --last extra"));
     // Unknown still goes to prompt
     assert!(matches!(
         parse_slash_command("/unknown"),

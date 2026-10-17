@@ -47,6 +47,11 @@ pub(super) enum SlashCommand<'a> {
     UiRemove(Option<&'a str>),
     /// `/ui-preview` with optional component id (`None` = bare command).
     UiPreview(Option<&'a str>),
+    /// `/undo` with optional checkpoint id (`None` = bare command:
+    /// list restorable checkpoints).
+    Undo(Option<&'a str>),
+    /// `/undo --last` — restore the most recent restorable checkpoint.
+    UndoLast,
     /// `/evolve` — display-only (U8).
     Evolve,
     /// Anything else: a prompt for the application.
@@ -78,6 +83,9 @@ pub fn slash_command_catalog() -> Vec<(&'static str, &'static str)> {
         ("/ui-edit", "Edit a UI panel component"),
         ("/ui-remove", "Remove a UI panel component"),
         ("/ui-preview", "Preview a UI panel component"),
+        ("/undo", "List restorable checkpoints"),
+        ("/undo <id>", "Restore a checkpoint preimage"),
+        ("/undo --last", "Restore the most recent restorable checkpoint"),
         ("/evolve", "Show Stage 6 evolution surfaces"),
         ("/exit", "Exit the session"),
     ]
@@ -116,6 +124,8 @@ pub(super) fn parse_slash_command(input: &str) -> SlashCommand<'_> {
         "/ui-edit" => SlashCommand::UiEdit(None),
         "/ui-remove" => SlashCommand::UiRemove(None),
         "/ui-preview" => SlashCommand::UiPreview(None),
+        "/undo" => SlashCommand::Undo(None),
+        "/undo --last" => SlashCommand::UndoLast,
         "/model" => SlashCommand::Model(None),
         "/models" => SlashCommand::Models,
         "/reload" => SlashCommand::Reload,
@@ -140,6 +150,13 @@ pub(super) fn parse_slash_command(input: &str) -> SlashCommand<'_> {
                 SlashCommand::UiRemove(Some(id))
             } else if let Some(id) = input.strip_prefix("/ui-preview ") {
                 SlashCommand::UiPreview(Some(id))
+            } else if input.starts_with("/undo --last ") {
+                // `--last` takes no arguments: anything beyond the exact
+                // form stays an unknown command (honesty gate), matching
+                // `/models` and `/reload` above.
+                SlashCommand::Prompt(input)
+            } else if let Some(id) = input.strip_prefix("/undo ") {
+                SlashCommand::Undo(Some(id))
             } else if input.starts_with("/models") {
                 // `/models` takes no arguments: anything beyond the exact
                 // form stays an unknown command (honesty gate), exactly as

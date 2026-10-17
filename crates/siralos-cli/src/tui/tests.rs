@@ -1089,8 +1089,11 @@ mod context_pane_tests {
         assert!(names.contains(&"/ui-edit"));
         assert!(names.contains(&"/ui-remove"));
         assert!(names.contains(&"/ui-preview"));
+        assert!(names.contains(&"/undo"));
+        assert!(names.contains(&"/undo <id>"));
+        assert!(names.contains(&"/undo --last"));
         assert!(names.contains(&"/exit"));
-        assert_eq!(names.len(), 20);
+        assert_eq!(names.len(), 23);
     }
 
     #[test]
@@ -1099,7 +1102,7 @@ mod context_pane_tests {
         state.input = "/".to_owned();
         state.update_palette();
         let palette_len = state.palette.as_ref().expect("palette for /").len();
-        assert_eq!(palette_len, 20);
+        assert_eq!(palette_len, 23);
         // I3: palette shows ALL filtered entries, bounded by terminal height minus input/status rows; scroll indicator only if overflow.
         // At 80x24, available 21, 15 entries fit fully with no indicator.
         let buf = super::render(&state, 80, 24);
@@ -1947,8 +1950,8 @@ fn palette_bounded_and_prefix_highlight() {
     let mut state = TuiState::new();
     state.input = "/".to_owned();
     state.update_palette();
-    // Full catalog 20, palette shows all filtered entries
-    assert_eq!(state.palette.as_ref().unwrap().len(), 20);
+    // Full catalog 23, palette shows all filtered entries
+    assert_eq!(state.palette.as_ref().unwrap().len(), 23);
     let buf = render(&state, 80, 24);
     let content: String = buf.content().iter().map(|c| c.symbol()).collect();
     assert!(content.contains("/context"));

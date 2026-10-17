@@ -106,6 +106,7 @@ mod session;
 mod stdio;
 mod tui_loop;
 pub mod ui;
+pub mod undo;
 mod worker;
 
 use approval::StdioApprovalPrompter;
