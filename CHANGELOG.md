@@ -70,9 +70,12 @@ and the number does not change any of it.
   through a deterministic stub backend, plus re-stamped guards;
   the frozen oracle bundle is byte-identical. Live enforcement
   rows (grandchild reaping, timeout/cancel kill, loopback denial,
-  allowlist environment, closed stdin, workdir confinement) exist
-  as opt-in Unix tests and are recorded unknown until CI proves
-  them.
+  allowlist environment, closed stdin, workdir confinement) are
+  `#[ignore]`d Unix tests that demand selection (`--ignored` under
+  `SIRALOS_PROVE_SRT=1`) so an unrun check is never a green pass;
+  CI installs the pinned distribution and runs the rows on the
+  Linux gate and the macOS platform job, each proven row printing
+  `PROVEN <row> platform=<os> srt@0.0.70=<version>`.
 
 - **Headless mode.** `siralos --print "<prompt>" [--json] [--cwd <dir>]` answers
   one prompt with no interactive frontend, which is what makes scripted and CI

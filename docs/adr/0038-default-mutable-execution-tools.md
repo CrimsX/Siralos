@@ -266,33 +266,41 @@ survives the terminal sanitizer as inert text only. Platform
 rows: the refusal string itself is platform-stable by
 construction (the corpus pins it byte-exactly on every host);
 the Windows per-execution-grant/host-read gap lives in §2 and
-the probe reason, asserted by the backend unit tests. Live
-timeout-kill, grandchild reaping, and mid-run cancellation have
-no live row anywhere by construction (no spawn exists to
-observe); they are contract-level (limits/timeout/timeout-flag/
-cancel-flag types and their mappings), and a backend milestone
-must add live rows before claiming enforcement.
+the probe reason, asserted by the backend unit tests.
+Timeout-kill, mid-run cancellation, and grandchild reaping are
+proven live only by the Phase C live rows below; the stub rows
+in this paragraph prove the same mappings at the contract
+level, and no paragraph claims live enforcement without a
+printed row.
 
-Phase C live rows (2026-10-16, `SrtEnforcingBackend`, opt-in Unix
-tests behind `SIRALOS_PROVE_SRT=1`, corpus v88/350 scenarios).
-Seven rows run only where the pinned `srt` is installed and the
-variable is set, and FAIL when proof is requested but the probe
-refuses: grandchild reaping (background sleeper marker must never
-land), timeout kill, cancel kill, loopback denial against a live
-listener (tooling-gated: UNKNOWN without node in the sandbox,
-never a settings-only pass), allowlist environment (`TERM=dumb`
-wins live), closed stdin (`wc -c` reads zero), and workdir
-confinement (inside-grant write lands, outside-grant write fails
-with no host effects). The `bash-executes` corpus subjects pin the
-same runner mapping deterministically through the stub backend
-(success, nonzero exit, timeout, cancellation). Platform rows,
-stated as unknown where unobserved: this working tree is Windows,
-so every live row is `unknown` here (the Windows rows assert the
-refusal path and are green); the rows turn green only on a Unix
-host with the pinned runtime installed. Wiring CI to install
-`srt@0.0.70` and set `SIRALOS_PROVE_SRT=1` on the Linux gate and
-macOS platform jobs is a pending owner decision with
-supply-chain review — until then the live claim rests on the
-mechanism plus the stub rows, and the probe's `Available` report
-is falsifiable by the first failing live row (never silently
-kept).
+Phase C live rows (2026-10-16, `SrtEnforcingBackend`, corpus
+v88/350 scenarios; protocol tightened 2026-10-17). Seven rows
+are `#[ignore]`d Unix tests: plain `cargo test` creates no
+assertion about live enforcement (an unrun check is never a
+green pass), and a proof run selects them with `--ignored`
+under `SIRALOS_PROVE_SRT=1` — a selected row without the
+variable, or with a refusing probe, fails loudly. A proven row
+prints `PROVEN <row> platform=<os> srt@0.0.70=<resolved>`, so
+the log itself carries the evidence. The rows: grandchild
+reaping (background sleeper marker must never land), timeout
+kill, cancel kill, loopback denial against a live listener
+(tooling-gated: UNKNOWN without node in the sandbox, never a
+settings-only pass), allowlist environment (`TERM=dumb` wins
+live), closed stdin (`wc -c` reads zero), and workdir
+confinement (inside-grant write lands, outside-grant write
+fails with no host effects). The `bash-executes` corpus
+subjects pin the same runner mapping deterministically through
+the stub backend (success, nonzero exit, timeout, cancellation)
+and carry `platforms: ["*"]` precisely because the stub runner
+is host-injected and platform-independent; the integrated live
+proof is this row protocol's job, not theirs. Platform status
+of the live rows: this working tree is Windows, so the rows are
+unknown here by construction (the Windows inventory test
+records all seven as unrun-unknown); CI now installs the pinned
+`srt` distribution and runs the rows on the Linux gate and the
+macOS platform job (the registry integrity digest is echoed for
+the evidence trail). First pressing pending: until those CI
+jobs execute, no platform holds a printed PROVEN row, and the
+live claim rests on the mechanism plus the stub rows. The
+probe's `Available` report remains falsifiable by the first
+failing live row (never silently kept).

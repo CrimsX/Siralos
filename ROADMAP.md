@@ -808,12 +808,17 @@ later session needs must appear here or in a commit.
    wherever enforcement is unproven — including all of Windows by
    construction, which stays a named follow-up milestone. The runner
    mapping is pinned by four `bash-executes` corpus subjects (stub
-   backend, v88); live enforcement rows (grandchild reaping,
-   timeout/cancel kill, loopback denial, allowlist env, closed stdin,
-   workdir confinement) are implemented as opt-in Unix tests
-   (`SIRALOS_PROVE_SRT=1`) and recorded unknown until CI proves them —
-   wiring CI to install the pinned runtime and set the variable is
-   itself a pending owner decision. What stays closed: file deletion (D5, no
+   backend, v88, `platforms: ["*"]` because the stub runner is
+   host-injected and platform-independent); live enforcement rows
+   (grandchild reaping, timeout/cancel kill, loopback denial,
+   allowlist env, closed stdin, workdir confinement) are
+   `#[ignore]`d Unix tests that demand selection (`--ignored` under
+   `SIRALOS_PROVE_SRT=1`) so an unrun check is never a green pass,
+   and CI now installs the pinned runtime (registry integrity digest
+   echoed) and runs the rows on the Linux gate and the macOS
+   platform job, each proven row printing `PROVEN <row>
+platform=<os> srt@0.0.70=<version>` — first pressing pending
+   until those jobs execute. What stays closed: file deletion (D5, no
    delete tool), private run directories, Git inspection, and
    Godot surfaces. Corpus v88 (350 scenarios) pins the new behavior
    with candidate-authored `default-tools`, `ui-components`, and `undo` expectation records and a

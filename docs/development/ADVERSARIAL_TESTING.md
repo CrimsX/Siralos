@@ -116,15 +116,19 @@ kill, and cancel kill. Corpus-pinned deterministically (v88):
 four `bash-executes` subjects (success, nonzero exit, timeout,
 cancellation) through the stub backend, plus the unchanged
 `bash-unavailable` host-refusal record. Live rows (Unix-only,
-opt-in behind `SIRALOS_PROVE_SRT=1`, failing — never skipping —
-when proof is requested but refused): grandchild reaping,
-timeout/cancel kill, loopback denial against a live listener,
-allowlist environment, closed stdin, and workdir confinement.
-Status on this Windows working tree: every live row is `unknown`
-(the Windows rows pin the refusal path and are green); CI wiring
-to install the pinned runtime and set the variable on the Linux
-gate and macOS platform jobs is a pending owner decision, so no
-live enforcement is claimed here.
+`#[ignore]`d so an unrun check is never a green pass, selected with
+`--ignored` under `SIRALOS_PROVE_SRT=1`; a selected row without the
+variable or with a refusing probe fails loudly, and a proven row
+prints `PROVEN <row> platform=<os> srt@0.0.70=<resolved>`):
+grandchild reaping, timeout/cancel kill, loopback denial against a
+live listener, allowlist environment, closed stdin, and workdir
+confinement. Status on this Windows working tree: every live row is
+`unknown` (the Windows inventory test records all seven as
+unrun-unknown); CI installs the pinned runtime (registry integrity
+digest echoed) and runs the rows on the Linux gate and the macOS
+platform job, with the first pressing pending until those jobs
+execute. No live enforcement is claimed for a run whose log does
+not hold the printed rows.
 
 ## UI component adversarial coverage
 
