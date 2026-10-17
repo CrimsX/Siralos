@@ -61,7 +61,9 @@ jobs:
         run: cargo +"$NIGHTLY_TOOLCHAIN" fuzz run cli_args -s none -- -max_total_time=60
 
       - name: Fuzz corpus decoding
-        run: cargo +"$NIGHTLY_TOOLCHAIN" fuzz run corpus_scenario -s none -- -max_total_time=60
+        # Run-capped as well as time-capped: the corpus smoke run
+        # must never vanish into a time budget alone.
+        run: cargo +"$NIGHTLY_TOOLCHAIN" fuzz run corpus_scenario -s none -- -runs=10000 -max_total_time=60
 
       # All-safe-Rust workspace: Miri is scoped to siralos-core
       # (docs/development/ADVERSARIAL_TESTING.md).

@@ -132,6 +132,28 @@ jobs:
       - name: Test (locked, all targets, all features)
         run: cargo test --workspace --all-targets --all-features --locked
 
+      # Enforced-bash live rows (ADR 0038 evidence): install the
+      # pinned Sandbox Runtime, echo the registry integrity digest
+      # for the evidence trail, then run the seven selected rows
+      # under SIRALOS_PROVE_SRT=1 — ignored tests the plain test
+      # step must not count; each must print PROVEN (platform and
+      # runtime version in the log) or the job fails. Linux only:
+      # this backend is Unix-only by construction, and on other
+      # targets the row inventory records unknown instead.
+      - name: Install pinned Anthropic Sandbox Runtime
+        if: runner.os == 'Linux'
+        run: |
+          npm install --global "@anthropic-ai/sandbox-runtime@0.0.70"
+          npm view "@anthropic-ai/sandbox-runtime@0.0.70" dist.integrity
+
+      - name: Enforced-bash live rows (PROVEN evidence)
+        if: runner.os == 'Linux'
+        env:
+          SIRALOS_PROVE_SRT: "1"
+        run: |
+          cargo test -p siralos-adapters --lib --all-features --locked \
+            -- --ignored live_row_
+
       - name: CLI identity and help (default features)
         run: |
           cargo run --locked --bin siralos -- --version
@@ -252,6 +274,25 @@ jobs:
 
       - name: Test (locked, all targets, all features)
         run: cargo test --workspace --all-targets --all-features --locked
+
+      # Enforced-bash live rows (ADR 0038 evidence): macOS is the
+      # second supported Unix platform, so it re-proves the same
+      # rows the Linux gate proves — a platform the evidence table
+      # can then name. Windows takes no part: the backend is
+      # Unix-only, and the row inventory records unknown there.
+      - name: Install pinned Anthropic Sandbox Runtime
+        if: runner.os != 'Windows'
+        run: |
+          npm install --global "@anthropic-ai/sandbox-runtime@0.0.70"
+          npm view "@anthropic-ai/sandbox-runtime@0.0.70" dist.integrity
+
+      - name: Enforced-bash live rows (PROVEN evidence)
+        if: runner.os != 'Windows'
+        env:
+          SIRALOS_PROVE_SRT: "1"
+        run: |
+          cargo test -p siralos-adapters --lib --all-features --locked \
+            -- --ignored live_row_
 
       # The harness is excluded from the product workspace; cover it per OS so
       # Windows-only harness breakage cannot escape a Linux-only gate.
