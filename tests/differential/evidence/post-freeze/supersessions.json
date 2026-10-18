@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "corpusVersion": 88,
-  "entriesSha256": "278dcd87c246056fe0bb38ee38a86c0fc08a4a31ff268a1b01b874bbb873b831",
+  "corpusVersion": 89,
+  "entriesSha256": "a74340ae698225149f7dd131084208e58658f5fb199f1ef603512b246143bbee",
   "supersessions": [
     {
       "scenarioId": "user-config-matrix",
       "reason": "The frozen record echoes the rejected local-directory PATH VALUE. A configured path can be an absolute host path, so the candidate reports the failure class without the value.",
-      "supersededIn": 88,
+      "supersededIn": 89,
       "decision": "Diagnostics never echo configured path values, field names, or transport text; absolute host paths never reach report-safe output. Recorded 2026-09-23 during the security and lifecycle repair.",
       "oracleRecordSha256": "d88458bdd5519c6b9d8d7a550705804261dee150322ab9e86d47ac40829bb38c",
       "record": {
@@ -663,7 +663,7 @@
     {
       "scenarioId": "command-catalog-snapshot",
       "reason": "The frozen record pins the /domains-* catalog entries, descriptions, group, and content-bound revision digest. The product vocabulary is now /modules-* (ADR 0037).",
-      "supersededIn": 88,
+      "supersededIn": 89,
       "decision": "Supersede the frozen command-catalog-snapshot record with the candidate-authored modules-vocabulary record. Recorded 2026-10-10 during the modules reconsolidation (ADR 0037).",
       "oracleRecordSha256": "c7853d0899d356f9dc9cddf10752bb851465d7a2a79b676eb92949bbd5e34a37",
       "record": {
@@ -1016,7 +1016,7 @@
     {
       "scenarioId": "cli-session-set",
       "reason": "The frozen record pins the /domains-* command ids, help text, and catalog parses. The product vocabulary is now /modules-* (ADR 0037); renders changed with it.",
-      "supersededIn": 88,
+      "supersededIn": 89,
       "decision": "Supersede the frozen cli-session-set record with the candidate-authored modules-vocabulary record. Recorded 2026-10-10 during the modules reconsolidation (ADR 0037).",
       "oracleRecordSha256": "c56777e07d6c8c2fc07b694821ecb9b9c1a6158524a76980f073a107fc8d460c",
       "record": {
@@ -1294,12 +1294,12 @@
                 "No Godot installations were discovered.\n\nSelection rationale:\n  No selectable Godot installation was discovered.\n",
                 "No Godot project detected at the workspace root.\n",
                 "Siralos Godot doctor\n\nConfiguration:\n  Active installation: none\n  Configured installations: 0\n  PATH discovery: enabled\n  Overrides: none\n\nSandbox:\n  State: setup-required\n  Backend: anthropic-runtime\n  Network restriction: no\n  Filesystem write restriction: no\n  Process-tree restriction: no\n\nCache:\n  Schema version: 1\n  Cached profiles: 0\n\nRecovery-mode project probe: unavailable (win32)\nAPI knowledge: unavailable (win32)\nGDScript diagnostics: unavailable (win32)\n  Recovery-mode project probing is unavailable on this platform: the exact approved Godot identity cannot be launched, the disposable mirror cannot be constructed with exactly the approved bytes, and its cleanup cannot be bound to the exact created objects, because Node and the pinned sandbox runtime offer no exec-by-handle, directory-relative create, or delete-by-handle primitive. Nothing was created, nothing was deleted, and no engine was launched.\n  The API knowledge capability is not wired in this composition.\n  The GDScript diagnostic capability is not wired in this composition.\n\nNo Godot installations were discovered.\n\nSelection rationale:\n  No selectable Godot installation was discovered.\n\nProject: not detected (no project.godot at the workspace root)\n\nNo project code was executed.\nNo project import was performed.\n",
-                "Checking recovery-probe capability\u2026\n",
-                "  \u2715 unavailable: Recovery-mode project probing is unavailable on this platform: the exact approved Godot identity cannot be launched, the disposable mirror cannot be constructed with exactly the approved bytes, and its cleanup cannot be bound to the exact created objects, because Node and the pinned sandbox runtime offer no exec-by-handle, directory-relative create, or delete-by-handle primitive. Nothing was created, nothing was deleted, and no engine was launched.\n",
+                "Checking recovery-probe capability…\n",
+                "  ✕ unavailable: Recovery-mode project probing is unavailable on this platform: the exact approved Godot identity cannot be launched, the disposable mirror cannot be constructed with exactly the approved bytes, and its cleanup cannot be bound to the exact created objects, because Node and the pinned sandbox runtime offer no exec-by-handle, directory-relative create, or delete-by-handle primitive. Nothing was created, nothing was deleted, and no engine was launched.\n",
                 "Project probe:\n  Trust state: untrusted\n  Manifest digest: none\n  Last engine: none\n  Last result: never run\n",
                 "Godot API knowledge\n\nEngine: none selected (win32)\nKnowledge status: unavailable\n\nReason: Exact-engine API documentation generation is unavailable: Node and the pinned sandbox runtime offer no exec-by-handle or directory-handle-relative primitive, so the staged executable's pathname is re-opened at spawn time and a same-user process could substitute different bytes between final verification and launch, and the Siralos-private probe directory cannot be created or cleaned up identity-bound. The verified fingerprint could then be attached to bytes that never execute. Generation fails closed and the executable is never spawned; no probe directory is created. It will become available only when a mechanically identity-bound launch and directory-lifecycle primitive exists.\n\nDocumentation channels:\n  Engine API:          exact executable-derived (not generated yet)\n  Manual docs:         not locally synchronized",
-                "Checking exact-engine API knowledge capability\u2026\n",
-                "  \u2715 unavailable: Exact-engine API documentation generation is unavailable: Node and the pinned sandbox runtime offer no exec-by-handle or directory-handle-relative primitive, so the staged executable's pathname is re-opened at spawn time and a same-user process could substitute different bytes between final verification and launch, and the Siralos-private probe directory cannot be created or cleaned up identity-bound. The verified fingerprint could then be attached to bytes that never execute. Generation fails closed and the executable is never spawned; no probe directory is created. It will become available only when a mechanically identity-bound launch and directory-lifecycle primitive exists.\n",
+                "Checking exact-engine API knowledge capability…\n",
+                "  ✕ unavailable: Exact-engine API documentation generation is unavailable: Node and the pinned sandbox runtime offer no exec-by-handle or directory-handle-relative primitive, so the staged executable's pathname is re-opened at spawn time and a same-user process could substitute different bytes between final verification and launch, and the Siralos-private probe directory cannot be created or cleaned up identity-bound. The verified fingerprint could then be attached to bytes that never execute. Generation fails closed and the executable is never spawned; no probe directory is created. It will become available only when a mechanically identity-bound launch and directory-lifecycle primitive exists.\n",
                 "API search unavailable: No Godot API knowledge is loaded: exact-engine API generation is unavailable on this platform."
               ]
             },
@@ -1308,12 +1308,12 @@
               "name": "gdscript-commands-unavailable",
               "writeCount": 10,
               "writes": [
-                "Checking GDScript diagnostic capability\u2026\n",
-                "  \u2715 unavailable: GDScript check-only diagnostics are unavailable on this platform: the exact approved Godot identity cannot be launched against exactly the approved mirrored script bytes, the disposable mirror cannot be constructed with exactly the approved bytes, and its cleanup cannot be bound to the exact created objects, because Node and the pinned sandbox runtime offer no exec-by-handle, directory-relative create, or delete-by-handle primitive. Nothing was created, nothing was deleted, and no engine was launched.\n",
-                "Checking GDScript diagnostic capability\u2026\n",
-                "  \u2715 unavailable: GDScript check-only diagnostics are unavailable on this platform: the exact approved Godot identity cannot be launched against exactly the approved mirrored script bytes, the disposable mirror cannot be constructed with exactly the approved bytes, and its cleanup cannot be bound to the exact created objects, because Node and the pinned sandbox runtime offer no exec-by-handle, directory-relative create, or delete-by-handle primitive. Nothing was created, nothing was deleted, and no engine was launched.\n",
-                "Checking GDScript language-session capability\u2026\n",
-                "  \u2715 unavailable: The Godot GDScript language session is unavailable on this platform: the exact approved Godot editor cannot be launched against exactly the approved mirrored project bytes, the disposable mirror cannot be constructed or cleaned up identity-bound, and the loopback LSP channel cannot be tied to a verified process identity, because Node and the pinned sandbox runtime offer no exec-by-handle, directory-relative create, or delete-by-handle primitive. Nothing was created, no port was opened, no engine was launched.\n",
+                "Checking GDScript diagnostic capability…\n",
+                "  ✕ unavailable: GDScript check-only diagnostics are unavailable on this platform: the exact approved Godot identity cannot be launched against exactly the approved mirrored script bytes, the disposable mirror cannot be constructed with exactly the approved bytes, and its cleanup cannot be bound to the exact created objects, because Node and the pinned sandbox runtime offer no exec-by-handle, directory-relative create, or delete-by-handle primitive. Nothing was created, nothing was deleted, and no engine was launched.\n",
+                "Checking GDScript diagnostic capability…\n",
+                "  ✕ unavailable: GDScript check-only diagnostics are unavailable on this platform: the exact approved Godot identity cannot be launched against exactly the approved mirrored script bytes, the disposable mirror cannot be constructed with exactly the approved bytes, and its cleanup cannot be bound to the exact created objects, because Node and the pinned sandbox runtime offer no exec-by-handle, directory-relative create, or delete-by-handle primitive. Nothing was created, nothing was deleted, and no engine was launched.\n",
+                "Checking GDScript language-session capability…\n",
+                "  ✕ unavailable: The Godot GDScript language session is unavailable on this platform: the exact approved Godot editor cannot be launched against exactly the approved mirrored project bytes, the disposable mirror cannot be constructed or cleaned up identity-bound, and the loopback LSP channel cannot be tied to a verified process identity, because Node and the pinned sandbox runtime offer no exec-by-handle, directory-relative create, or delete-by-handle primitive. Nothing was created, no port was opened, no engine was launched.\n",
                 "GDScript language session stopped.\n",
                 "No Godot language session is active; start and approve one with /gdscript-lsp first.\n",
                 "No Godot language session is active; start and approve one with /gdscript-lsp first.\n",
@@ -1325,17 +1325,17 @@
               "name": "develop-commands-unavailable",
               "writeCount": 12,
               "writes": [
-                "Checking the development-workflow capability\u2026\n",
-                "  \u2715 unavailable: The GDScript development workflow cannot apply source changes on this platform: The exact change set cannot be applied on this platform: Node offers no directory-relative (openat/renameat) primitive, so a same-user process that swaps a parent or target at any instruction boundary can redirect pathname-based staging and replacement outside the workspace. The change set fails closed before any write, lock, approval, or checkpoint; it will become available when a mechanically identity-bound commit primitive exists.\n",
+                "Checking the development-workflow capability…\n",
+                "  ✕ unavailable: The GDScript development workflow cannot apply source changes on this platform: The exact change set cannot be applied on this platform: Node offers no directory-relative (openat/renameat) primitive, so a same-user process that swaps a parent or target at any instruction boundary can redirect pathname-based staging and replacement outside the workspace. The change set fails closed before any write, lock, approval, or checkpoint; it will become available when a mechanically identity-bound commit primitive exists.\n",
                 "Planning: full (explicit-plan-request)\n",
-                "Plan rev 1 \u2014 Full\n\nObjective\nStructured plan for: test\n\nScope\n- the requested workspace change\n\nCandidate\n- src/player/player.gd\n- tests/player/**\n\nSteps\nstep-1: Inspect the relevant files\nstep-2: Implement the bounded change\nstep-3: Validate with check-only parsing and existing tests\n\nRisks\n- [low] Bounded change; risk is minimal.\n\nValidation\n- check-only parse\n- existing project tests\n\nRequirements (descriptive only \u2014 they grant nothing)\n- workspace mutation\n\nRollback\nRevert the prepared change set.\n\nPlan state: current\nPlan approval: none\n",
+                "Plan rev 1 — Full\n\nObjective\nStructured plan for: test\n\nScope\n- the requested workspace change\n\nCandidate\n- src/player/player.gd\n- tests/player/**\n\nSteps\nstep-1: Inspect the relevant files\nstep-2: Implement the bounded change\nstep-3: Validate with check-only parsing and existing tests\n\nRisks\n- [low] Bounded change; risk is minimal.\n\nValidation\n- check-only parse\n- existing project tests\n\nRequirements (descriptive only — they grant nothing)\n- workspace mutation\n\nRollback\nRevert the prepared change set.\n\nPlan state: current\nPlan approval: none\n",
                 "Plan-only mode: no source was modified, no mutation approval was requested,\nand no execution follows. Use /develop <request> to execute (edits still\nrequire their own exact one-time approval).\n",
-                "Task task-1 (contract revision 1)\nIdentity: contract rev 1 / 2fb02ee9\u2026 \u00b7 plan rev 1 / befdc96b\u2026\n\u23f3 Phase: blocked \u2014 plan-only mode \u2014 execution not started; re-run /develop to execute the plan\nPlan: plan-task-1 rev 1 (full)\nPlan state: current\nPlan approval: none\nSteps: 0/0 completed\n  (no structured steps)\nAcceptance: 0/1 satisfied\n  \u00b7 host-verified pending\nValidation: not_run\nReview: not_run\nProgress: healthy (0 useful observations)\nCompletion: NOT allowed (3 reasons)\n",
+                "Task task-1 (contract revision 1)\nIdentity: contract rev 1 / 2fb02ee9… · plan rev 1 / befdc96b…\n⏳ Phase: blocked — plan-only mode — execution not started; re-run /develop to execute the plan\nPlan: plan-task-1 rev 1 (full)\nPlan state: current\nPlan approval: none\nSteps: 0/0 completed\n  (no structured steps)\nAcceptance: 0/1 satisfied\n  · host-verified pending\nValidation: not_run\nReview: not_run\nProgress: healthy (0 useful observations)\nCompletion: NOT allowed (3 reasons)\n",
                 "The GDScript development workflow is unavailable: The GDScript development workflow cannot apply source changes on this platform: The exact change set cannot be applied on this platform: Node offers no directory-relative (openat/renameat) primitive, so a same-user process that swaps a parent or target at any instruction boundary can redirect pathname-based staging and replacement outside the workspace. The change set fails closed before any write, lock, approval, or checkpoint; it will become available when a mechanically identity-bound commit primitive exists.",
                 "Planning: full (plan plan-task-1 rev 1)\nPlan state: current\nPlan approval: none\n",
                 "Context projection: not yet computed (send a prompt first)\n",
                 "No quality report exists yet; apply an approved change set in a /develop workflow first.",
-                "Running a fresh independent review of the current development change\u2026\n",
+                "Running a fresh independent review of the current development change…\n",
                 "Independent review failed: No eligible development change exists; start a /develop workflow and apply an approved change set first."
               ]
             },
@@ -1344,14 +1344,14 @@
               "name": "system-commands-unavailable",
               "writeCount": 10,
               "writes": [
-                "Checking sandbox\u2026\n",
-                "Profile: inspect\nBackend: anthropic-runtime\nPlatform: windows\nState: setup-required\nVersion: 0.0.71\nFilesystem read restriction: no\nFilesystem write restriction: no\nNetwork restriction: no\nProcess-tree restriction: no\nViolation reporting: no\nNetwork: denied\nEnvironment: minimal\nSetup: Windows sandbox needs a one-time install (one UAC prompt):\n  npx sandbox-runtime windows-install\n  \u2014 or call installWindowsSandbox(), or run `srt-win.exe install` directly.\nNo logout is needed: the WFP filter keys on the dedicated `srt-sandbox` user's SID, so your network is unaffected.\nWarning: the native Windows backend is alpha; do not treat it as secure until Siralos conformance passes.\n",
+                "Checking sandbox…\n",
+                "Profile: inspect\nBackend: anthropic-runtime\nPlatform: windows\nState: setup-required\nVersion: 0.0.71\nFilesystem read restriction: no\nFilesystem write restriction: no\nNetwork restriction: no\nProcess-tree restriction: no\nViolation reporting: no\nNetwork: denied\nEnvironment: minimal\nSetup: Windows sandbox needs a one-time install (one UAC prompt):\n  npx sandbox-runtime windows-install\n  — or call installWindowsSandbox(), or run `srt-win.exe install` directly.\nNo logout is needed: the WFP filter keys on the dedicated `srt-sandbox` user's SID, so your network is unaffected.\nWarning: the native Windows backend is alpha; do not treat it as secure until Siralos conformance passes.\n",
                 "Profile: inspect\n\n  workspace.read     allow\n  workspace.write    deny\n  git.inspect        allow\n  godot.inspect      allow\n  godot.probe_project ask\n  godot.development  allow\n  process.execute    deny\n  network.outbound   deny\n\nCommand execution requires one-time approval per exact command plan.\n",
                 "Git: unavailable\nVersion: unknown\nRepository: unavailable\nNote: Git inspection is unavailable because the sandbox backend state is setup-required; Git is never spawned outside the sandbox.\n",
                 "[error] Git inspection is unavailable because the sandbox backend state is setup-required; Git is never spawned outside the sandbox.\n",
                 "No checkpoints recorded.\n",
                 "Undo checkpoint (latest)...\n",
-                "\u2715 Undo failed: Undo is unavailable: restoring a checkpoint requires pathname-based displacement and replacement, and Node offers no directory-relative (openat/renameat) primitive, so a same-user process that swaps a parent or target at any instruction boundary could redirect the restore outside the workspace. Undo fails closed before any write; it will become available when a mechanically identity-bound commit primitive exists.\n",
+                "✕ Undo failed: Undo is unavailable: restoring a checkpoint requires pathname-based displacement and replacement, and Node offers no directory-relative (openat/renameat) primitive, so a same-user process that swaps a parent or target at any instruction boundary could redirect the restore outside the workspace. Undo fails closed before any write; it will become available when a mechanically identity-bound commit primitive exists.\n",
                 "RUNNER       STATUS       SECURITY\nnpm-script   unavailable  approval, read-only workspace, offline\nnode-script  unavailable  approval, read-only workspace, offline\n\nSandbox: anthropic-runtime (setup-required)\nProcess execution: denied\nActive command: none\nDefault timeout: 120 seconds\nstdout limit: 1 MiB\nstderr limit: 1 MiB\n\nRecent commands:\n  none\n",
                 "  No command is active.\n"
               ]
@@ -1382,9 +1382,9 @@
             },
             {
               "containsWorkspacePlaceholder": true,
-              "controls": "^@^A^H^?\ufffd\ufffd",
+              "controls": "^@^A^H^?��",
               "csiStripped": "red",
-              "emojiPreserved": "\ud83d\ude00x",
+              "emojiPreserved": "😀x",
               "loneEscape": "normal",
               "name": "sanitizer-boundary",
               "oscStripped": "ab",

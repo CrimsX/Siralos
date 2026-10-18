@@ -10,7 +10,7 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { canonicalizeJson, sha256Hex } from "./canonical.mjs";
 
 export const CORPUS_SCHEMA_VERSION = 3;
-export const CORPUS_VERSION = 88;
+export const CORPUS_VERSION = 89;
 export const ALLOWED_SUBJECTS = new Set([
   "state-dir",
   "version-identity",

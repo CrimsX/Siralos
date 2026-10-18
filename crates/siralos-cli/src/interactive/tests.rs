@@ -236,7 +236,7 @@ fn ready_startup_notices_land_in_transcript_sanitized() {
         .expect("scripted pane");
     scripted
         .events
-        .send(crate::session_worker::WorkerEvent::Ready(
+        .send(crate::session_worker::WorkerEvent::Ready(Box::new(
             crate::session_worker::SessionStatus {
                 status: "example-vendor / example/model-a".to_owned(),
                 provider: Some("example-vendor".to_owned()),
@@ -246,14 +246,14 @@ fn ready_startup_notices_land_in_transcript_sanitized() {
                 credential_display: Some("env:EXAMPLE_KEY".to_owned()),
                 credential_resolved: true,
                 live_model_switchable: true,
-                context_suffix: String::new(),
+                metrics: crate::tui::SessionMetrics::default(),
                 startup_notices: vec![
                     "siralos: checkpoint store unavailable: mutation tools disabled (details hidden)"
                         .to_owned(),
                     "\u{1b}]0;evil\u{07}plain".to_owned(),
                 ],
             },
-        ))
+        )))
         .expect("scripted ready");
     let state = Rc::new(RefCell::new(crate::tui::TuiState::new()));
     let pane = Rc::new(RefCell::new(None));
@@ -334,7 +334,7 @@ fn the_dispatcher_asks_the_worker_and_renders_its_answer() {
             // `/reload` has an applied-composition protocol: the worker sends
             // its report first, then the refreshed status snapshot. The relay
             // must consume both before the command returns.
-            events.push(crate::session_worker::WorkerEvent::Ready(
+            events.push(crate::session_worker::WorkerEvent::Ready(Box::new(
                 crate::session_worker::SessionStatus {
                     status: "example-vendor / example/model-a".to_owned(),
                     provider: Some("example-vendor".to_owned()),
@@ -344,10 +344,10 @@ fn the_dispatcher_asks_the_worker_and_renders_its_answer() {
                     credential_display: Some("env:EXAMPLE_KEY".to_owned()),
                     credential_resolved: true,
                     live_model_switchable: true,
-                    context_suffix: String::new(),
+                    metrics: crate::tui::SessionMetrics::default(),
                     startup_notices: Vec::new(),
                 },
-            ));
+            )));
         }
         tui.answer(events);
         let mut ticks = 0usize;
@@ -376,9 +376,9 @@ fn the_dispatcher_applies_the_header_pane_and_failure_it_receives() {
     let mut tui = ScriptedTui::new();
     tui.answer(vec![
         crate::session_worker::WorkerEvent::Pane(scripted_pane()),
-        crate::session_worker::WorkerEvent::Ready(
+        crate::session_worker::WorkerEvent::Ready(Box::new(
             crate::session_worker::SessionStatus {
-                status: "example-vendor / Example A | ctx 7/4096".to_owned(),
+                status: "ready".to_owned(),
                 provider: Some("example-vendor".to_owned()),
                 model: Some("Example A".to_owned()),
                 endpoint: Some("https://api.example.com/v1".to_owned()),
@@ -386,10 +386,13 @@ fn the_dispatcher_applies_the_header_pane_and_failure_it_receives() {
                 credential_display: Some("key:***".to_owned()),
                 credential_resolved: true,
                 live_model_switchable: true,
-                context_suffix: " | ctx 7/4096".to_owned(),
+                metrics: crate::tui::SessionMetrics {
+                    context_assembled: Some(7),
+                    ..crate::tui::SessionMetrics::default()
+                },
                 startup_notices: Vec::new(),
             },
-        ),
+        )),
         crate::session_worker::WorkerEvent::Report("ok\n".to_owned()),
     ]);
     let mut ticks = 0usize;
@@ -397,7 +400,7 @@ fn the_dispatcher_applies_the_header_pane_and_failure_it_receives() {
 
     {
         let state = tui.state.borrow();
-        assert_eq!(state.status, "example-vendor / Example A | ctx 7/4096");
+        assert_eq!(state.status, "ready");
         assert_eq!(state.provider.as_deref(), Some("example-vendor"));
         assert_eq!(state.model.as_deref(), Some("Example A"));
         assert_eq!(
@@ -407,7 +410,7 @@ fn the_dispatcher_applies_the_header_pane_and_failure_it_receives() {
         assert_eq!(state.protocol, "openai-completions");
         assert_eq!(state.credential_display.as_deref(), Some("key:***"));
         assert!(state.credential_resolved);
-        assert_eq!(state.context_suffix, " | ctx 7/4096");
+        assert_eq!(state.metrics.context_assembled, Some(7));
     }
     assert!(
         tui.pane.borrow().is_some(),
@@ -837,7 +840,7 @@ fn a_model_switch_persists_first_and_then_commands_the_worker() {
         state.provider = Some("example-vendor".to_owned());
         state.model = Some("Example A".to_owned());
     }
-    tui.answer(vec![crate::session_worker::WorkerEvent::Ready(
+    tui.answer(vec![crate::session_worker::WorkerEvent::Ready(Box::new(
         crate::session_worker::SessionStatus {
             status: "example-vendor / example/model-b".to_owned(),
             provider: Some("example-vendor".to_owned()),
@@ -847,10 +850,10 @@ fn a_model_switch_persists_first_and_then_commands_the_worker() {
             credential_display: None,
             credential_resolved: false,
             live_model_switchable: true,
-            context_suffix: String::new(),
+            metrics: crate::tui::SessionMetrics::default(),
             startup_notices: Vec::new(),
         },
-    )]);
+    ))]);
     let mut ticks = 0usize;
     tui.dispatch(
         &SlashCommand::Model(Some("example/model-b")),
@@ -1507,14 +1510,13 @@ fn the_worker_adapter_reports_the_header_the_frontend_showed() {
         "the display name wins"
     );
     assert_eq!(
-        status.status,
-        crate::tui::compose_status_line_with_context(
-            "",
-            status.provider.as_deref(),
-            status.model.as_deref(),
-            None,
-        ),
-        "the worker builds the same header the TUI entry built"
+        status.status, "ready",
+        "the worker's bottom row starts from the plain ready base"
+    );
+    assert_eq!(
+        status.metrics,
+        crate::tui::SessionMetrics::default(),
+        "no context subsystem in this profile, so no fabricated readout"
     );
 
     // A live switch must not keep the OLD model's display name.

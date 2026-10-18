@@ -51,6 +51,9 @@
     "status": "ready",
     "scroll_offset": 8,
     "pending_approval": null,
-    "pane": null
+    "pane": null,
+    "metrics": {
+      "context_assembled": 2048
+    }
   }
 }

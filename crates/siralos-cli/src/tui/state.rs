@@ -6,7 +6,7 @@ use super::{
     MAX_STREAM_BYTES, MAX_TRANSCRIPT_LINE_BYTES, MAX_TRANSCRIPT_LINES,
     ModelPicker, ProviderAddForm, ProviderEntry, ProviderPicker,
     REASONING_BYTES, REASONING_ROWS, SIRALOS_BANNER, SIRALOS_GREETING,
-    THINKING_TAIL_CHARS, WorkspaceProfileWriteToken,
+    SessionMetrics, THINKING_TAIL_CHARS, WorkspaceProfileWriteToken,
     safe_form_message_for_credential,
 };
 
@@ -177,11 +177,10 @@ pub struct TuiState {
     /// so it needs this fact to refuse a switch it cannot finish -- otherwise
     /// the file would claim a model the session never adopted.
     pub live_model_switchable: bool,
-    /// The context-usage suffix the worker's status line carries
-    /// (` | ctx N/4096`), empty when the subsystem is off. Cached because a
-    /// TRANSIENT status (the add-flow's "fetching models...") must keep the
-    /// readout, and the frontend no longer holds the metrics that build it.
-    pub context_suffix: String,
+    /// Session usage metrics for the bottom row (tokens, cached tokens,
+    /// provider round time, context assembled). Host-observed only: an
+    /// unobserved value stays absent and the row renders nothing for it.
+    pub metrics: SessionMetrics,
     /// Provider picker popup (H6) — when Some, Up/Down + Enter/Esc handle it.
     pub provider_picker: Option<ProviderPicker>,
     /// Provider add-flow form (C1) — sequential modal form; when Some, no other
@@ -319,7 +318,7 @@ impl Default for TuiState {
             credential_display: None,
             credential_resolved: false,
             live_model_switchable: true,
-            context_suffix: String::new(),
+            metrics: SessionMetrics::default(),
             provider_picker: None,
             provider_add_form: None,
             model_switch_picker: None,

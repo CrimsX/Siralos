@@ -92,7 +92,7 @@ fn apply_status(
     state.credential_display = status.credential_display.clone();
     state.credential_resolved = status.credential_resolved;
     state.live_model_switchable = status.live_model_switchable;
-    state.context_suffix = status.context_suffix.clone();
+    state.metrics = status.metrics.clone();
 }
 
 /// Relay worker events into the frontend (C2 step 3).

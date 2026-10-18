@@ -14,6 +14,15 @@
     "status": "ready",
     "scroll_offset": 0,
     "pending_approval": null,
-    "pane": null
+    "pane": null,
+    "provider": "acme",
+    "model": "model-a",
+    "metrics": {
+      "input_tokens": 12340,
+      "output_tokens": 4210,
+      "cached_tokens": 8400,
+      "provider_millis": 100000,
+      "context_assembled": 1536
+    }
   }
 }

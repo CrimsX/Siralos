@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 88,
+  "corpusVersion": 89,
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -1192,11 +1192,11 @@
     },
     {
       "file": "tui-render.shell-basic.json",
-      "sha256": "883a22fe4d4f151610d4d659212991552ca44132e05c1b3db4d604791bebc8c1"
+      "sha256": "56071178dd19541cc4b6e5dade4de5bd704f68ccf01c3aaf764c0d914b6ba4f7"
     },
     {
       "file": "tui-render.transcript-scroll.json",
-      "sha256": "f6d75cbce1b4d1c11f9b68a68084adb3359c5baaf851c91d251e4337da743c7d"
+      "sha256": "dcf17590208169938282b785ca323eac20fd2cb88e291d013645185cc81b2652"
     },
     {
       "file": "ui-components.authoring-add.json",
@@ -1403,5 +1403,5 @@
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
   ],
-  "corpusSha256": "287e5d78348adcaa4889028cb6f6fee223cb3715cccc27ade7427752a75b1193"
+  "corpusSha256": "449367739587e1c5aeb19938ea748cd0a94c16cd36aeb1cf58934104fa9b5677"
 }

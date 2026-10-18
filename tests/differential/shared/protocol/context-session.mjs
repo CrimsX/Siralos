@@ -918,8 +918,11 @@ function validateTuiRenderResult(record, label) {
     [
       "id",
       "input",
+      "metrics",
+      "model",
       "pane_present",
       "pending_approval",
+      "provider",
       "scroll_offset",
       "status",
       "transcript_lines",
@@ -948,6 +951,29 @@ function validateTuiRenderResult(record, label) {
   }
   if (typeof scenario.pane_present !== "boolean") {
     throw new Error(`${label}.result.scenario.pane_present must be a boolean`);
+  }
+  for (const key of ["provider", "model"]) {
+    if (scenario[key] !== null && typeof scenario[key] !== "string") {
+      throw new Error(`${label}.result.scenario.${key} must be null or a string`);
+    }
+  }
+  const metrics = scenario.metrics;
+  assertExactKeys(
+    metrics,
+    ["cached_tokens", "context_assembled", "input_tokens", "output_tokens", "provider_millis"],
+    `${label}.result.scenario.metrics`,
+  );
+  for (const key of ["input_tokens", "output_tokens", "provider_millis"]) {
+    if (!Number.isSafeInteger(metrics[key]) || metrics[key] < 0) {
+      throw new Error(`${label}.result.scenario.metrics.${key} must be a non-negative integer`);
+    }
+  }
+  for (const key of ["cached_tokens", "context_assembled"]) {
+    if (metrics[key] !== null && (!Number.isSafeInteger(metrics[key]) || metrics[key] < 0)) {
+      throw new Error(
+        `${label}.result.scenario.metrics.${key} must be null or a non-negative integer`,
+      );
+    }
   }
   assertExactKeys(record.result.viewport, ["height", "width"], `${label}.result.viewport`);
   if (record.result.viewport.width !== 80 || record.result.viewport.height !== 24) {

@@ -536,20 +536,12 @@ pub(super) fn compose_skills_segment(
         content: guidance,
     })
 }
-/// Re-render the status row with a transient base, keeping the worker's
-/// context-usage suffix (C2 step 3).
+/// The base status text for a transient row (owner 2026-10-17).
 ///
-/// The frontend holds no metrics any more, so the suffix is cached from the
-/// last `Ready`; without it a transient status ("fetching models...") would
-/// silently drop the context readout an opted-in session shows.
-pub(super) fn transient_status(state: &TuiState, base: &str) -> String {
-    format!(
-        "{}{}",
-        crate::tui::compose_status_line(
-            base,
-            state.provider.as_deref(),
-            state.model.as_deref(),
-        ),
-        state.context_suffix,
-    )
+/// The row's provider/model block and usage metrics are composed at render
+/// time from worker state, so a transient status only needs its own base
+/// text: nothing can be silently dropped by a frontend that no longer holds
+/// the metrics.
+pub(super) fn transient_status(_state: &TuiState, base: &str) -> String {
+    base.to_owned()
 }

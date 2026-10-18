@@ -1174,7 +1174,7 @@ mod tests {
                 credential_display: None,
                 credential_resolved: false,
                 live_model_switchable: true,
-                context_suffix: String::new(),
+                metrics: crate::tui::SessionMetrics::default(),
                 startup_notices: Vec::new(),
             }
         }

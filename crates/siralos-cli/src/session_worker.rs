@@ -117,8 +117,10 @@ pub enum WorkerEvent {
     Models(Vec<String>),
     /// What the frontend header shows (C2 step 3). Sent once when the loop
     /// starts and again whenever the composition moves under it (`SetModel`,
-    /// `Reload`), because only the session can derive it.
-    Ready(SessionStatus),
+    /// `Reload`), because only the session can derive it. Boxed: the
+    /// payload is the largest event by far and the enum crosses the worker
+    /// channel on every status change.
+    Ready(Box<SessionStatus>),
     /// A tool approval request from the worker thread (Part B). Data
     /// only: the frontend presents `lines` in the approval modal and
     /// delivers the verdict straight into the shared exchange (never
@@ -170,11 +172,11 @@ pub struct SessionStatus {
     /// cannot apply would leave the file claiming a model the session never
     /// adopted, and the next `/reload` would then look like drift.
     pub live_model_switchable: bool,
-    /// The context-usage suffix the status line carries (` | ctx N/4096`), empty
-    /// when the context subsystem is off. It crosses so a frontend can
-    /// re-render a TRANSIENT status -- the add-flow's "fetching models..." --
-    /// with the same suffix instead of dropping a readout it cannot compute.
-    pub context_suffix: String,
+    /// The session usage metrics the bottom row renders (context assembled
+    /// today; token counts and round time once observed). They cross so a
+    /// frontend can re-render the row with real values instead of dropping a
+    /// readout it cannot compute.
+    pub metrics: crate::tui::SessionMetrics,
     /// Host-owned composition notices for the owning frontend to render
     /// once through the terminal sanitizer (static strings; the batch
     /// evaluation path has no terminal and ignores them). Re-sent on
@@ -203,7 +205,7 @@ impl std::fmt::Debug for SessionStatus {
             .field("credential_display", &"[REDACTED]")
             .field("credential_resolved", &self.credential_resolved)
             .field("live_model_switchable", &self.live_model_switchable)
-            .field("context_suffix", &"[PROJECTED]")
+            .field("metrics", &self.metrics)
             .field("startup_notices", &self.startup_notices.len())
             .finish()
     }
@@ -670,7 +672,7 @@ fn run_worker_loop_with_stop<S: WorkerSession>(
     }
     // The frontend cannot derive its header any more: it arrives before any
     // command, and again whenever a command moves the composition under it.
-    if events.send(WorkerEvent::Ready(session.status())).is_err() {
+    if events.send(WorkerEvent::Ready(Box::new(session.status()))).is_err() {
         return flush_and_stop(session, &events);
     }
     loop {
@@ -768,8 +770,9 @@ fn run_worker_loop_with_stop<S: WorkerSession>(
                     // D3), so a line here would say it twice. The header IS
                     // re-announced, because the composition moved under it.
                     Ok(()) => {
-                        let _ =
-                            events.send(WorkerEvent::Ready(session.status()));
+                        let _ = events.send(WorkerEvent::Ready(Box::new(
+                            session.status(),
+                        )));
                     }
                     Err(message) => {
                         let _ = events.send(WorkerEvent::Failed(message));
@@ -829,14 +832,16 @@ fn run_worker_loop_with_stop<S: WorkerSession>(
             WorkerCommand::Reload => match session.reload() {
                 Ok(report) => {
                     let _ = events.send(WorkerEvent::Report(report));
-                    let _ = events.send(WorkerEvent::Ready(session.status()));
+                    let _ = events
+                        .send(WorkerEvent::Ready(Box::new(session.status())));
                 }
                 Err(message) => {
                     let _ = events.send(WorkerEvent::Failed(message));
                     // Reload may revoke authority before returning an error;
                     // refresh the header so stale route/credential state is
                     // never left visible in the frontend.
-                    let _ = events.send(WorkerEvent::Ready(session.status()));
+                    let _ = events
+                        .send(WorkerEvent::Ready(Box::new(session.status())));
                 }
             },
             WorkerCommand::Shutdown => {
@@ -2017,7 +2022,7 @@ mod loop_tests {
                 credential_display: None,
                 credential_resolved: false,
                 live_model_switchable: true,
-                context_suffix: String::new(),
+                metrics: crate::tui::SessionMetrics::default(),
                 startup_notices: Vec::new(),
             }
         }
@@ -2128,7 +2133,7 @@ mod loop_tests {
         assert_eq!(
             events,
             vec![
-                WorkerEvent::Ready(SessionStatus {
+                WorkerEvent::Ready(Box::new(SessionStatus {
                     status: "fake status".to_owned(),
                     provider: Some("fake".to_owned()),
                     model: Some("fake-model".to_owned()),
@@ -2137,14 +2142,14 @@ mod loop_tests {
                     credential_display: None,
                     credential_resolved: false,
                     live_model_switchable: true,
-                    context_suffix: String::new(),
+                    metrics: crate::tui::SessionMetrics::default(),
                     startup_notices: Vec::new(),
-                }),
+                })),
                 WorkerEvent::Report(
                     "reload applied: model=beta (restart to converge)\n"
                         .to_owned()
                 ),
-                WorkerEvent::Ready(SessionStatus {
+                WorkerEvent::Ready(Box::new(SessionStatus {
                     status: "fake status".to_owned(),
                     provider: Some("fake".to_owned()),
                     model: Some("fake-model".to_owned()),
@@ -2153,9 +2158,9 @@ mod loop_tests {
                     credential_display: None,
                     credential_resolved: false,
                     live_model_switchable: true,
-                    context_suffix: String::new(),
+                    metrics: crate::tui::SessionMetrics::default(),
                     startup_notices: Vec::new(),
-                }),
+                })),
                 // The command channel closed without a Shutdown: the loop
                 // still flushes once, and says so.
                 WorkerEvent::Stopped,
@@ -2328,7 +2333,7 @@ mod loop_tests {
             events,
             vec![
                 WorkerEvent::Pane(pane.clone()),
-                WorkerEvent::Ready(session.status()),
+                WorkerEvent::Ready(Box::new(session.status())),
                 WorkerEvent::Session(ToolLoopEvent::ResponseStarted),
                 WorkerEvent::Pane(pane.clone()),
                 WorkerEvent::Pane(pane),
@@ -2731,7 +2736,7 @@ mod loop_tests {
                 credential_display: None,
                 credential_resolved: false,
                 live_model_switchable: true,
-                context_suffix: String::new(),
+                metrics: crate::tui::SessionMetrics::default(),
                 startup_notices: Vec::new(),
             }
         }

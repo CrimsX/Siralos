@@ -5,8 +5,8 @@ use super::{
     Block, BorderType, Borders, Buffer, CONTEXT_PANE_WIDTH, Color, Constraint,
     ContextPaneData, Direction, Frame, Layout, Line, Paragraph,
     ProviderAddField, ProviderAddForm, Rect, Span, Style, Text,
-    TranscriptEntry, TuiState, Widget, context_pane_lines, display_width,
-    is_working_status, model_picker_lines, redacted_form_credential,
+    TranscriptEntry, TuiState, Widget, compose_bottom_row, context_pane_lines,
+    display_width, model_picker_lines, redacted_form_credential,
     safe_display_label, safe_form_endpoint_edit,
     safe_form_endpoint_for_credential, safe_form_message,
     safe_form_message_for_credential, safe_model_id, working_line,
@@ -225,95 +225,52 @@ pub fn draw_with_pane(
     if area.width == 0 || area.height == 0 {
         return;
     }
-    // P2 header bar + transcript/input/status layout (header 1 line, OFF-independent)
+    // Transcript/input/status layout (owner 2026-10-17: no top header bar;
+    // provider/model moved into the bottom row).
     // Owner QoL: the `working` indicator owns a row ONLY while the model
     // works, so idle frames stay byte-identical to the pinned ones.
     // The turn timer IS the busy signal now that the bottom bar no longer
     // carries a `working` word.
     let busy_rows = u16::from(state.busy_since.is_some());
-    let (
-        header_area,
-        transcript_area,
-        busy_area,
-        input_area,
-        status_area,
-        pane_area,
-    ) = match pane {
-        None => {
-            // I5 OFF: transcript spans full width, no gap (Min(0) fill)
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(1),
-                    Constraint::Min(0),
-                    Constraint::Length(busy_rows),
-                    Constraint::Length(1),
-                    Constraint::Length(1),
-                ])
-                .split(area);
-            (chunks[0], chunks[1], chunks[2], chunks[3], chunks[4], None)
-        }
-        Some(_) => {
-            // I5 ON: transcript Min(0) + pane Length(40) fills width, no gap
-            let outer = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(1),
-                    Constraint::Min(0),
-                    Constraint::Length(1),
-                ])
-                .split(area);
-            let cols = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Min(0),
-                    Constraint::Length(CONTEXT_PANE_WIDTH),
-                ])
-                .split(outer[1]);
-            let rows = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Min(0),
-                    Constraint::Length(busy_rows),
-                    Constraint::Length(1),
-                ])
-                .split(cols[0]);
-            (outer[0], rows[0], rows[1], rows[2], outer[2], Some(cols[1]))
-        }
-    };
-    // Header bar (H1 dedup — P2 heritage): reversed/accent, left " Siralos ",
-    // right provider/model ONLY when configured; absent shows just " Siralos ".
-    {
-        let left = " Siralos ";
-        let right_opt: Option<String> = match (&state.provider, &state.model) {
-            (Some(p), Some(m)) if !p.is_empty() && !m.is_empty() => {
-                Some(format!(
-                    "{} / {}",
-                    safe_display_label(p),
-                    safe_display_label(m)
-                ))
+    let (transcript_area, busy_area, input_area, status_area, pane_area) =
+        match pane {
+            None => {
+                // I5 OFF: transcript spans full width, no gap (Min(0) fill)
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Min(0),
+                        Constraint::Length(busy_rows),
+                        Constraint::Length(1),
+                        Constraint::Length(1),
+                    ])
+                    .split(area);
+                (chunks[0], chunks[1], chunks[2], chunks[3], None)
             }
-            (Some(p), _) if !p.is_empty() => Some(safe_display_label(p)),
-            _ => None,
+            Some(_) => {
+                // I5 ON: transcript Min(0) + pane Length(40) fills width, no gap
+                let outer = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Min(0), Constraint::Length(1)])
+                    .split(area);
+                let cols = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([
+                        Constraint::Min(0),
+                        Constraint::Length(CONTEXT_PANE_WIDTH),
+                    ])
+                    .split(outer[0]);
+                let rows = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Min(0),
+                        Constraint::Length(busy_rows),
+                        Constraint::Length(1),
+                    ])
+                    .split(cols[0]);
+                (rows[0], rows[1], rows[2], outer[1], Some(cols[1]))
+            }
         };
-        let width = header_area.width as usize;
-        let left_len = display_width(left);
-        let header_string = if let Some(ref right) = right_opt {
-            let right_len = display_width(right);
-            let middle = width.saturating_sub(left_len + right_len);
-            format!("{}{}{}", left, " ".repeat(middle), right)
-        } else {
-            let middle = width.saturating_sub(left_len);
-            format!("{}{}", left, " ".repeat(middle))
-        };
-        let header = Paragraph::new(header_string).style(
-            Style::default()
-                .fg(Color::Cyan)
-                .bg(Color::Black)
-                .add_modifier(ratatui::style::Modifier::REVERSED),
-        );
-        frame.render_widget(header, header_area);
-    }
     // The modal backdrop covers the transcript in OFF mode and the whole
     // body (transcript + pane) in ON mode.
     let backdrop_area = match pane_area {
@@ -350,9 +307,10 @@ pub fn draw_with_pane(
     // bounded by terminal height minus input/status rows; scroll indicator if overflow.
     if let Some(catalog) = &state.palette {
         if !catalog.is_empty() || state.input.starts_with('/') {
-            // Available height for the popup (terminal height minus input/status/header).
-            // Bounded popup: grows to fit, but never exceeds terminal height -3 (header+input+status).
-            let available_height = (area.height.saturating_sub(3)) as usize;
+            // Available height for the popup (terminal height minus input/status rows).
+            // Bounded popup: grows to fit, but never exceeds the rows above
+            // the input bar (height -2: input + status).
+            let available_height = (area.height.saturating_sub(2)) as usize;
             // Needed height includes border (2). At least 3 (border + one line).
             let mut palette_lines: Vec<Line<'_>> = Vec::new();
             if catalog.is_empty() {
@@ -462,7 +420,7 @@ pub fn draw_with_pane(
             }
             // Palette popup rect: directly above input, width clamped, height bounded
             let palette_height = (palette_lines.len() as u16 + 2)
-                .min(area.height.saturating_sub(3))
+                .min(area.height.saturating_sub(2))
                 .max(3);
             let palette_width = 50u16.min(transcript_area.width);
             let palette_x = input_area.x;
@@ -549,46 +507,19 @@ pub fn draw_with_pane(
         frame.render_widget(paragraph, inner);
     }
 
-    // Status line — H5: "working" styled distinctly (yellow bold) so the frozen state is unmistakable.
+    // Bottom row (owner 2026-10-17): status left, usage metrics middle,
+    // provider/model flush right. Working status keeps its distinct yellow
+    // bold word style (H5).
     {
         let status = safe_display_label(&state.status);
-        let is_working = is_working_status(&status);
-        let status_widget = if is_working {
-            let lower = status.to_ascii_lowercase();
-            if let Some(pos) = lower.find("working") {
-                let end = pos + "working".len();
-                let before = status[..pos].to_owned();
-                let mid = status[pos..end].to_owned();
-                let after = status[end..].to_owned();
-                let mut spans: Vec<Span<'_>> = Vec::new();
-                if !before.is_empty() {
-                    spans.push(Span::styled(
-                        before,
-                        Style::default().fg(Color::Cyan),
-                    ));
-                }
-                spans.push(Span::styled(
-                    mid,
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(ratatui::style::Modifier::BOLD),
-                ));
-                if !after.is_empty() {
-                    spans.push(Span::styled(
-                        after,
-                        Style::default().fg(Color::Cyan),
-                    ));
-                }
-                Paragraph::new(Line::from(spans))
-            } else {
-                Paragraph::new(status.as_str())
-                    .style(Style::default().fg(Color::Cyan))
-            }
-        } else {
-            Paragraph::new(status.as_str())
-                .style(Style::default().fg(Color::Cyan))
-        };
-        frame.render_widget(status_widget, status_area);
+        let bottom = compose_bottom_row(
+            status_area.width,
+            &status,
+            state.provider.as_deref(),
+            state.model.as_deref(),
+            &state.metrics,
+        );
+        frame.render_widget(Paragraph::new(bottom), status_area);
     }
 
     // Provider picker (H6) — rounded popup " providers ", up/down + Enter/Esc.
@@ -1100,88 +1031,45 @@ pub fn render_to_buffer_with_pane(
     // The turn timer IS the busy signal now that the bottom bar no longer
     // carries a `working` word.
     let busy_rows = u16::from(state.busy_since.is_some());
-    let (
-        header_area,
-        transcript_area,
-        busy_area,
-        input_area,
-        status_area,
-        pane_area,
-    ) = match pane {
-        None => {
-            // I5 OFF: transcript spans full width, no gap (Min(0) fill)
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(1),
-                    Constraint::Min(0),
-                    Constraint::Length(busy_rows),
-                    Constraint::Length(1),
-                    Constraint::Length(1),
-                ])
-                .split(area);
-            (chunks[0], chunks[1], chunks[2], chunks[3], chunks[4], None)
-        }
-        Some(_) => {
-            // I5 ON: transcript Min(0) + pane Length(40) fills width, no gap
-            let outer = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(1),
-                    Constraint::Min(0),
-                    Constraint::Length(1),
-                ])
-                .split(area);
-            let cols = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Min(0),
-                    Constraint::Length(CONTEXT_PANE_WIDTH),
-                ])
-                .split(outer[1]);
-            let rows = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Min(0),
-                    Constraint::Length(busy_rows),
-                    Constraint::Length(1),
-                ])
-                .split(cols[0]);
-            (outer[0], rows[0], rows[1], rows[2], outer[2], Some(cols[1]))
-        }
-    };
-    // Header bar (H1 dedup — P2 heritage) — same as draw.
-    {
-        let left = " Siralos ";
-        let right_opt: Option<String> = match (&state.provider, &state.model) {
-            (Some(p), Some(m)) if !p.is_empty() && !m.is_empty() => {
-                Some(format!(
-                    "{} / {}",
-                    safe_display_label(p),
-                    safe_display_label(m)
-                ))
+    let (transcript_area, busy_area, input_area, status_area, pane_area) =
+        match pane {
+            None => {
+                // I5 OFF: transcript spans full width, no gap (Min(0) fill)
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Min(0),
+                        Constraint::Length(busy_rows),
+                        Constraint::Length(1),
+                        Constraint::Length(1),
+                    ])
+                    .split(area);
+                (chunks[0], chunks[1], chunks[2], chunks[3], None)
             }
-            (Some(p), _) if !p.is_empty() => Some(safe_display_label(p)),
-            _ => None,
+            Some(_) => {
+                // I5 ON: transcript Min(0) + pane Length(40) fills width, no gap
+                let outer = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Min(0), Constraint::Length(1)])
+                    .split(area);
+                let cols = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([
+                        Constraint::Min(0),
+                        Constraint::Length(CONTEXT_PANE_WIDTH),
+                    ])
+                    .split(outer[0]);
+                let rows = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Min(0),
+                        Constraint::Length(busy_rows),
+                        Constraint::Length(1),
+                    ])
+                    .split(cols[0]);
+                (rows[0], rows[1], rows[2], outer[1], Some(cols[1]))
+            }
         };
-        let width = header_area.width as usize;
-        let left_len = display_width(left);
-        let header_string = if let Some(ref right) = right_opt {
-            let right_len = display_width(right);
-            let middle = width.saturating_sub(left_len + right_len);
-            format!("{}{}{}", left, " ".repeat(middle), right)
-        } else {
-            let middle = width.saturating_sub(left_len);
-            format!("{}{}", left, " ".repeat(middle))
-        };
-        let header = Paragraph::new(header_string).style(
-            Style::default()
-                .fg(Color::Cyan)
-                .bg(Color::Black)
-                .add_modifier(ratatui::style::Modifier::REVERSED),
-        );
-        header.render(header_area, &mut buf);
-    }
 
     let h = transcript_area.height as usize;
     // The same rows the `Frame` path builds, and the same bounded work: see
@@ -1200,7 +1088,7 @@ pub fn render_to_buffer_with_pane(
     // Palette (I2/P4/I3) — buffer path, same as Frame path: full vocabulary, selection highlight, scroll indicator
     if let Some(catalog) = &state.palette {
         if !catalog.is_empty() || state.input.starts_with('/') {
-            let available_height = (area.height.saturating_sub(3)) as usize;
+            let available_height = (area.height.saturating_sub(2)) as usize;
             let mut palette_lines: Vec<Line<'_>> = Vec::new();
             if catalog.is_empty() {
                 palette_lines.push(
@@ -1303,7 +1191,7 @@ pub fn render_to_buffer_with_pane(
                 }
             }
             let palette_height = (palette_lines.len() as u16 + 2)
-                .min(area.height.saturating_sub(3))
+                .min(area.height.saturating_sub(2))
                 .max(3);
             let palette_width = 50u16.min(transcript_area.width);
             let palette_x = input_area.x;
@@ -1360,46 +1248,17 @@ pub fn render_to_buffer_with_pane(
         paragraph.render(inner, &mut buf);
     }
 
-    // Status line — H5 distinct "working" style.
+    // Bottom row — same single row the Frame path composes.
     {
         let status = safe_display_label(&state.status);
-        let is_working = is_working_status(&status);
-        let status_widget: Paragraph<'_> = if is_working {
-            let lower = status.to_ascii_lowercase();
-            if let Some(pos) = lower.find("working") {
-                let end = pos + "working".len();
-                let before = status[..pos].to_owned();
-                let mid = status[pos..end].to_owned();
-                let after = status[end..].to_owned();
-                let mut spans: Vec<Span<'_>> = Vec::new();
-                if !before.is_empty() {
-                    spans.push(Span::styled(
-                        before,
-                        Style::default().fg(Color::Cyan),
-                    ));
-                }
-                spans.push(Span::styled(
-                    mid,
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(ratatui::style::Modifier::BOLD),
-                ));
-                if !after.is_empty() {
-                    spans.push(Span::styled(
-                        after,
-                        Style::default().fg(Color::Cyan),
-                    ));
-                }
-                Paragraph::new(Line::from(spans))
-            } else {
-                Paragraph::new(status.as_str())
-                    .style(Style::default().fg(Color::Cyan))
-            }
-        } else {
-            Paragraph::new(status.as_str())
-                .style(Style::default().fg(Color::Cyan))
-        };
-        status_widget.render(status_area, &mut buf);
+        let bottom = compose_bottom_row(
+            status_area.width,
+            &status,
+            state.provider.as_deref(),
+            state.model.as_deref(),
+            &state.metrics,
+        );
+        Paragraph::new(bottom).render(status_area, &mut buf);
     }
 
     // Provider picker (H6) — same as Frame path.

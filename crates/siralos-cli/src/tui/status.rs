@@ -1,6 +1,9 @@
-//! Status line, header, and timestamp composition for the frame.
+//! Bottom-row composition, session usage metrics, and timestamps.
 
-use super::{CONTEXT_BUDGET_TOKENS, Duration, safe_display_label};
+use super::{
+    CONTEXT_BUDGET_TOKENS, Color, Duration, Line, Span, Style, display_width,
+    safe_display_label, truncate_to_width,
+};
 
 /// Timestamp helpers (H4 — local timezone via `time` crate).
 ///
@@ -40,14 +43,153 @@ fn civil_from_days(z: i64) -> (i32, u32, u32) {
     (y as i32, m as u32, d as u32)
 }
 
-/// Compose the status line prefix from the composed profile (I5).
+/// Session usage observation for the bottom row (display only).
+///
+/// Every field is host-observed: tokens and cached-token counts as the
+/// provider reported them, `provider_millis` as the accumulated wall time of
+/// provider rounds, `context_assembled` from the same `ContextMetrics` the
+/// pane and `/context` audit use. Defaults mean "not observed yet", and the
+/// row renders nothing for an absent value rather than a fabricated number.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionMetrics {
+    /// Input tokens reported by the provider, session total.
+    pub input_tokens: u64,
+    /// Output tokens reported by the provider, session total.
+    pub output_tokens: u64,
+    /// Cached input tokens when the provider reports them.
+    pub cached_tokens: Option<u64>,
+    /// Accumulated provider round time, milliseconds.
+    pub provider_millis: u64,
+    /// Assembled unique-digest total from the context metrics, `None` when
+    /// the context subsystem is off.
+    pub context_assembled: Option<usize>,
+}
+
+impl SessionMetrics {
+    /// Session-average output tokens per second. `None` until both a
+    /// reported output count and a measured round time exist.
+    #[must_use]
+    pub fn tokens_per_second(&self) -> Option<f64> {
+        if self.output_tokens == 0 || self.provider_millis == 0 {
+            return None;
+        }
+        Some(
+            self.output_tokens as f64 / (self.provider_millis as f64 / 1000.0),
+        )
+    }
+
+    /// `input/output` token segment, compacted to `k`/`M` suffixes.
+    #[must_use]
+    pub fn tokens_segment(&self) -> Option<String> {
+        if self.input_tokens == 0 && self.output_tokens == 0 {
+            return None;
+        }
+        Some(format!(
+            "{}/{}",
+            format_token_count(self.input_tokens),
+            format_token_count(self.output_tokens)
+        ))
+    }
+
+    /// Integer cache-hit percentage of reported input tokens. `None` when
+    /// the provider does not report cached tokens.
+    #[must_use]
+    pub fn cache_percent(&self) -> Option<u64> {
+        let cached = self.cached_tokens?;
+        if self.input_tokens == 0 {
+            return None;
+        }
+        Some((cached.saturating_mul(100) / self.input_tokens).min(100))
+    }
+
+    /// Integer context-usage percentage of the fixed budget. `None` when
+    /// the context subsystem is off.
+    #[must_use]
+    pub fn context_percent(&self) -> Option<u64> {
+        let assembled = self.context_assembled?;
+        Some((assembled.saturating_mul(100) / CONTEXT_BUDGET_TOKENS).min(100)
+            as u64)
+    }
+}
+
+/// Compact a token count for the metrics row (`1234` -> `1.2k`).
 #[must_use]
-pub fn compose_status_line(
-    base_status: &str,
+fn format_token_count(value: u64) -> String {
+    if value < 1_000 {
+        value.to_string()
+    } else if value < 1_000_000 {
+        format!("{:.1}k", value as f64 / 1_000.0)
+    } else {
+        format!("{:.1}M", value as f64 / 1_000_000.0)
+    }
+}
+
+/// Push the status text into `spans`, styling a `working` word (any case)
+/// yellow bold — the frozen-state marker stays unmistakable — and the rest
+/// cyan.
+fn push_status_spans(spans: &mut Vec<Span<'static>>, status: &str) {
+    let lower = status.to_ascii_lowercase();
+    if let Some(pos) = lower.find("working") {
+        let end = pos + "working".len();
+        if pos > 0 {
+            spans.push(Span::styled(
+                status[..pos].to_owned(),
+                Style::default().fg(Color::Cyan),
+            ));
+        }
+        spans.push(Span::styled(
+            status[pos..end].to_owned(),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ));
+        if end < status.len() {
+            spans.push(Span::styled(
+                status[end..].to_owned(),
+                Style::default().fg(Color::Cyan),
+            ));
+        }
+    } else {
+        spans.push(Span::styled(
+            status.to_owned(),
+            Style::default().fg(Color::Cyan),
+        ));
+    }
+}
+
+/// Fit the status text to `budget` cells: whole when it fits, otherwise
+/// truncated on a scalar boundary with a `…` marker.
+#[must_use]
+fn fit_status_to_budget(status: &str, budget: usize) -> String {
+    if display_width(status) <= budget {
+        return status.to_owned();
+    }
+    if budget == 0 {
+        return String::new();
+    }
+    format!("{}…", truncate_to_width(status, budget.saturating_sub(1)))
+}
+
+/// Compose the single bottom row: status at the left, usage metrics in the
+/// middle, provider/model flush right.
+///
+/// The row is `status | tps … · tok in/out · cache % · ctx % | provider / model`.
+/// When the frame is too narrow the metrics segments drop in order
+/// `tps` → `tok` → `cache` (`ctx` is kept while it exists) so the whole
+/// status survives; only when even the surviving middle leaves no room
+/// does the status truncate with `…`. The provider/model block is never
+/// dropped except on absurdly narrow frames, where it is truncated in
+/// place.
+#[must_use]
+pub fn compose_bottom_row(
+    width: u16,
+    status: &str,
     provider: Option<&str>,
     model: Option<&str>,
-) -> String {
-    let prefix = match (provider, model) {
+    metrics: &SessionMetrics,
+) -> Line<'static> {
+    let width = width as usize;
+    let right = match (provider, model) {
         (Some(p), Some(m)) if !p.is_empty() && !m.is_empty() => {
             let sp = safe_display_label(p);
             let sm = safe_display_label(m);
@@ -56,11 +198,84 @@ pub fn compose_status_line(
         (Some(p), _) if !p.is_empty() => safe_display_label(p),
         _ => "no provider configured".to_owned(),
     };
-    if base_status.is_empty() {
-        prefix
-    } else {
-        format!("{prefix} | {base_status}")
+    let right_len = display_width(&right);
+    if width <= right_len + 3 {
+        return Line::from(Span::styled(
+            truncate_to_width(&right, width),
+            Style::default().fg(Color::Green),
+        ));
     }
+    // Droppable metric segments, in drop order; `ctx` sits outside them.
+    let mut droppable: Vec<String> = Vec::new();
+    if let Some(tps) = metrics.tokens_per_second() {
+        droppable.push(format!("tps {tps:.1}"));
+    }
+    if let Some(tokens) = metrics.tokens_segment() {
+        droppable.push(format!("tok {tokens}"));
+    }
+    if let Some(cache) = metrics.cache_percent() {
+        droppable.push(format!("cache {cache}%"));
+    }
+    let ctx = metrics.context_percent().map(|pct| format!("ctx {pct}%"));
+    let status_len = display_width(status);
+    let mid = loop {
+        let mut segments = droppable.clone();
+        if let Some(ctx) = &ctx {
+            segments.push(ctx.clone());
+        }
+        let mid = segments.join(" · ");
+        let mid_len = display_width(&mid);
+        let fixed = if mid.is_empty() {
+            3 + right_len
+        } else {
+            3 + mid_len + 3 + right_len
+        };
+        // Room for the whole status wins over decorative metrics: keep
+        // dropping until the row can hold status + gap + middle + right.
+        if width >= fixed + 1 + status_len || droppable.is_empty() {
+            break mid;
+        }
+        droppable.remove(0);
+    };
+    let mid_len = display_width(&mid);
+    // Each present block is preceded by `" | "`; the gap pads only between
+    // the middle block and the right block, so provider/model stays flush
+    // right. An absent middle prints no separators of its own.
+    let fixed = if mid.is_empty() {
+        3 + right_len
+    } else {
+        mid_len + 3 + 3 + right_len
+    };
+    let left_budget = width.saturating_sub(fixed + 1);
+    let left = fit_status_to_budget(status, left_budget);
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut used = 0usize;
+    if !left.is_empty() {
+        push_status_spans(&mut spans, &left);
+        used += display_width(&left);
+    }
+    if !mid.is_empty() {
+        if used > 0 {
+            spans.push(Span::styled(
+                " | ",
+                Style::default().fg(Color::DarkGray),
+            ));
+            used += 3;
+        }
+        spans.push(Span::styled(
+            mid.clone(),
+            Style::default().fg(Color::DarkGray),
+        ));
+        used += mid_len;
+    }
+    let trailing_sep = if used > 0 { 3 } else { 0 };
+    let gap = width.saturating_sub(used + trailing_sep + right_len).max(1);
+    spans.push(Span::raw(" ".repeat(gap)));
+    if used > 0 {
+        spans.push(Span::styled(" | ", Style::default().fg(Color::DarkGray)));
+    }
+    spans.push(Span::styled(right, Style::default().fg(Color::Green)));
+    Line::from(spans)
 }
 
 /// How long each `working` dot phase lasts.
@@ -87,33 +302,6 @@ pub fn context_assembled_total(
     metrics.records().last().map(|r| r.assembled_unique_total).unwrap_or(0)
 }
 
-/// Append the context-usage readout `ctx <assembled>/4096` when opted-in AND built (P5).
-/// When `metrics` is `None`, returns `status` unchanged (OFF → byte-identical).
-#[must_use]
-pub fn append_context_usage(
-    status: String,
-    metrics: Option<&siralos_core::context_metrics::ContextMetrics>,
-) -> String {
-    if let Some(m) = metrics {
-        let assembled = context_assembled_total(m);
-        format!("{status} | ctx {assembled}/{CONTEXT_BUDGET_TOKENS}")
-    } else {
-        status
-    }
-}
-
-/// Compose the status line with optional context-usage appended (P5).
-#[must_use]
-pub fn compose_status_line_with_context(
-    base_status: &str,
-    provider: Option<&str>,
-    model: Option<&str>,
-    metrics: Option<&siralos_core::context_metrics::ContextMetrics>,
-) -> String {
-    let base = compose_status_line(base_status, provider, model);
-    append_context_usage(base, metrics)
-}
-
 /// Returns true when the base status indicates a working/loading state (H5).
 /// The synchronous architecture freezes redraw during blocking dispatch, so the
 /// working marker is styled distinctly to make the frozen state unmistakable.
@@ -121,25 +309,6 @@ pub fn compose_status_line_with_context(
 pub fn is_working_status(base_status: &str) -> bool {
     let lower = base_status.to_ascii_lowercase();
     lower.contains("working")
-}
-
-/// Header bar content helper (H1 — deduped: provider/model ONLY when configured).
-/// When `provider` is absent, returns only `" Siralos "` (the "no provider
-/// configured" text lives only in the bottom status line via `compose_status_line`).
-#[must_use]
-pub fn header_text(provider: Option<&str>, model: Option<&str>) -> String {
-    match (provider, model) {
-        (Some(p), Some(m)) if !p.is_empty() && !m.is_empty() => {
-            let sp = safe_display_label(p);
-            let sm = safe_display_label(m);
-            format!(" Siralos  {sp} / {sm}")
-        }
-        (Some(p), _) if !p.is_empty() => {
-            let sp = safe_display_label(p);
-            format!(" Siralos  {sp}")
-        }
-        _ => " Siralos ".to_owned(),
-    }
 }
 
 /// Current local timestamp for live sessions (H4) — `time` crate `local-offset`.

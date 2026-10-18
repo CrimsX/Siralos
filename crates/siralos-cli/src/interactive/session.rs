@@ -434,7 +434,7 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
                 credential_display: None,
                 credential_resolved: false,
                 live_model_switchable: false,
-                context_suffix: String::new(),
+                metrics: crate::tui::SessionMetrics::default(),
                 startup_notices: Vec::new(),
             };
         }
@@ -479,13 +479,18 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
         );
         let protocol =
             self.live_provider.effective_protocol().as_str().to_owned();
+        // Host-observed usage metrics for the bottom row: context assembled
+        // is available today; token counts and provider round time fill in
+        // as the session observes them.
+        let metrics = crate::tui::SessionMetrics {
+            context_assembled: self
+                .context_session_holder
+                .as_ref()
+                .map(|s| crate::tui::context_assembled_total(&s.metrics)),
+            ..crate::tui::SessionMetrics::default()
+        };
         crate::session_worker::SessionStatus {
-            status: crate::tui::compose_status_line_with_context(
-                "",
-                provider.as_deref(),
-                model.as_deref(),
-                self.context_session_holder.as_ref().map(|s| &s.metrics),
-            ),
+            status: "ready".to_owned(),
             provider,
             model,
             endpoint,
@@ -500,11 +505,7 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
             // The frontend persists BEFORE the worker applies, so it needs to
             // know here whether a switch is possible at all.
             live_model_switchable: self.live_provider.supports_live_model(),
-            // The suffix alone, so a transient status keeps the readout.
-            context_suffix: crate::tui::append_context_usage(
-                String::new(),
-                self.context_session_holder.as_ref().map(|s| &s.metrics),
-            ),
+            metrics,
             // Host-owned composition notices; the owning frontend
             // renders them once through the terminal sanitizer.
             // Re-sent on every status (reload re-announces a still-true

@@ -292,10 +292,12 @@ const TUI_RENDER_HEIGHT: u16 = 24;
 ///
 /// The record shape is `{ scenario, frame }`: `scenario` echoes the input
 /// fields (`transcript_lines`, `input`, `status`, `scroll_offset`,
-/// `pending_approval` lines or null, `pane` presence), and `frame` is the
-/// 24-row canonical rendering (one string per buffer row, exact
-/// characters, trailing spaces trimmed per row for JSON stability — the
-/// row count and order are what the snapshot pins).
+/// `pending_approval` lines or null, `pane` presence, and the optional
+/// bottom-row inputs `provider`, `model`, `metrics` — canonicalized with
+/// defaults when absent), and `frame` is the 24-row canonical rendering
+/// (one string per buffer row, exact characters, trailing spaces trimmed
+/// per row for JSON stability — the row count and order are what the
+/// snapshot pins).
 pub(in crate::harness) fn tui_render_record(
     scenario_id: &str,
     input: &Value,
@@ -303,8 +305,8 @@ pub(in crate::harness) fn tui_render_record(
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use siralos_cli::tui::{
-        ApprovalModal, ContextPaneData, ToolActivityEntry, TuiState, draw,
-        draw_with_pane,
+        ApprovalModal, ContextPaneData, SessionMetrics, ToolActivityEntry,
+        TuiState, draw, draw_with_pane,
     };
     use siralos_core::context_metrics::{
         ContextMetrics, DemotionKindCounts, TickRecord, TierCounts,
@@ -366,6 +368,70 @@ pub(in crate::harness) fn tui_render_record(
         _ => {
             return Err(HarnessError::corpus(
                 "tui-render pending_approval must be null or an array of strings",
+            ));
+        }
+    };
+    // Optional bottom-row inputs (decision 222): the applied provider and
+    // model display names and the observed session usage metrics. Absent
+    // keys mean "not observed" and canonicalize to the empty readout.
+    let provider: Option<String> = match input.get("provider") {
+        Some(Value::Null) | None => None,
+        Some(Value::String(name)) => Some(name.clone()),
+        _ => {
+            return Err(HarnessError::corpus(
+                "tui-render provider must be null or a string",
+            ));
+        }
+    };
+    let model: Option<String> = match input.get("model") {
+        Some(Value::Null) | None => None,
+        Some(Value::String(name)) => Some(name.clone()),
+        _ => {
+            return Err(HarnessError::corpus(
+                "tui-render model must be null or a string",
+            ));
+        }
+    };
+    let metrics: SessionMetrics = match input.get("metrics") {
+        Some(Value::Null) | None => SessionMetrics::default(),
+        Some(Value::Object(values)) => {
+            let read_u64 = |key: &str| -> Result<u64, HarnessError> {
+                match values.get(key) {
+                    None | Some(Value::Null) => Ok(0),
+                    Some(value) => value.as_u64().ok_or_else(|| {
+                        HarnessError::corpus(format!(
+                            "tui-render metrics.{key} must be a non-negative integer"
+                        ))
+                    }),
+                }
+            };
+            SessionMetrics {
+                input_tokens: read_u64("input_tokens")?,
+                output_tokens: read_u64("output_tokens")?,
+                cached_tokens: match values.get("cached_tokens") {
+                    None | Some(Value::Null) => None,
+                    Some(value) => Some(value.as_u64().ok_or_else(|| {
+                        HarnessError::corpus(
+                            "tui-render metrics.cached_tokens must be a non-negative integer",
+                        )
+                    })?),
+                },
+                provider_millis: read_u64("provider_millis")?,
+                context_assembled: match values.get("context_assembled") {
+                    None | Some(Value::Null) => None,
+                    Some(value) => Some(
+                        value.as_u64().ok_or_else(|| {
+                            HarnessError::corpus(
+                                "tui-render metrics.context_assembled must be a non-negative integer",
+                            )
+                        })? as usize,
+                    ),
+                },
+            }
+        }
+        _ => {
+            return Err(HarnessError::corpus(
+                "tui-render metrics must be null or an object",
             ));
         }
     };
@@ -495,6 +561,9 @@ pub(in crate::harness) fn tui_render_record(
     // Ensure transcript_lines stays synced for legacy draw path fallback
     state.input = input_text.to_owned();
     state.status = status.to_owned();
+    state.provider = provider.clone();
+    state.model = model.clone();
+    state.metrics = metrics.clone();
     state.scroll_offset = scroll_offset.min(u16::MAX as u64) as u16;
     state.pending_approval = pending.clone().map(|lines| {
         siralos_cli::tui::PendingApproval::ToolApproval {
@@ -552,6 +621,15 @@ pub(in crate::harness) fn tui_render_record(
             "scroll_offset": scroll_offset,
             "pending_approval": pending,
             "pane_present": pane_data.is_some(),
+            "provider": provider,
+            "model": model,
+            "metrics": {
+                "input_tokens": metrics.input_tokens,
+                "output_tokens": metrics.output_tokens,
+                "cached_tokens": metrics.cached_tokens,
+                "provider_millis": metrics.provider_millis,
+                "context_assembled": metrics.context_assembled,
+            },
         },
         "viewport": { "width": TUI_RENDER_WIDTH, "height": TUI_RENDER_HEIGHT },
         "frame": frame,
@@ -2019,15 +2097,20 @@ pub(in crate::harness) fn validate_context_session_input(
 /// The input is one object with exactly the render-model fields:
 /// `transcript_lines` (array of strings), `input` (string), `status`
 /// (string), `scroll_offset` (u64), `pending_approval` (null or array of
-/// strings), and `pane` (null or `{ counters, ring, activity }`). Unknown
-/// fields are rejected; the record is candidate-authored and digest-bound.
+/// strings), and `pane` (null or `{ counters, ring, activity }`). The
+/// footer pass (decision 222) adds three optional bottom-row inputs:
+/// `provider` (null or string), `model` (null or string), and `metrics`
+/// (null or `{ input_tokens, output_tokens, cached_tokens,
+/// provider_millis, context_assembled }` with absent keys read as
+/// unobserved). Unknown fields are rejected; the record is
+/// candidate-authored and digest-bound.
 pub(in crate::harness) fn validate_tui_render_input(
     input: &Value,
 ) -> Result<(), HarnessError> {
     let obj = input.as_object().ok_or_else(|| {
         HarnessError::corpus("tui-render input must be an object")
     })?;
-    const EXPECTED: [&str; 6] = [
+    const REQUIRED: [&str; 6] = [
         "transcript_lines",
         "input",
         "status",
@@ -2035,11 +2118,16 @@ pub(in crate::harness) fn validate_tui_render_input(
         "pending_approval",
         "pane",
     ];
-    if obj.len() != EXPECTED.len()
-        || !EXPECTED.iter().all(|key| obj.contains_key(*key))
+    const OPTIONAL: [&str; 3] = ["provider", "model", "metrics"];
+    if obj.len() > REQUIRED.len() + OPTIONAL.len()
+        || !REQUIRED.iter().all(|key| obj.contains_key(*key))
+        || !obj.keys().all(|key| {
+            REQUIRED.contains(&key.as_str())
+                || OPTIONAL.contains(&key.as_str())
+        })
     {
         return Err(HarnessError::corpus(
-            "tui-render input must contain exactly transcript_lines, input, status, scroll_offset, pending_approval, pane",
+            "tui-render input must contain exactly transcript_lines, input, status, scroll_offset, pending_approval, pane and optionally provider, model, metrics",
         ));
     }
     let lines = obj
@@ -2097,6 +2185,53 @@ pub(in crate::harness) fn validate_tui_render_input(
         _ => {
             return Err(HarnessError::corpus(
                 "tui-render pending_approval must be null or an array of strings",
+            ));
+        }
+    }
+    for key in ["provider", "model"] {
+        match obj.get(key) {
+            None | Some(Value::Null) => {}
+            Some(Value::String(name)) => {
+                if name.len() > 512 {
+                    return Err(HarnessError::corpus(format!(
+                        "tui-render {key} must be at most 512 bytes"
+                    )));
+                }
+            }
+            _ => {
+                return Err(HarnessError::corpus(format!(
+                    "tui-render {key} must be null or a string"
+                )));
+            }
+        }
+    }
+    match obj.get("metrics") {
+        None | Some(Value::Null) => {}
+        Some(Value::Object(values)) => {
+            for (key, value) in values {
+                if ![
+                    "input_tokens",
+                    "output_tokens",
+                    "cached_tokens",
+                    "provider_millis",
+                    "context_assembled",
+                ]
+                .contains(&key.as_str())
+                {
+                    return Err(HarnessError::corpus(
+                        "tui-render metrics accepts only input_tokens, output_tokens, cached_tokens, provider_millis, context_assembled",
+                    ));
+                }
+                if !value.is_null() && value.as_u64().is_none() {
+                    return Err(HarnessError::corpus(format!(
+                        "tui-render metrics.{key} must be null or a non-negative integer"
+                    )));
+                }
+            }
+        }
+        _ => {
+            return Err(HarnessError::corpus(
+                "tui-render metrics must be null or an object",
             ));
         }
     }
