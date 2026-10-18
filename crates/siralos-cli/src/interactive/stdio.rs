@@ -145,6 +145,7 @@ where
         context_system_enabled,
         mut context_session_holder,
         mut context_history_len,
+        session_metrics: _,
         record_recorder,
         replay_store_path,
         applied_provider,

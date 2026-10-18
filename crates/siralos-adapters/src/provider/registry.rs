@@ -555,6 +555,22 @@ impl HostProvider {
             Self::Generic(provider) => provider.take_usage_observation(),
         }
     }
+
+    /// Take the display-only wall time of the last replayable provider
+    /// round from the inner provider, milliseconds.
+    ///
+    /// `Fake` returns `None`: it serves a deterministic echo and observes
+    /// no HTTP round, so no time is fabricated. Reading clears the inner
+    /// cell, so one round is attributed once.
+    #[must_use]
+    pub fn take_round_millis(&self) -> Option<u64> {
+        match self {
+            Self::Fake(_) => None,
+            Self::OpenAi(provider) => provider.take_round_millis(),
+            Self::Anthropic(provider) => provider.take_round_millis(),
+            Self::Generic(provider) => provider.take_round_millis(),
+        }
+    }
 }
 
 impl ModelProvider for HostProvider {

@@ -912,6 +912,8 @@ fn terminal_evidence_survives_replay_saturation() {
         recorder: Some(recorder.clone()),
         request_sha256: RefCell::new(None),
         usage_observation: RefCell::new(None),
+        round_started: core::cell::Cell::new(None),
+        round_millis: core::cell::Cell::new(None),
     };
     let last_replay = RefCell::new(ProviderReplayAvailability::Unavailable {
         reason: "not initialized".to_owned(),
@@ -1026,6 +1028,79 @@ fn usage_observation_is_set_on_success_and_cleared_on_other_terminals() {
         success_body,
     );
     assert_eq!(hooks.take_usage_observation(), None);
+}
+
+#[test]
+fn round_millis_records_with_usage_and_clears_on_other_terminals() {
+    use siralos_core::determinism::ProviderReplayAvailability;
+    use std::cell::RefCell;
+
+    let hooks = super::ReplayHooks::default();
+    let last_replay = RefCell::new(ProviderReplayAvailability::Unavailable {
+        reason: "not initialized".to_owned(),
+    });
+    let success_body = r#"{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":100,"completion_tokens":20}}"#;
+    // A round that never began records no time: nothing is fabricated from
+    // a missing start.
+    super::record_outcome(
+        &hooks,
+        &last_replay,
+        "provider",
+        "model",
+        Some(200),
+        success_body,
+    );
+    assert_eq!(hooks.take_round_millis(), None);
+    assert!(hooks.take_usage_observation().is_some());
+
+    // A replayable round consumes its start time and reports it once.
+    hooks.begin_round();
+    super::record_outcome(
+        &hooks,
+        &last_replay,
+        "provider",
+        "model",
+        Some(200),
+        success_body,
+    );
+    assert!(hooks.take_round_millis().is_some());
+    assert_eq!(
+        hooks.take_round_millis(),
+        None,
+        "one round is attributed once"
+    );
+
+    // A failed round consumes the start and records nothing.
+    hooks.begin_round();
+    super::record_outcome(
+        &hooks,
+        &last_replay,
+        "provider",
+        "model",
+        Some(503),
+        r#"{"error":"upstream unavailable"}"#,
+    );
+    assert_eq!(hooks.take_round_millis(), None);
+
+    // The evidence path clears a recorded time alongside the observation.
+    hooks.begin_round();
+    super::record_outcome(
+        &hooks,
+        &last_replay,
+        "provider",
+        "model",
+        Some(200),
+        success_body,
+    );
+    super::record_evidence_outcome(
+        &hooks,
+        &last_replay,
+        "provider",
+        "model",
+        Some(200),
+        success_body,
+    );
+    assert_eq!(hooks.take_round_millis(), None);
 }
 
 #[test]

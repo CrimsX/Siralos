@@ -196,6 +196,34 @@ impl SessionProvider {
             Self::Replay(_) => None,
         }
     }
+
+    /// Take the display-only usage observation from the last completed
+    /// provider call. Reading clears the cell, so one call is attributed
+    /// once, including each round of a tool loop.
+    #[must_use]
+    pub(super) fn take_usage_observation(
+        &self,
+    ) -> Option<
+        siralos_core::determinism::provider_replay::ProviderUsageObservation,
+    > {
+        match self {
+            Self::Host(provider) => provider.take_usage_observation(),
+            // A replayed recording carries the recorded usage, which the
+            // replay provider surfaces like a live call would.
+            Self::Replay(provider) => provider.take_usage_observation(),
+        }
+    }
+
+    /// Take the display-only wall time of the last replayable provider
+    /// round, milliseconds. A replay round is instant and measured by no
+    /// real clock, so it reports `None` rather than a fabricated zero.
+    #[must_use]
+    pub(super) fn take_round_millis(&self) -> Option<u64> {
+        match self {
+            Self::Host(provider) => provider.take_round_millis(),
+            Self::Replay(_) => None,
+        }
+    }
 }
 
 impl siralos_core::provider::ModelProvider for SessionProvider {

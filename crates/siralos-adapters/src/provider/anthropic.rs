@@ -92,6 +92,8 @@ impl AnthropicProvider {
             recorder: Some(recorder),
             request_sha256: core::cell::RefCell::new(None),
             usage_observation: core::cell::RefCell::new(None),
+            round_started: core::cell::Cell::new(None),
+            round_millis: core::cell::Cell::new(None),
         };
         self
     }
@@ -112,6 +114,14 @@ impl AnthropicProvider {
     #[must_use]
     pub fn take_usage_observation(&self) -> Option<ProviderUsageObservation> {
         self.hooks.take_usage_observation()
+    }
+
+    /// Take the display-only wall time of the last replayable round,
+    /// milliseconds (`None` when no round recorded one). Reading clears
+    /// the cell, so one round is attributed once.
+    #[must_use]
+    pub fn take_round_millis(&self) -> Option<u64> {
+        self.hooks.take_round_millis()
     }
 
     /// Replace the live model id in place. The NEXT `stream()` reads this
@@ -240,6 +250,9 @@ impl AnthropicProvider {
                 message: CANCELLED_BEFORE_HTTP_CALL.to_owned(),
             }];
         }
+        // Display-only round timer: the terminal record of this call
+        // consumes it unconditionally.
+        hooks.begin_round();
         let tool_names = ToolNames::new(
             request.tools.iter().map(|tool| tool.name.as_str()),
         );

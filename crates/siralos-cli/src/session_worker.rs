@@ -730,6 +730,13 @@ fn run_worker_loop_with_stop<S: WorkerSession>(
                         if let Some(pane) = session.pane() {
                             let _ = events.send(WorkerEvent::Pane(pane));
                         }
+                        // The turn observed new provider facts (tokens,
+                        // round time), so re-announce the header: the
+                        // bottom row shows real values without a command
+                        // of its own.
+                        let _ = events.send(WorkerEvent::Ready(Box::new(
+                            session.status(),
+                        )));
                         let _ = events.send(WorkerEvent::TurnFinished);
                         cancel.clear();
                     }
@@ -1928,6 +1935,10 @@ mod loop_tests {
         settled: usize,
         pane: Option<crate::tui::ContextPaneData>,
         flush_result: Option<Result<FlushOutcome, FlushError>>,
+        /// What `status()` reports AFTER its first call: simulates a turn
+        /// that observed provider facts mid-session.
+        metrics_after_first_status: Option<crate::tui::SessionMetrics>,
+        status_calls: std::cell::Cell<usize>,
     }
 
     impl WorkerSession for FakeSession {
@@ -2013,6 +2024,13 @@ mod loop_tests {
             Ok(format!("activated {id}"))
         }
         fn status(&self) -> SessionStatus {
+            let call = self.status_calls.get() + 1;
+            self.status_calls.set(call);
+            let metrics = if call > 1 {
+                self.metrics_after_first_status.clone().unwrap_or_default()
+            } else {
+                crate::tui::SessionMetrics::default()
+            };
             SessionStatus {
                 status: "fake status".to_owned(),
                 provider: Some("fake".to_owned()),
@@ -2022,7 +2040,7 @@ mod loop_tests {
                 credential_display: None,
                 credential_resolved: false,
                 live_model_switchable: true,
-                metrics: crate::tui::SessionMetrics::default(),
+                metrics,
                 startup_notices: Vec::new(),
             }
         }
@@ -2337,10 +2355,79 @@ mod loop_tests {
                 WorkerEvent::Session(ToolLoopEvent::ResponseStarted),
                 WorkerEvent::Pane(pane.clone()),
                 WorkerEvent::Pane(pane),
+                WorkerEvent::Ready(Box::new(session.status())),
                 WorkerEvent::TurnFinished,
                 WorkerEvent::Stopped,
             ],
-            "the pane goes out before the header and again after the settled turn"
+            "the pane goes out before the header, and the settled turn re-announces it"
+        );
+    }
+
+    #[test]
+    fn a_settled_turn_reannounces_the_header_with_fresh_metrics() {
+        // The bottom row's token/time readout moves during a turn, so the
+        // header is re-announced after settlement: the frontend shows the
+        // session's CURRENT observation without a command of its own. The
+        // double changes its status after the first announcement so a loop
+        // that echoed the startup snapshot instead of re-reading the session
+        // cannot pass this.
+        let mut session = FakeSession {
+            events: vec![
+                ToolLoopEvent::ResponseStarted,
+                ToolLoopEvent::ResponseCompleted,
+            ]
+            .into(),
+            metrics_after_first_status: Some(crate::tui::SessionMetrics {
+                input_tokens: 120,
+                output_tokens: 30,
+                cached_tokens: Some(40),
+                provider_millis: 500,
+                context_assembled: None,
+            }),
+            ..FakeSession::default()
+        };
+        let events = run(
+            vec![WorkerCommand::Prompt("hi".to_owned())],
+            &mut session,
+            &CancelFlag::new(),
+        );
+        let readies: Vec<crate::tui::SessionMetrics> = events
+            .iter()
+            .filter_map(|event| match event {
+                WorkerEvent::Ready(status) => Some(status.metrics.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            readies.len(),
+            2,
+            "startup plus the settled re-announcement: {events:?}"
+        );
+        assert_eq!(readies[0], crate::tui::SessionMetrics::default());
+        assert_eq!(readies[1].input_tokens, 120);
+        assert_eq!(readies[1].output_tokens, 30);
+        assert_eq!(readies[1].cached_tokens, Some(40));
+        assert_eq!(readies[1].provider_millis, 500);
+        assert!(
+            readies[1].tokens_per_second().is_some(),
+            "the re-announced metrics render the tps segment"
+        );
+        // A refused prompt moves no provider facts: no extra announcement.
+        let refused = run(
+            vec![WorkerCommand::Prompt("hi".to_owned())],
+            &mut FakeSession {
+                refuse: Some("already responding".to_owned()),
+                ..FakeSession::default()
+            },
+            &CancelFlag::new(),
+        );
+        assert_eq!(
+            refused
+                .iter()
+                .filter(|event| matches!(event, WorkerEvent::Ready(_)))
+                .count(),
+            1,
+            "a prompt that never ran observes nothing: {refused:?}"
         );
     }
 

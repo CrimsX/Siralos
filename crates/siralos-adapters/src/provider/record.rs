@@ -29,6 +29,18 @@ pub(crate) struct ReplayHooks {
             siralos_core::determinism::provider_replay::ProviderUsageObservation,
         >,
     >,
+    /// Wall-clock start of the provider round currently in flight.
+    ///
+    /// Set when a provider is about to send its request and consumed by
+    /// that round's terminal record. Display-only: never persisted,
+    /// digested, or consulted by replay matching.
+    pub round_started: core::cell::Cell<Option<std::time::Instant>>,
+    /// Display-only wall time of the last replayable round, milliseconds.
+    ///
+    /// Computed at the same terminal record that sets `usage_observation`
+    /// and cleared wherever that observation is cleared, so the two can be
+    /// taken as one round's facts.
+    pub round_millis: core::cell::Cell<Option<u64>>,
 }
 
 impl ReplayHooks {
@@ -41,6 +53,19 @@ impl ReplayHooks {
         siralos_core::determinism::provider_replay::ProviderUsageObservation,
     > {
         self.usage_observation.borrow_mut().take()
+    }
+
+    /// Start the display-only round timer, called immediately before a
+    /// provider issues its HTTP request.
+    pub(crate) fn begin_round(&self) {
+        self.round_started.set(Some(std::time::Instant::now()));
+    }
+
+    /// Take the display-only wall time recorded at the last terminal
+    /// outcome, clearing it so one round is attributed once.
+    #[must_use]
+    pub(crate) fn take_round_millis(&self) -> Option<u64> {
+        self.round_millis.take()
     }
 }
 
@@ -230,6 +255,8 @@ pub(crate) fn record_evidence_outcome(
     body_text: &str,
 ) {
     *hooks.usage_observation.borrow_mut() = None;
+    hooks.round_started.set(None);
+    hooks.round_millis.set(None);
     let identity =
         response_identity(hooks, provider_id, model, status, body_text);
     record_evidence_identity(hooks, last_replay, &identity, body_text);
@@ -343,6 +370,9 @@ fn record_outcome_bound(
                     siralos_core::provider::ProviderEvent::Failed(_)
                 )
             });
+    let round_millis = hooks.round_started.take().map(|started| {
+        u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+    });
     *hooks.usage_observation.borrow_mut() = if replayable {
         siralos_core::determinism::provider_replay::parse_provider_usage_observation(
             body_text,
@@ -350,6 +380,7 @@ fn record_outcome_bound(
     } else {
         None
     };
+    hooks.round_millis.set(if replayable { round_millis } else { None });
     if !replayable {
         if let Some(recorder) = hooks.recorder.as_ref() {
             // Preserve sanitized terminal evidence in the recorder, but keep

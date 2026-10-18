@@ -2159,6 +2159,62 @@ fn usage_metrics_format_real_values_and_drop_order() {
 }
 
 #[test]
+fn accumulate_round_adds_only_observed_fields() {
+    use siralos_core::determinism::provider_replay::ProviderUsageObservation;
+    let mut metrics = SessionMetrics::default();
+    // A round that reports every field adds each one.
+    metrics.accumulate_round(
+        Some(30_000),
+        &ProviderUsageObservation {
+            input_tokens: Some(100),
+            output_tokens: Some(20),
+            cached_tokens: Some(40),
+        },
+    );
+    // A round that omits a field must not fabricate it: no output token
+    // count, no cached-token report, and no time means nothing is added
+    // for those fields.
+    metrics.accumulate_round(
+        Some(10_000),
+        &ProviderUsageObservation {
+            input_tokens: Some(50),
+            output_tokens: None,
+            cached_tokens: None,
+        },
+    );
+    metrics.accumulate_round(
+        None,
+        &ProviderUsageObservation {
+            input_tokens: None,
+            output_tokens: None,
+            cached_tokens: None,
+        },
+    );
+    assert_eq!(metrics.input_tokens, 150);
+    assert_eq!(metrics.output_tokens, 20, "an absent count adds nothing");
+    assert_eq!(metrics.cached_tokens, Some(40));
+    assert_eq!(metrics.provider_millis, 40_000);
+    // tps: 20 output tokens over 40 measured seconds is 0.5/s.
+    let tps = metrics.tokens_per_second().expect("tps");
+    assert!((tps - 0.5).abs() < f64::EPSILON, "got {tps}");
+
+    // A reported zero cached count is a real observation, not an absent
+    // one: it keeps the cache segment alive at 0%.
+    let mut zero =
+        SessionMetrics { input_tokens: 100, ..SessionMetrics::default() };
+    zero.accumulate_round(
+        None,
+        &ProviderUsageObservation {
+            input_tokens: None,
+            output_tokens: None,
+            cached_tokens: Some(0),
+        },
+    );
+    assert_eq!(zero.cached_tokens, Some(0));
+    assert_eq!(zero.cache_percent(), Some(0));
+}
+
+#[test]
 fn t4_frames_still_deterministic_without_header() {
     let mut state = TuiState::new();
     state.transcript_lines = vec!["hello".to_owned()];

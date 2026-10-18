@@ -106,6 +106,10 @@ pub(crate) struct SessionComposition<'a> {
         Option<siralos_adapters::context_session::ContextSystemSession>,
     /// Conversation items already observed by the demand loop.
     pub(super) context_history_len: usize,
+    /// Host-observed provider facts for the bottom row: token totals and
+    /// accumulated provider round time, exactly as the session observed
+    /// them. Display-only; never recorded, digested, or replayed.
+    pub(super) session_metrics: crate::tui::SessionMetrics,
     /// Retaining replay recorder for the record-replay flush, if any.
     pub(super) record_recorder: Option<Rc<RetainingReplayRecorder>>,
     /// Replay-store path for load + flush.
@@ -173,9 +177,29 @@ where
     }
 }
 
+impl<'a> SessionComposition<'a> {
+    /// Poll one application event and harvest any provider facts the step
+    /// completed.
+    ///
+    /// Usage and round time are take-once at the provider seam, so
+    /// harvesting on every poll attributes each round of a tool loop
+    /// exactly once; waiting for the terminal event would drop every
+    /// round but the last. Display-only, and `None` stays `None`: nothing
+    /// is fabricated when a round reported nothing.
+    fn poll_application_event(&mut self) -> Option<ToolLoopEvent> {
+        let event = self.application.poll_event()?;
+        let usage = self.live_provider.take_usage_observation();
+        let millis = self.live_provider.take_round_millis();
+        if let Some(usage) = usage {
+            self.session_metrics.accumulate_round(millis, &usage);
+        }
+        Some(event)
+    }
+}
+
 impl crate::session_worker::EventSource for SessionComposition<'_> {
     fn poll_event(&mut self) -> Option<ToolLoopEvent> {
-        self.application.poll_event()
+        self.poll_application_event()
     }
 
     fn cancel(&mut self) {
@@ -209,7 +233,7 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
         }
     }
     fn poll_event(&mut self) -> Option<siralos_core::tool::ToolLoopEvent> {
-        self.application.poll_event()
+        self.poll_application_event()
     }
 
     fn is_responding(&self) -> bool {
@@ -479,16 +503,15 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
         );
         let protocol =
             self.live_provider.effective_protocol().as_str().to_owned();
-        // Host-observed usage metrics for the bottom row: context assembled
-        // is available today; token counts and provider round time fill in
-        // as the session observes them.
-        let metrics = crate::tui::SessionMetrics {
-            context_assembled: self
-                .context_session_holder
-                .as_ref()
-                .map(|s| crate::tui::context_assembled_total(&s.metrics)),
-            ..crate::tui::SessionMetrics::default()
-        };
+        // Host-observed usage metrics for the bottom row: token counts and
+        // provider round time accumulate as the session observes rounds,
+        // and context assembled comes from the same `ContextMetrics` the
+        // pane uses (P5 — single source).
+        let mut metrics = self.session_metrics.clone();
+        metrics.context_assembled = self
+            .context_session_holder
+            .as_ref()
+            .map(|s| crate::tui::context_assembled_total(&s.metrics));
         crate::session_worker::SessionStatus {
             status: "ready".to_owned(),
             provider,
@@ -1210,6 +1233,7 @@ pub(crate) fn compose_session(
         context_system_enabled,
         context_session_holder,
         context_history_len,
+        session_metrics: crate::tui::SessionMetrics::default(),
         record_recorder,
         replay_store_path,
         applied_provider,

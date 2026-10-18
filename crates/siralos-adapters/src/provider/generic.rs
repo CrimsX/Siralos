@@ -132,6 +132,8 @@ impl GenericProvider {
             recorder: Some(recorder),
             request_sha256: core::cell::RefCell::new(None),
             usage_observation: core::cell::RefCell::new(None),
+            round_started: core::cell::Cell::new(None),
+            round_millis: core::cell::Cell::new(None),
         };
         self
     }
@@ -164,6 +166,14 @@ impl GenericProvider {
     #[must_use]
     pub fn take_usage_observation(&self) -> Option<ProviderUsageObservation> {
         self.hooks.take_usage_observation()
+    }
+
+    /// Take the display-only wall time of the last replayable round,
+    /// milliseconds (`None` when no round recorded one). Reading clears
+    /// the cell, so one round is attributed once.
+    #[must_use]
+    pub fn take_round_millis(&self) -> Option<u64> {
+        self.hooks.take_round_millis()
     }
 
     /// Replace the live model id in place. The NEXT `stream()` reads this
@@ -512,6 +522,9 @@ impl GenericProvider {
                 message: CANCELLED_BEFORE_HTTP_CALL.to_owned(),
             }]);
         }
+        // Display-only round timer: the terminal record of this call
+        // consumes it unconditionally.
+        hooks.begin_round();
         let client = match crate::provider::build_http_client() {
             Ok(client) => client,
             Err(_err) => {
@@ -1990,6 +2003,13 @@ mod tests {
         assert_eq!(observation.output_tokens, Some(20));
         assert_eq!(observation.cached_tokens, Some(40));
         assert_eq!(provider.take_usage_observation(), None);
+        // The streamed round was timed from before the request to its
+        // terminal record, and reads once like the usage does.
+        assert!(
+            provider.take_round_millis().is_some(),
+            "the streamed round must carry its measured wall time"
+        );
+        assert_eq!(provider.take_round_millis(), None);
     }
 
     #[test]
@@ -2013,6 +2033,12 @@ mod tests {
         assert_eq!(observation.input_tokens, Some(44));
         assert_eq!(observation.output_tokens, Some(2));
         assert_eq!(observation.cached_tokens, Some(30));
+        // The buffered round is timed from its request to its terminal
+        // record, exactly like the streamed one.
+        assert!(
+            hooks.take_round_millis().is_some(),
+            "the buffered round must carry its measured wall time"
+        );
     }
 
     #[test]

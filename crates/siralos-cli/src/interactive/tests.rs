@@ -2462,6 +2462,71 @@ fn t4_compose_session_is_the_single_shared_definition() {
     let _ = remove_dir_all(root);
 }
 #[test]
+fn a_replayed_round_populates_the_footer_metrics_without_inventing_time() {
+    // The footer's token/time readout reads what the SESSION observed. A
+    // replay round is a real provider round through the same poll seam, so
+    // its tokens surface; wall time is never replayed, so tps stays absent
+    // rather than fabricated (decision 102's rule).
+    use crate::session_worker::WorkerSession;
+    use siralos_adapters::replay_store::write_replay_store;
+    use siralos_core::determinism::{
+        ProviderResponseIdentity, ReplayRecording,
+    };
+
+    let root = temporary_directory("footer-replay-metrics");
+    write(
+        root.join("siralos.toml"),
+        "[profile]\nname = \"default\"\nprovider = \"example-vendor\"\nmodel = \"example/model-a\"\nprotocol = \"openai-completions\"\nreplay = true\n",
+    )
+    .expect("profile");
+    // The replay flag is a dangerous field: materialize the test-only trust.
+    let config = write_test_profile_approval(&root);
+    let body = r#"{"choices":[{"message":{"content":"hello back"}}],"usage":{"prompt_tokens":10,"completion_tokens":4}}"#;
+    let recs = vec![ReplayRecording {
+        identity: ProviderResponseIdentity {
+            provider_id: "example-vendor".to_owned(),
+            model: "example/model-a".to_owned(),
+            status: Some(200),
+            body_sha256: siralos_core::identity::sha256_hex(body.as_bytes()),
+            body_bytes: body.len() as u64,
+            observed_at_ms: Some(1000),
+            input_tokens: Some(10),
+            output_tokens: Some(4),
+            cached_tokens: None,
+        },
+        body: body.to_owned(),
+        request_sha256: None,
+    }];
+    let store_path = root.join(".siralos").join("replay-store.json");
+    std::fs::create_dir_all(store_path.parent().expect("parent"))
+        .expect("mkdir");
+    write_replay_store(&store_path, &recs).expect("write");
+
+    let mut session = compose_session(InteractiveOptions {
+        workspace_root: Some(&root),
+        config_path: Some(&config),
+    })
+    .expect("compose");
+    session.send_prompt("hello").expect("prompt");
+    while session.poll_event().is_some() {}
+
+    let metrics = session.status().metrics;
+    assert_eq!(metrics.input_tokens, 10);
+    assert_eq!(metrics.output_tokens, 4);
+    assert_eq!(metrics.cached_tokens, None);
+    assert_eq!(
+        metrics.provider_millis, 0,
+        "no round time was observed, so none is invented"
+    );
+    assert_eq!(
+        metrics.tokens_per_second(),
+        None,
+        "tps without a measured round would be fabricated"
+    );
+    let _ = remove_dir_all(root);
+}
+
+#[test]
 fn session_replay_store_hermetic() {
     use siralos_adapters::replay_store::{
         load_replay_store, write_replay_store,

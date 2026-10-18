@@ -110,6 +110,31 @@ impl SessionMetrics {
         Some((assembled.saturating_mul(100) / CONTEXT_BUDGET_TOKENS).min(100)
             as u64)
     }
+
+    /// Add one observed provider round to the session totals.
+    ///
+    /// Only fields the provider actually reported are added: an absent
+    /// token count adds nothing (never a fabricated zero), an absent
+    /// cached count leaves the session cached total absent, and an absent
+    /// round time adds no milliseconds. Totals saturate.
+    pub fn accumulate_round(
+        &mut self,
+        round_millis: Option<u64>,
+        usage: &siralos_core::determinism::provider_replay::ProviderUsageObservation,
+    ) {
+        if let Some(millis) = round_millis {
+            self.provider_millis = self.provider_millis.saturating_add(millis);
+        }
+        self.input_tokens =
+            self.input_tokens.saturating_add(usage.input_tokens.unwrap_or(0));
+        self.output_tokens = self
+            .output_tokens
+            .saturating_add(usage.output_tokens.unwrap_or(0));
+        if let Some(cached) = usage.cached_tokens {
+            self.cached_tokens =
+                Some(self.cached_tokens.unwrap_or(0).saturating_add(cached));
+        }
+    }
 }
 
 /// Compact a token count for the metrics row (`1234` -> `1.2k`).
