@@ -10,6 +10,7 @@
 //! `provider_kind_from_str`.
 
 use crate::provider::credential::HostCredential;
+use siralos_core::determinism::provider_replay::ProviderUsageObservation;
 use siralos_core::determinism::{
     Clock, ProviderReplayAvailability, ReplayRecorder,
 };
@@ -539,6 +540,21 @@ impl HostProvider {
             Self::Generic(provider) => provider.take_last_replay_availability(),
         }
     }
+
+    /// Take the display-only usage observation from the inner provider.
+    ///
+    /// `Fake` returns `None`: it serves a deterministic echo, observes no
+    /// HTTP response, and therefore never fabricates usage. Reading clears
+    /// the inner cell, so one call is attributed once.
+    #[must_use]
+    pub fn take_usage_observation(&self) -> Option<ProviderUsageObservation> {
+        match self {
+            Self::Fake(_) => None,
+            Self::OpenAi(provider) => provider.take_usage_observation(),
+            Self::Anthropic(provider) => provider.take_usage_observation(),
+            Self::Generic(provider) => provider.take_usage_observation(),
+        }
+    }
 }
 
 impl ModelProvider for HostProvider {
@@ -686,6 +702,21 @@ mod tests {
         );
         assert_eq!(fake.live_endpoint(), None);
         assert_eq!(fake.live_protocol(), None);
+    }
+
+    #[test]
+    fn fake_provider_never_reports_usage() {
+        // The deterministic fake serves an echo and observes no HTTP
+        // response; its observation stays absent rather than fabricated.
+        let fake = super::HostProvider::from_provider_str_with_protocol(
+            "deterministic-fake",
+            None,
+            None,
+            None,
+            siralos_core::composition::Protocol::OpenAiCompletions,
+        )
+        .expect("fake");
+        assert_eq!(fake.take_usage_observation(), None);
     }
 
     #[test]

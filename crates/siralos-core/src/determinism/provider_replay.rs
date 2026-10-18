@@ -305,6 +305,96 @@ fn as_bounded_u64(value: &Value) -> Option<u64> {
     }
 }
 
+/// Display-only provider usage observed from one completed response.
+///
+/// Unlike [`ProviderUsage`] (persisted inside `ProviderResponseIdentity`),
+/// this observation is never recorded, digested, or replayed; it exists to
+/// drive the session footer. Anthropic cache accounting is normalized to
+/// the OpenAI token vocabulary: `input_tokens` carries the whole prompt
+/// (fresh input plus cache reads plus cache writes) and `cached_tokens`
+/// carries only the tokens served from cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProviderUsageObservation {
+    /// Total prompt tokens (Anthropic: input + cache read + cache write).
+    pub input_tokens: Option<u64>,
+    /// Output/completion tokens.
+    pub output_tokens: Option<u64>,
+    /// Tokens served from cache, where the provider reports them.
+    pub cached_tokens: Option<u64>,
+}
+
+/// Parse a display-only usage observation from a sanitized bounded body.
+///
+/// Returns `None` when the body carries no usage object or no usable
+/// numbers — the footer never fabricates a zero. OpenAI-compatible shapes
+/// use `input_tokens`/`prompt_tokens`, `output_tokens`/`completion_tokens`,
+/// and a cached count from `cached_tokens`,
+/// `prompt_tokens_details.cached_tokens`,
+/// `prompt_tokens_details.cached_tokens_details.cached_tokens`, or
+/// `input_tokens_details.cached_tokens`. When the Anthropic cache fields
+/// (`cache_read_input_tokens`, `cache_creation_input_tokens`) are present,
+/// the prompt total is `input_tokens + cache_read + cache_creation` and
+/// `cached_tokens` is the cache read. Non-numeric, negative, or
+/// non-integer numbers are treated as absent.
+#[must_use]
+pub fn parse_provider_usage_observation(
+    body_text: &str,
+) -> Option<ProviderUsageObservation> {
+    let value: Value = serde_json::from_str(body_text).ok()?;
+    let usage = value.get("usage")?.as_object()?;
+    let cache_read = extract_u64_obj(usage, "cache_read_input_tokens");
+    let cache_creation = extract_u64_obj(usage, "cache_creation_input_tokens");
+    let input_tokens = if cache_read.is_some() || cache_creation.is_some() {
+        // Anthropic reports `input_tokens` excluding cache reads and
+        // writes; the footer shows the whole prompt.
+        usage.get("input_tokens").and_then(as_bounded_u64).map(|input| {
+            input
+                .saturating_add(cache_read.unwrap_or(0))
+                .saturating_add(cache_creation.unwrap_or(0))
+        })
+    } else {
+        extract_u64_obj(usage, "input_tokens")
+            .or_else(|| extract_u64_obj(usage, "prompt_tokens"))
+    };
+    let output_tokens = extract_u64_obj(usage, "output_tokens")
+        .or_else(|| extract_u64_obj(usage, "completion_tokens"));
+    let cached_tokens = if cache_read.is_some() {
+        cache_read
+    } else {
+        extract_u64_obj(usage, "cached_tokens").or_else(|| {
+            usage
+                .get("prompt_tokens_details")
+                .and_then(Value::as_object)
+                .and_then(|obj| {
+                    extract_u64_obj(obj, "cached_tokens").or_else(|| {
+                        obj.get("cached_tokens_details")
+                            .and_then(Value::as_object)
+                            .and_then(|inner| {
+                                extract_u64_obj(inner, "cached_tokens")
+                            })
+                    })
+                })
+                .or_else(|| {
+                    usage
+                        .get("input_tokens_details")
+                        .and_then(Value::as_object)
+                        .and_then(|obj| extract_u64_obj(obj, "cached_tokens"))
+                })
+        })
+    };
+    if input_tokens.is_none()
+        && output_tokens.is_none()
+        && cached_tokens.is_none()
+    {
+        return None;
+    }
+    Some(ProviderUsageObservation {
+        input_tokens,
+        output_tokens,
+        cached_tokens,
+    })
+}
+
 /// Digest one provider response identity (`ProviderResponseIdentity` v1/v2).
 ///
 /// When no usage fields are present (`input_tokens`, `output_tokens`,
@@ -1127,7 +1217,7 @@ mod tests {
         ReplayIdentityError, ReplayRecorder, ReplayRecording,
         ReplayRecordingValidationError,
         compute_provider_response_identity_digest, is_valid_replay_sha256,
-        parse_provider_usage,
+        parse_provider_usage, parse_provider_usage_observation,
     };
 
     fn base_identity() -> ProviderResponseIdentity {
@@ -1917,6 +2007,90 @@ mod tests {
         let usage = parse_provider_usage(body);
         assert_eq!(usage.input_tokens, None);
         assert_eq!(usage.output_tokens, Some(999999999999999));
+    }
+
+    // --- Display-only usage observation (session footer) ---
+
+    #[test]
+    fn observation_openai_shape() {
+        let body = r#"{"choices":[{"message":{"content":"hi"}}],"usage":{"prompt_tokens":100,"completion_tokens":50,"cached_tokens":10}}"#;
+        let observation =
+            parse_provider_usage_observation(body).expect("observation");
+        assert_eq!(observation.input_tokens, Some(100));
+        assert_eq!(observation.output_tokens, Some(50));
+        assert_eq!(observation.cached_tokens, Some(10));
+    }
+
+    #[test]
+    fn observation_anthropic_cache_is_normalized() {
+        let body = r#"{"content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":10,"output_tokens":2,"cache_read_input_tokens":30,"cache_creation_input_tokens":4}}"#;
+        let observation =
+            parse_provider_usage_observation(body).expect("observation");
+        assert_eq!(observation.input_tokens, Some(44));
+        assert_eq!(observation.output_tokens, Some(2));
+        assert_eq!(observation.cached_tokens, Some(30));
+        // The persisted identity parse is deliberately unchanged: it keeps
+        // the provider's raw `input_tokens` and ignores the cache fields.
+        let usage = parse_provider_usage(body);
+        assert_eq!(usage.input_tokens, Some(10));
+        assert_eq!(usage.cached_tokens, None);
+    }
+
+    #[test]
+    fn observation_openai_input_tokens_details_cached() {
+        let body = r#"{"usage":{"input_tokens":77,"output_tokens":5,"input_tokens_details":{"cached_tokens":60}}}"#;
+        let observation =
+            parse_provider_usage_observation(body).expect("observation");
+        assert_eq!(observation.input_tokens, Some(77));
+        assert_eq!(observation.output_tokens, Some(5));
+        assert_eq!(observation.cached_tokens, Some(60));
+    }
+
+    #[test]
+    fn observation_nested_prompt_details_cached() {
+        let body = r#"{"usage":{"prompt_tokens":100,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens_details":{"cached_tokens":42}}}}"#;
+        let observation =
+            parse_provider_usage_observation(body).expect("observation");
+        assert_eq!(observation.cached_tokens, Some(42));
+    }
+
+    #[test]
+    fn observation_absent_or_unusable_usage_is_none() {
+        assert_eq!(
+            parse_provider_usage_observation(
+                r#"{"choices":[{"message":{"content":"hi"}}]}"#
+            ),
+            None
+        );
+        assert_eq!(parse_provider_usage_observation("not json at all"), None);
+        assert_eq!(parse_provider_usage_observation(r#"{"usage":{}}"#), None);
+        assert_eq!(
+            parse_provider_usage_observation(
+                r#"{"usage":{"input_tokens":"100","output_tokens":null}}"#
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn observation_negative_numbers_are_absent_without_inventing_cache() {
+        // A negative (or otherwise unusable) cache read must not switch the
+        // parse into Anthropic normalization or surface as a cached count.
+        let body = r#"{"usage":{"input_tokens":5,"output_tokens":1,"cache_read_input_tokens":-1}}"#;
+        let observation =
+            parse_provider_usage_observation(body).expect("observation");
+        assert_eq!(observation.input_tokens, Some(5));
+        assert_eq!(observation.output_tokens, Some(1));
+        assert_eq!(observation.cached_tokens, None);
+    }
+
+    #[test]
+    fn observation_zero_cache_read_is_a_real_observation() {
+        let body = r#"{"usage":{"input_tokens":10,"output_tokens":1,"cache_read_input_tokens":0}}"#;
+        let observation =
+            parse_provider_usage_observation(body).expect("observation");
+        assert_eq!(observation.input_tokens, Some(10));
+        assert_eq!(observation.cached_tokens, Some(0));
     }
 
     #[test]

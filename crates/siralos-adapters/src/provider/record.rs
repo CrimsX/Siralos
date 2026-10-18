@@ -19,6 +19,29 @@ pub(crate) struct ReplayHooks {
         Option<std::rc::Rc<dyn siralos_core::determinism::ReplayRecorder>>,
     /// Canonical digest of the request currently being served, if any.
     pub request_sha256: core::cell::RefCell<Option<String>>,
+    /// Display-only usage observation from the last terminal outcome.
+    ///
+    /// Set on a replayable success and cleared on every other terminal
+    /// record so a later round can never be attributed an earlier round's
+    /// usage. Never persisted, digested, or consulted by replay matching.
+    pub usage_observation: core::cell::RefCell<
+        Option<
+            siralos_core::determinism::provider_replay::ProviderUsageObservation,
+        >,
+    >,
+}
+
+impl ReplayHooks {
+    /// Take the display-only usage observation recorded at the last
+    /// terminal outcome, clearing it so one call is attributed once.
+    #[must_use]
+    pub(crate) fn take_usage_observation(
+        &self,
+    ) -> Option<
+        siralos_core::determinism::provider_replay::ProviderUsageObservation,
+    > {
+        self.usage_observation.borrow_mut().take()
+    }
 }
 
 impl std::fmt::Debug for ReplayHooks {
@@ -206,6 +229,7 @@ pub(crate) fn record_evidence_outcome(
     status: Option<u16>,
     body_text: &str,
 ) {
+    *hooks.usage_observation.borrow_mut() = None;
     let identity =
         response_identity(hooks, provider_id, model, status, body_text);
     record_evidence_identity(hooks, last_replay, &identity, body_text);
@@ -319,6 +343,13 @@ fn record_outcome_bound(
                     siralos_core::provider::ProviderEvent::Failed(_)
                 )
             });
+    *hooks.usage_observation.borrow_mut() = if replayable {
+        siralos_core::determinism::provider_replay::parse_provider_usage_observation(
+            body_text,
+        )
+    } else {
+        None
+    };
     if !replayable {
         if let Some(recorder) = hooks.recorder.as_ref() {
             // Preserve sanitized terminal evidence in the recorder, but keep

@@ -187,6 +187,7 @@ pub(crate) fn retaining_hooks() -> (
         clock: None,
         recorder: Some(recorder.clone()),
         request_sha256: core::cell::RefCell::new(None),
+        usage_observation: core::cell::RefCell::new(None),
     };
     (hooks, recorder)
 }

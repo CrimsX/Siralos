@@ -911,6 +911,7 @@ fn terminal_evidence_survives_replay_saturation() {
         clock: None,
         recorder: Some(recorder.clone()),
         request_sha256: RefCell::new(None),
+        usage_observation: RefCell::new(None),
     };
     let last_replay = RefCell::new(ProviderReplayAvailability::Unavailable {
         reason: "not initialized".to_owned(),
@@ -942,6 +943,89 @@ fn terminal_evidence_survives_replay_saturation() {
         &*last_replay.borrow(),
         ProviderReplayAvailability::Unavailable { .. }
     ));
+}
+
+#[test]
+fn usage_observation_is_set_on_success_and_cleared_on_other_terminals() {
+    use siralos_core::determinism::ProviderReplayAvailability;
+    use std::cell::RefCell;
+
+    let hooks = super::ReplayHooks::default();
+    let last_replay = RefCell::new(ProviderReplayAvailability::Unavailable {
+        reason: "not initialized".to_owned(),
+    });
+    let success_body = r#"{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":100,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":40}}}"#;
+    super::record_outcome(
+        &hooks,
+        &last_replay,
+        "provider",
+        "model",
+        Some(200),
+        success_body,
+    );
+    let observation = hooks.take_usage_observation().expect("observation");
+    assert_eq!(observation.input_tokens, Some(100));
+    assert_eq!(observation.output_tokens, Some(20));
+    assert_eq!(observation.cached_tokens, Some(40));
+    assert_eq!(hooks.take_usage_observation(), None);
+
+    // A later terminal failure clears a stale success observation instead of
+    // leaving it to be attributed to the failed round.
+    super::record_outcome(
+        &hooks,
+        &last_replay,
+        "provider",
+        "model",
+        Some(200),
+        success_body,
+    );
+    super::record_outcome(
+        &hooks,
+        &last_replay,
+        "provider",
+        "model",
+        Some(503),
+        r#"{"error":"upstream unavailable"}"#,
+    );
+    assert_eq!(hooks.take_usage_observation(), None);
+
+    // A 2xx whose body is not a replayable completion is also not observed.
+    super::record_outcome(
+        &hooks,
+        &last_replay,
+        "provider",
+        "model",
+        Some(200),
+        success_body,
+    );
+    super::record_outcome(
+        &hooks,
+        &last_replay,
+        "provider",
+        "model",
+        Some(200),
+        "not json",
+    );
+    assert_eq!(hooks.take_usage_observation(), None);
+
+    // The evidence path (protocol/validation failures) clears as well.
+    super::record_outcome(
+        &hooks,
+        &last_replay,
+        "provider",
+        "model",
+        Some(200),
+        success_body,
+    );
+    super::record_evidence_outcome(
+        &hooks,
+        &last_replay,
+        "provider",
+        "model",
+        Some(200),
+        success_body,
+    );
+    assert_eq!(hooks.take_usage_observation(), None);
 }
 
 #[test]

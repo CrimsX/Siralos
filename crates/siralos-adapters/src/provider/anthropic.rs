@@ -16,6 +16,7 @@ use crate::provider::{
     ReplayHooks, record_outcome,
 };
 use serde_json::{Value, json};
+use siralos_core::determinism::provider_replay::ProviderUsageObservation;
 use siralos_core::determinism::{
     Clock, ProviderReplayAvailability, ReplayRecorder,
 };
@@ -90,6 +91,7 @@ impl AnthropicProvider {
             clock: Some(clock),
             recorder: Some(recorder),
             request_sha256: core::cell::RefCell::new(None),
+            usage_observation: core::cell::RefCell::new(None),
         };
         self
     }
@@ -100,6 +102,16 @@ impl AnthropicProvider {
         self.last_replay.replace(ProviderReplayAvailability::Unavailable {
             reason: NO_PROVIDER_RESPONSE_OBSERVED.to_owned(),
         })
+    }
+
+    /// Take the display-only usage observation from the last terminal call.
+    ///
+    /// `None` means the provider reported no usable usage; the footer never
+    /// fabricates a zero. Reading clears the cell, so one call is attributed
+    /// once.
+    #[must_use]
+    pub fn take_usage_observation(&self) -> Option<ProviderUsageObservation> {
+        self.hooks.take_usage_observation()
     }
 
     /// Replace the live model id in place. The NEXT `stream()` reads this

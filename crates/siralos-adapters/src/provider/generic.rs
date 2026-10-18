@@ -34,6 +34,7 @@ use crate::provider::{
 };
 use serde_json::{Value, json};
 use siralos_core::composition::Protocol;
+use siralos_core::determinism::provider_replay::ProviderUsageObservation;
 use siralos_core::determinism::{
     Clock, ProviderReplayAvailability, ReplayRecorder,
 };
@@ -130,6 +131,7 @@ impl GenericProvider {
             clock: Some(clock),
             recorder: Some(recorder),
             request_sha256: core::cell::RefCell::new(None),
+            usage_observation: core::cell::RefCell::new(None),
         };
         self
     }
@@ -152,6 +154,16 @@ impl GenericProvider {
         self.last_replay.replace(ProviderReplayAvailability::Unavailable {
             reason: NO_PROVIDER_RESPONSE_OBSERVED.to_owned(),
         })
+    }
+
+    /// Take the display-only usage observation from the last terminal call.
+    ///
+    /// `None` means the provider reported no usable usage; the footer never
+    /// fabricates a zero. Reading clears the cell, so one call is attributed
+    /// once.
+    #[must_use]
+    pub fn take_usage_observation(&self) -> Option<ProviderUsageObservation> {
+        self.hooks.take_usage_observation()
     }
 
     /// Replace the live model id in place. The NEXT `stream()` reads this
@@ -666,6 +678,11 @@ impl GenericProvider {
                 // Server-sent events: the streamed deltas are assembled back
                 // into the same events (and the same recording) as before.
                 value["stream"] = Value::Bool(true);
+                // The final usage chunk is opt-in on OpenAI-compatible
+                // streaming; the footer's token accounting depends on it,
+                // and a provider that does not implement the option simply
+                // omits the chunk (never fabricating usage).
+                value["stream_options"] = json!({ "include_usage": true });
                 value
             }
             Protocol::OpenAiResponses => {
@@ -1903,6 +1920,99 @@ mod tests {
         assert!(stream.next().is_none());
         drop(stream);
         let _ = server.recorded();
+    }
+
+    #[test]
+    fn probe_sends_stream_options_include_usage_for_completions() {
+        let streaming = serve(Fixture {
+            status: 200,
+            body: r#"{"choices":[]}"#.to_owned(),
+        });
+        let outcome = GenericProvider::call_generic(
+            "probe-vendor",
+            "probe-model",
+            &streaming.base_url,
+            Protocol::OpenAiCompletions,
+            Some("test-cred".to_owned()),
+            &probe_request(),
+            None,
+            &ReplayHooks::default(),
+            &probe_replay(),
+        );
+        let recorded = streaming.recorded();
+        assert!(matches!(outcome, CallOutcome::Streaming { .. }));
+        let body: serde_json::Value =
+            serde_json::from_str(&recorded.body).expect("json request body");
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["stream_options"]["include_usage"], true);
+
+        // The buffered protocols do not stream and send no stream options.
+        let buffered = serve(Fixture {
+            status: 200,
+            body: r#"{"content":[{"type":"text","text":"hi"}]}"#.to_owned(),
+        });
+        let _ = drive(&buffered.base_url, Protocol::AnthropicMessages, None);
+        let body: serde_json::Value =
+            serde_json::from_str(&buffered.recorded().body)
+                .expect("json request body");
+        assert!(body.get("stream").is_none());
+        assert!(body.get("stream_options").is_none());
+    }
+
+    #[test]
+    fn streamed_turn_surfaces_usage_once_per_call() {
+        let body = [
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":20,\"prompt_tokens_details\":{\"cached_tokens\":40}}}\n\n",
+            "data: [DONE]\n\n",
+        ]
+        .concat();
+        let server = serve(Fixture { status: 200, body });
+        let provider = GenericProvider::new(
+            "probe-vendor".to_owned(),
+            "probe-model".to_owned(),
+            Some(server.base_url.clone()),
+            None,
+        );
+        let request = probe_request();
+        let token = CancellationToken::new();
+        let events: Vec<_> =
+            provider.stream(&request, token.signal()).collect();
+        let _ = server.recorded();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ProviderEvent::Event(ModelEvent::Completed)
+        )));
+        let observation =
+            provider.take_usage_observation().expect("observed usage");
+        assert_eq!(observation.input_tokens, Some(100));
+        assert_eq!(observation.output_tokens, Some(20));
+        assert_eq!(observation.cached_tokens, Some(40));
+        assert_eq!(provider.take_usage_observation(), None);
+    }
+
+    #[test]
+    fn buffered_anthropic_usage_is_normalized_into_the_observation() {
+        let (hooks, _recorder) = retaining_hooks();
+        let server = serve(Fixture {
+            status: 200,
+            body: r#"{"content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":10,"output_tokens":2,"cache_read_input_tokens":30,"cache_creation_input_tokens":4}}"#
+                .to_owned(),
+        });
+        let _ = drive_named_with(
+            "probe-vendor",
+            &server.base_url,
+            Protocol::AnthropicMessages,
+            None,
+            &hooks,
+        );
+        let _ = server.recorded();
+        let observation =
+            hooks.take_usage_observation().expect("observed usage");
+        assert_eq!(observation.input_tokens, Some(44));
+        assert_eq!(observation.output_tokens, Some(2));
+        assert_eq!(observation.cached_tokens, Some(30));
     }
 
     #[test]

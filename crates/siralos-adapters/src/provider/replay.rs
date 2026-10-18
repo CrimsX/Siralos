@@ -9,6 +9,7 @@ use crate::provider::CANCELLED_BEFORE_PROVIDER_START;
 use crate::provider::tool_names::ToolNames;
 use serde_json::Value;
 use siralos_core::determinism::ReplayRecording;
+use siralos_core::determinism::provider_replay::ProviderUsageObservation;
 use siralos_core::provider::{
     CancellationSignal, ModelEvent, ModelProvider, ModelRequest, ProviderEvent,
 };
@@ -1433,6 +1434,11 @@ pub struct RecordedReplayProvider {
     recordings: Vec<ReplayRecording>,
     /// Cursor into `recordings`.
     cursor: core::cell::Cell<usize>,
+    /// Display-only usage observation from the last served recording.
+    ///
+    /// Set when a recording is served and cleared at the start of every
+    /// call, so a footer can never re-report an earlier call's usage.
+    usage_observation: core::cell::RefCell<Option<ProviderUsageObservation>>,
     /// Constructor validation failure retained as a fail-closed state.
     invalid: bool,
 }
@@ -1604,6 +1610,7 @@ impl RecordedReplayProvider {
             route,
             recordings,
             cursor: core::cell::Cell::new(0),
+            usage_observation: core::cell::RefCell::new(None),
             invalid,
         }
     }
@@ -1664,6 +1671,14 @@ impl RecordedReplayProvider {
     pub fn live_model(&self) -> String {
         self.model.borrow().clone()
     }
+
+    /// Take the display-only usage observation from the last served
+    /// recording (`None` when the recording carries no usable usage).
+    /// Reading clears the cell, so one recording is attributed once.
+    #[must_use]
+    pub fn take_usage_observation(&self) -> Option<ProviderUsageObservation> {
+        self.usage_observation.borrow_mut().take()
+    }
 }
 
 impl ModelProvider for RecordedReplayProvider {
@@ -1681,6 +1696,9 @@ impl ModelProvider for RecordedReplayProvider {
         _request: &'a ModelRequest,
         cancellation: CancellationSignal<'a>,
     ) -> Self::Stream<'a> {
+        // A new call owns the display-only cell: a failed match or an
+        // exhausted cursor never re-reports the previous call's usage.
+        *self.usage_observation.borrow_mut() = None;
         if self.invalid {
             return Box::new(std::iter::once(ProviderEvent::Failed(
                 "replay recordings failed constructor validation".to_owned(),
@@ -1757,6 +1775,10 @@ impl ModelProvider for RecordedReplayProvider {
             _request.tools.iter().map(|tool| tool.name.as_str()),
         );
         let events = tool_names.restore_events(events);
+        *self.usage_observation.borrow_mut() =
+            siralos_core::determinism::provider_replay::parse_provider_usage_observation(
+                &recording.body,
+            );
         Box::new(ReplayCursorEvents {
             inner: events.into_iter(),
             cursor: &self.cursor,
@@ -2028,6 +2050,36 @@ mod tests {
             events.last(),
             Some(ProviderEvent::Event(ModelEvent::Completed))
         ));
+    }
+
+    #[test]
+    fn played_recording_surfaces_usage_once_per_call() {
+        let body = r#"{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":50,"completion_tokens":7,"prompt_tokens_details":{"cached_tokens":11}}}"#;
+        let request =
+            ModelRequest { messages: vec![], tools: vec![], system: None };
+        let provider = RecordedReplayProvider::new(
+            "route-provider".to_owned(),
+            "route-model".to_owned(),
+            vec![recording(body, None)],
+        );
+        let token = CancellationToken::new();
+        let events: Vec<_> =
+            provider.stream(&request, token.signal()).collect();
+        assert!(
+            events
+                .iter()
+                .all(|event| { !matches!(event, ProviderEvent::Failed(_)) })
+        );
+        let observation =
+            provider.take_usage_observation().expect("observed usage");
+        assert_eq!(observation.input_tokens, Some(50));
+        assert_eq!(observation.output_tokens, Some(7));
+        assert_eq!(observation.cached_tokens, Some(11));
+        assert_eq!(provider.take_usage_observation(), None);
+        // The cursor is exhausted; the failed second call never re-reports
+        // the first call's usage.
+        let _ = provider.stream(&request, token.signal()).collect::<Vec<_>>();
+        assert_eq!(provider.take_usage_observation(), None);
     }
 
     #[test]
