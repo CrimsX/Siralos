@@ -101,5 +101,8 @@ over measured live rounds only; replay and fake sessions show tokens but no
 time; the cache segment exists only where a provider reports cached tokens;
 the `tui-render` record echo still writes an unobserved count as `0` for
 record-shape compatibility (the pinned frame is the artifact that shows the
-absence, and the echo's note in the harness subject says so); and verification
-is headless plus replayed, not a live terminal.
+absence, and the echo's note in the harness subject says so); no end-to-end
+fixture drives a multi-round tool turn (per-round attribution rests on the
+take-once cells plus the per-poll harvest, proven by code inspection and the
+single-round replay test); and verification is headless plus replayed, not a
+live terminal.
