@@ -2105,8 +2105,8 @@ fn status_usage_readout_present_and_absent() {
 #[test]
 fn usage_metrics_format_real_values_and_drop_order() {
     let metrics = SessionMetrics {
-        input_tokens: 12_340,
-        output_tokens: 4_100,
+        input_tokens: Some(12_340),
+        output_tokens: Some(4_100),
         cached_tokens: Some(8_400),
         provider_millis: 100_000,
         context_assembled: Some(1_500),
@@ -2190,8 +2190,12 @@ fn accumulate_round_adds_only_observed_fields() {
             cached_tokens: None,
         },
     );
-    assert_eq!(metrics.input_tokens, 150);
-    assert_eq!(metrics.output_tokens, 20, "an absent count adds nothing");
+    assert_eq!(metrics.input_tokens, Some(150));
+    assert_eq!(
+        metrics.output_tokens,
+        Some(20),
+        "an absent count adds nothing"
+    );
     assert_eq!(metrics.cached_tokens, Some(40));
     assert_eq!(metrics.provider_millis, 40_000);
     // tps: 20 output tokens over 40 measured seconds is 0.5/s.
@@ -2200,8 +2204,10 @@ fn accumulate_round_adds_only_observed_fields() {
 
     // A reported zero cached count is a real observation, not an absent
     // one: it keeps the cache segment alive at 0%.
-    let mut zero =
-        SessionMetrics { input_tokens: 100, ..SessionMetrics::default() };
+    let mut zero = SessionMetrics {
+        input_tokens: Some(100),
+        ..SessionMetrics::default()
+    };
     zero.accumulate_round(
         None,
         &ProviderUsageObservation {
@@ -2212,6 +2218,37 @@ fn accumulate_round_adds_only_observed_fields() {
     );
     assert_eq!(zero.cached_tokens, Some(0));
     assert_eq!(zero.cache_percent(), Some(0));
+
+    // A partial observation is never completed with a fabricated zero: an
+    // output-only round renders no token pair at all, while its measured
+    // throughput still surfaces.
+    let mut partial = SessionMetrics::default();
+    partial.accumulate_round(
+        Some(10_000),
+        &ProviderUsageObservation {
+            input_tokens: None,
+            output_tokens: Some(5),
+            cached_tokens: None,
+        },
+    );
+    assert_eq!(partial.input_tokens, None);
+    assert_eq!(partial.tokens_segment(), None, "no `0/5` may render");
+    assert_eq!(partial.cache_percent(), None, "no input to divide by");
+    let partial_tps =
+        partial.tokens_per_second().expect("output was observed");
+    assert!((partial_tps - 0.5).abs() < f64::EPSILON, "got {partial_tps}");
+    // ...and an input-only round symmetrically.
+    let mut input_only = SessionMetrics::default();
+    input_only.accumulate_round(
+        None,
+        &ProviderUsageObservation {
+            input_tokens: Some(5),
+            output_tokens: None,
+            cached_tokens: None,
+        },
+    );
+    assert_eq!(input_only.tokens_segment(), None);
+    assert_eq!(input_only.tokens_per_second(), None);
 }
 
 #[test]

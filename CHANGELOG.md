@@ -99,7 +99,8 @@ and the number does not change any of it.
   [decision 181](docs/wayfinder/decisions/181-single-row-footer.md)). The
   top header bar is removed and the bottom row carries
   `status | tps · tok · cache · ctx | provider / model`; every usage
-  segment renders only when the provider actually reported it. Round
+  segment renders only when the provider actually reported it (a partial
+  report renders nothing, never a fabricated zero). Round
   time is measured at the provider seam for live rounds (replay and
   fake observe tokens but never a fabricated wall time; the OpenAI
   streaming body asks for the usage frame), and the worker

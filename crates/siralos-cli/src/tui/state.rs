@@ -156,9 +156,10 @@ pub struct TuiState {
     /// Selected palette entry index (I2): when `Some`, the highlighted entry
     /// in the filtered palette (arrow-key navigation).
     pub palette_selected: Option<usize>,
-    /// Provider for header bar (P2) — same source as status line.
+    /// Provider for the bottom row's right-flushed identity (decision 181)
+    /// — same source as the status line.
     pub provider: Option<String>,
-    /// Model for header bar (P2).
+    /// Model for the bottom row's right-flushed identity (decision 181).
     pub model: Option<String>,
     /// Endpoint the worker composed the session with (C2 step 3, decision 168
     /// R3). Display only: the picker shows it, and `/provider` renders it.

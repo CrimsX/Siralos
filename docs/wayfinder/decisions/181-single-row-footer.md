@@ -31,9 +31,10 @@ one row more informative**.
   by this decision.
 - **Observed only, never fabricated** (decision 102 P2's rule). A segment
   renders only when a real observation exists: tps needs output tokens and a
-  measured round time, tok needs a reported count, cache needs the cached-token
-  report, ctx needs the context session. No provider → "no provider
-  configured". A reported zero is a real observation and stays.
+  measured round time, tok needs both reported counts (a partial report renders
+  nothing rather than a fabricated `0/N`), cache needs the cached-token report
+  and an input count to divide by, ctx needs the context session. No provider →
+  "no provider configured". A reported zero is a real observation and stays.
 - **Round time is measured where the round happens.** The provider seam
   (`call_generic`/`call_openai`/`call_anthropic`, after the cancellation check)
   starts a display-only timer and the terminal record consumes it
@@ -72,8 +73,12 @@ one row more informative**.
   `round_millis_records_with_usage_and_clears_on_other_terminals` pins that a
   round that never began records no time, a replayable round consumes its
   start once, and failures and the evidence path clear it.
-- `accumulate_round_adds_only_observed_fields`: absent fields add nothing, and
-  a reported zero cached count keeps the cache segment alive at 0%.
+- `accumulate_round_adds_only_observed_fields`: absent fields add nothing, a
+  reported zero cached count keeps the cache segment alive at 0%, and a partial
+  observation (one side reported) renders no token pair and no cache percentage
+  while its measured throughput still surfaces — found by the independent
+  review and repaired at the root cause (`SessionMetrics` token counts are
+  `Option`, so absence is representable).
 - `a_settled_turn_reannounces_the_header_with_fresh_metrics`: the double
   changes its status after the first announcement, so a loop echoing the
   startup snapshot cannot pass; a refused prompt announces nothing extra.

@@ -2511,9 +2511,14 @@ fn a_replayed_round_populates_the_footer_metrics_without_inventing_time() {
     while session.poll_event().is_some() {}
 
     let metrics = session.status().metrics;
-    assert_eq!(metrics.input_tokens, 10);
-    assert_eq!(metrics.output_tokens, 4);
+    assert_eq!(metrics.input_tokens, Some(10));
+    assert_eq!(metrics.output_tokens, Some(4));
     assert_eq!(metrics.cached_tokens, None);
+    assert_eq!(
+        metrics.tokens_segment().as_deref(),
+        Some("10/4"),
+        "both reported counts render as the pair"
+    );
     assert_eq!(
         metrics.provider_millis, 0,
         "no round time was observed, so none is invented"

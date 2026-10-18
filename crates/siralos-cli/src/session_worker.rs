@@ -2378,8 +2378,8 @@ mod loop_tests {
             ]
             .into(),
             metrics_after_first_status: Some(crate::tui::SessionMetrics {
-                input_tokens: 120,
-                output_tokens: 30,
+                input_tokens: Some(120),
+                output_tokens: Some(30),
                 cached_tokens: Some(40),
                 provider_millis: 500,
                 context_assembled: None,
@@ -2404,8 +2404,8 @@ mod loop_tests {
             "startup plus the settled re-announcement: {events:?}"
         );
         assert_eq!(readies[0], crate::tui::SessionMetrics::default());
-        assert_eq!(readies[1].input_tokens, 120);
-        assert_eq!(readies[1].output_tokens, 30);
+        assert_eq!(readies[1].input_tokens, Some(120));
+        assert_eq!(readies[1].output_tokens, Some(30));
         assert_eq!(readies[1].cached_tokens, Some(40));
         assert_eq!(readies[1].provider_millis, 500);
         assert!(

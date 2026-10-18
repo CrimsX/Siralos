@@ -405,9 +405,23 @@ pub(in crate::harness) fn tui_render_record(
                     }),
                 }
             };
+            // A present key is an observation; an absent one stays absent
+            // (the scenario cannot observe something the provider never
+            // reported).
+            let read_observed =
+                |key: &str| -> Result<Option<u64>, HarnessError> {
+                    match values.get(key) {
+                    None | Some(Value::Null) => Ok(None),
+                    Some(value) => value.as_u64().map(Some).ok_or_else(|| {
+                        HarnessError::corpus(format!(
+                            "tui-render metrics.{key} must be a non-negative integer"
+                        ))
+                    }),
+                }
+                };
             SessionMetrics {
-                input_tokens: read_u64("input_tokens")?,
-                output_tokens: read_u64("output_tokens")?,
+                input_tokens: read_observed("input_tokens")?,
+                output_tokens: read_observed("output_tokens")?,
                 cached_tokens: match values.get("cached_tokens") {
                     None | Some(Value::Null) => None,
                     Some(value) => Some(value.as_u64().ok_or_else(|| {
@@ -624,8 +638,12 @@ pub(in crate::harness) fn tui_render_record(
             "provider": provider,
             "model": model,
             "metrics": {
-                "input_tokens": metrics.input_tokens,
-                "output_tokens": metrics.output_tokens,
+                // The record shape predates absence tracking: it echoes the
+                // counts as numbers, with an unobserved count echoed as 0.
+                // The rendered frame is the pinned artifact; the frame
+                // renders nothing for an absent count.
+                "input_tokens": metrics.input_tokens.unwrap_or(0),
+                "output_tokens": metrics.output_tokens.unwrap_or(0),
                 "cached_tokens": metrics.cached_tokens,
                 "provider_millis": metrics.provider_millis,
                 "context_assembled": metrics.context_assembled,

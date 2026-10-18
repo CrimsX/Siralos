@@ -48,14 +48,18 @@ fn civil_from_days(z: i64) -> (i32, u32, u32) {
 /// Every field is host-observed: tokens and cached-token counts as the
 /// provider reported them, `provider_millis` as the accumulated wall time of
 /// provider rounds, `context_assembled` from the same `ContextMetrics` the
-/// pane and `/context` audit use. Defaults mean "not observed yet", and the
-/// row renders nothing for an absent value rather than a fabricated number.
+/// pane and `/context` audit use. `None` means "not observed yet": token
+/// counts stay `None` until a round reports one, and the row renders nothing
+/// for an absent value rather than a fabricated zero (decision 102 P2's
+/// rule).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SessionMetrics {
-    /// Input tokens reported by the provider, session total.
-    pub input_tokens: u64,
-    /// Output tokens reported by the provider, session total.
-    pub output_tokens: u64,
+    /// Input tokens reported by the provider, session total. `None` until a
+    /// round reports one.
+    pub input_tokens: Option<u64>,
+    /// Output tokens reported by the provider, session total. `None` until
+    /// a round reports one.
+    pub output_tokens: Option<u64>,
     /// Cached input tokens when the provider reports them.
     pub cached_tokens: Option<u64>,
     /// Accumulated provider round time, milliseconds.
@@ -70,36 +74,39 @@ impl SessionMetrics {
     /// reported output count and a measured round time exist.
     #[must_use]
     pub fn tokens_per_second(&self) -> Option<f64> {
-        if self.output_tokens == 0 || self.provider_millis == 0 {
+        let output = self.output_tokens?;
+        if output == 0 || self.provider_millis == 0 {
             return None;
         }
-        Some(
-            self.output_tokens as f64 / (self.provider_millis as f64 / 1000.0),
-        )
+        Some(output as f64 / (self.provider_millis as f64 / 1000.0))
     }
 
     /// `input/output` token segment, compacted to `k`/`M` suffixes.
+    ///
+    /// The pair renders only when BOTH sides were reported: a partial
+    /// observation renders nothing rather than a fabricated `0/N`.
     #[must_use]
     pub fn tokens_segment(&self) -> Option<String> {
-        if self.input_tokens == 0 && self.output_tokens == 0 {
-            return None;
-        }
+        let input = self.input_tokens?;
+        let output = self.output_tokens?;
         Some(format!(
             "{}/{}",
-            format_token_count(self.input_tokens),
-            format_token_count(self.output_tokens)
+            format_token_count(input),
+            format_token_count(output)
         ))
     }
 
     /// Integer cache-hit percentage of reported input tokens. `None` when
-    /// the provider does not report cached tokens.
+    /// the provider does not report cached tokens or never reported an
+    /// input count to divide by.
     #[must_use]
     pub fn cache_percent(&self) -> Option<u64> {
         let cached = self.cached_tokens?;
-        if self.input_tokens == 0 {
+        let input = self.input_tokens?;
+        if input == 0 {
             return None;
         }
-        Some((cached.saturating_mul(100) / self.input_tokens).min(100))
+        Some((cached.saturating_mul(100) / input).min(100))
     }
 
     /// Integer context-usage percentage of the fixed budget. `None` when
@@ -125,11 +132,14 @@ impl SessionMetrics {
         if let Some(millis) = round_millis {
             self.provider_millis = self.provider_millis.saturating_add(millis);
         }
-        self.input_tokens =
-            self.input_tokens.saturating_add(usage.input_tokens.unwrap_or(0));
-        self.output_tokens = self
-            .output_tokens
-            .saturating_add(usage.output_tokens.unwrap_or(0));
+        if let Some(tokens) = usage.input_tokens {
+            self.input_tokens =
+                Some(self.input_tokens.unwrap_or(0).saturating_add(tokens));
+        }
+        if let Some(tokens) = usage.output_tokens {
+            self.output_tokens =
+                Some(self.output_tokens.unwrap_or(0).saturating_add(tokens));
+        }
         if let Some(cached) = usage.cached_tokens {
             self.cached_tokens =
                 Some(self.cached_tokens.unwrap_or(0).saturating_add(cached));
