@@ -99,4 +99,7 @@ share the bottom line, and the number only appears when the provider actually
 reported one. Recorded limits: tps is a session average (owner-specified)
 over measured live rounds only; replay and fake sessions show tokens but no
 time; the cache segment exists only where a provider reports cached tokens;
-and verification is headless plus replayed, not a live terminal.
+the `tui-render` record echo still writes an unobserved count as `0` for
+record-shape compatibility (the pinned frame is the artifact that shows the
+absence, and the echo's note in the harness subject says so); and verification
+is headless plus replayed, not a live terminal.
