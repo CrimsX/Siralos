@@ -95,6 +95,20 @@ and the number does not change any of it.
 
 ### Changed
 
+- **The TUI footer is one observed row** (owner-directed, 2026-10-17,
+  [decision 181](docs/wayfinder/decisions/181-single-row-footer.md)). The
+  top header bar is removed and the bottom row carries
+  `status | tps · tok · cache · ctx | provider / model`; every usage
+  segment renders only when the provider actually reported it. Round
+  time is measured at the provider seam for live rounds (replay and
+  fake observe tokens but never a fabricated wall time; the OpenAI
+  streaming body asks for the usage frame), and the worker
+  re-announces the header after each settled turn so no command is
+  needed to see real numbers. The corpus moved to v89: the
+  `tui-render` subject gains optional provider/model/metrics input
+  and its expectation records are re-pinned from candidate output;
+  the stdio frontend is byte-unchanged.
+
 - **The `godot-*` differential subjects are retired and the external
   plugin coupling is gone** (owner-directed, 2026-10-10, ADR 0037 option
   A executed). A new digest-bound retired-subjects list
