@@ -145,18 +145,17 @@ fn input_line_editing_renders() {
 }
 
 #[test]
-fn status_line_rendering() {
-    let mut state = TuiState::new();
-    state.status = "working".to_owned();
-    let buf = render(&state, 40, 10);
-    let content: String = buf.content().iter().map(|c| c.symbol()).collect();
-    assert!(content.contains("working"));
-    let mut other = state.clone();
-    other.status = "ready".to_owned();
-    let buf2 = render(&other, 40, 10);
-    let content2: String = buf2.content().iter().map(|c| c.symbol()).collect();
-    assert!(content2.contains("ready"));
-    assert!(!content2.contains("working"));
+fn status_line_renders_no_status_text() {
+    // Owner 2026-10-18: whatever words the status field carries, the
+    // footer row itself shows none of them.
+    for word in ["working", "ready"] {
+        let mut state = TuiState::new();
+        state.status = word.to_owned();
+        let buf = render(&state, 40, 10);
+        let row = bottom_row_of(&buf);
+        assert_eq!(row.trim(), "no provider configured", "got {row:?}");
+        assert!(!row.contains(word), "footer leaked {word}: {row:?}");
+    }
 }
 
 /// Release the whole backlog the way the paint path does -- one character
@@ -249,9 +248,11 @@ fn empty_state_initial_frame() {
     let state = TuiState::new();
     let buf = render(&state, 40, 10);
     let content: String = buf.content().iter().map(|c| c.symbol()).collect();
-    // Should contain prompt and default status
+    // Should contain the prompt; the footer shows the provider fallback,
+    // and no status text (owner 2026-10-18).
     assert!(content.contains(">"));
-    assert!(content.contains("ready"));
+    assert!(!content.contains("ready"));
+    assert!(content.contains("no provider configured"));
     // Transcript area should be empty but render without panic
     let buf2 = render(&state, 10, 5);
     assert_eq!(buf2.area.width, 10);
@@ -550,9 +551,7 @@ mod t4_frame_snapshot_tests {
         assert_eq!(frame[1], "Context projection (mode generic)");
         assert_eq!(frame[2], "Type /help for the list of available commands.");
         assert_eq!(frame[22], "> help me");
-        assert!(frame[23].starts_with("ready"));
-        assert!(frame[23].ends_with(" | no provider configured"));
-        assert_eq!(frame[23].len(), 80);
+        assert_eq!(frame[23], "no provider configured");
         // Deterministic: same input -> byte-equal frame.
         assert_eq!(frame, canonical_frame(&state, None, 80, 24));
     }
@@ -560,7 +559,7 @@ mod t4_frame_snapshot_tests {
     #[test]
     fn t4_frame_transcript_scroll_matches_harness_record() {
         // Mirrors `tui-render.transcript-scroll`: 40 lines, offset 8 — no
-        // header, so the transcript window is 22 rows (24-2 = input + status).
+        // header, so the transcript window is 22 rows (24-2 = input + footer).
         // start = 40-22-8 = 10 => visible 10..=31.
         let mut state = TuiState::new();
         state.transcript_lines =
@@ -599,8 +598,7 @@ mod t4_frame_snapshot_tests {
         let joined = frame.join("\n");
         assert!(joined.contains("Approval required (y/n, Esc deny)"));
         assert!(joined.contains("Approve applying 1 change to src/app.ts?"));
-        assert!(frame[23].starts_with("awaiting approval"));
-        assert!(frame[23].ends_with(" | no provider configured"));
+        assert_eq!(frame[23], "no provider configured");
         // No-modal baseline differs.
         let mut plain = TuiState::new();
         plain.transcript_lines = state.transcript_lines.clone();
@@ -1073,23 +1071,18 @@ mod context_pane_tests {
     fn status_provider_model_present_and_absent() {
         let row = compose_bottom_row(
             80,
-            "ready",
             Some("example-vendor"),
             Some("model-a"),
             &SessionMetrics::default(),
         );
         let present = bottom_text(&row);
-        assert!(present.contains("example-vendor"));
-        assert!(present.contains("model-a"));
-        assert!(present.contains("ready"));
-        let absent = compose_bottom_row(
-            80,
-            "ready",
-            None,
-            None,
-            &SessionMetrics::default(),
-        );
-        assert!(bottom_text(&absent).contains("no provider configured"));
+        // Owner 2026-10-18: the provider/model block IS the left group and
+        // the footer carries no status text.
+        assert_eq!(present, "example-vendor / model-a", "got {present:?}");
+        let absent =
+            compose_bottom_row(80, None, None, &SessionMetrics::default());
+        let absent = bottom_text(&absent);
+        assert_eq!(absent, "no provider configured", "got {absent:?}");
     }
 
     #[test]
@@ -1819,7 +1812,6 @@ fn status_sanitizes_provider_and_model() {
     let poison = "evil\x1b[31mred\x00";
     let row = compose_bottom_row(
         80,
-        "ready",
         Some(poison),
         Some(poison),
         &SessionMetrics::default(),
@@ -1841,7 +1833,6 @@ fn bottom_row_masks_secret_shaped_provider_and_model_labels() {
     ] {
         let row = compose_bottom_row(
             80,
-            "ready",
             Some(value),
             Some(value),
             &SessionMetrics::default(),
@@ -1857,7 +1848,6 @@ fn bottom_row_masks_secret_shaped_provider_and_model_labels() {
     ] {
         let row = compose_bottom_row(
             80,
-            "ready",
             Some(value),
             None,
             &SessionMetrics::default(),
@@ -1878,26 +1868,31 @@ fn tui_drain_poll_is_zero_and_idle_is_50ms() {
 
 #[test]
 fn bottom_row_renders_provider_model_present_and_absent() {
-    let mut state = TuiState::new();
-    state.status = "ready".to_owned();
-    // No header bar: the first row is transcript (empty here), and the
-    // provider/model block lives in the bottom row only.
+    // No header bar: the first row is transcript (empty here), the
+    // provider/model block lives in the bottom row only — and since owner
+    // 2026-10-18 it is the LEFT group.
+    let state = TuiState::new();
     let buf = render(&state, 80, 24);
     let content: String = buf.content().iter().map(|c| c.symbol()).collect();
     assert!(!content.contains(" Siralos "));
     assert!(content.contains("no provider configured"));
-    let bottom_row = content.lines().last().unwrap_or("");
-    assert!(bottom_row.contains("no provider configured"));
-    // Present provider/model -> bottom row shows them, flushed right.
+    let bottom_row = bottom_row_of(&buf);
+    assert_eq!(
+        bottom_row.trim(),
+        "no provider configured",
+        "the fallback takes the left edge: {bottom_row:?}"
+    );
+    // Present provider/model -> the bottom row is the label group.
     let mut with = TuiState::new();
     with.provider = Some("example-vendor".to_owned());
     with.model = Some("model-a".to_owned());
-    with.status = "ready".to_owned();
     let buf2 = render(&with, 80, 24);
-    let content2: String = buf2.content().iter().map(|c| c.symbol()).collect();
-    let bottom2 = content2.lines().last().unwrap_or("");
-    assert!(bottom2.contains("example-vendor / model-a"));
-    assert!(bottom2.ends_with("example-vendor / model-a"));
+    let bottom2 = bottom_row_of(&buf2);
+    assert_eq!(
+        bottom2.trim(),
+        "example-vendor / model-a",
+        "the label starts the row: {bottom2:?}"
+    );
 }
 
 #[test]
@@ -2013,28 +2008,29 @@ fn palette_bounded_and_prefix_highlight() {
 
 #[test]
 fn status_usage_readout_present_and_absent() {
-    // Absent (subsystem off) → no usage segment at all.
+    // Absent (subsystem off) → no usage segment at all, and no separator.
     let without = compose_bottom_row(
         80,
-        "ready",
         Some("p"),
         Some("m"),
         &SessionMetrics::default(),
     );
     let without_text = bottom_text(&without);
+    assert_eq!(without_text, "p / m", "got {without_text:?}");
     assert!(!without_text.contains("ctx"));
     assert!(!without_text.contains("tok"));
     assert!(!without_text.contains("tps"));
-    // Present with empty context metrics → `ctx 0%`.
+    assert!(!without_text.contains('|'));
+    // Present with empty context metrics → `ctx 0%` flushed right.
     let empty = SessionMetrics {
         context_assembled: Some(0),
         ..SessionMetrics::default()
     };
-    let with = compose_bottom_row(80, "ready", Some("p"), Some("m"), &empty);
+    let with = compose_bottom_row(80, Some("p"), Some("m"), &empty);
     let with_text = bottom_text(&with);
     assert!(with_text.contains("ctx 0%"));
-    assert!(with_text.contains("ready"));
-    assert!(with_text.ends_with("p / m"));
+    assert!(with_text.starts_with("p / m"), "got {with_text:?}");
+    assert!(with_text.ends_with("ctx 0%"), "got {with_text:?}");
     // Non-empty assembled total via a real tick → the real percentage.
     let mut metrics2 = siralos_core::context_metrics::ContextMetrics::new();
     {
@@ -2094,8 +2090,7 @@ fn status_usage_readout_present_and_absent() {
             context_assembled: Some(total),
             ..SessionMetrics::default()
         };
-        let with2 =
-            compose_bottom_row(80, "ready", Some("p"), Some("m"), &metrics);
+        let with2 = compose_bottom_row(80, Some("p"), Some("m"), &metrics);
         let text = bottom_text(&with2);
         let expected_pct = (total * 100 / CONTEXT_BUDGET_TOKENS).min(100);
         assert!(text.contains(&format!("ctx {expected_pct}%")));
@@ -2111,51 +2106,102 @@ fn usage_metrics_format_real_values_and_drop_order() {
         provider_millis: 100_000,
         context_assembled: Some(1_500),
     };
-    let row = compose_bottom_row(120, "ready", Some("p"), Some("m"), &metrics);
+    // Owner 2026-10-18: provider/model is the LEFT group, metrics flush
+    // right. Wide frame: every segment fits, none drops.
+    let row = compose_bottom_row(120, Some("p"), Some("m"), &metrics);
     let text = bottom_text(&row);
+    assert!(text.starts_with("p / m"), "got {text:?}");
+    assert!(text.ends_with("ctx 36%"), "got {text:?}");
     assert!(text.contains("tps 41.0"), "got {text}");
     assert!(text.contains("tok 12.3k/4.1k"), "got {text}");
     assert!(text.contains("cache 68%"), "got {text}");
     assert!(text.contains("ctx 36%"), "got {text}");
-    // Drop order at narrow widths: tps, then tok, then cache; ctx is kept.
-    let narrow = compose_bottom_row(42, "ready", None, None, &metrics);
+    // Drop order at narrow widths: tps, then tok, then cache; the
+    // provider/model block stays whole. Without a provider the fallback
+    // label takes the left edge (owner decision D1).
+    let narrow = compose_bottom_row(42, None, None, &metrics);
     let narrow_text = bottom_text(&narrow);
+    assert!(
+        narrow_text.starts_with("no provider configured"),
+        "got {narrow_text:?}"
+    );
     assert!(!narrow_text.contains("tps"), "got {narrow_text}");
     assert!(!narrow_text.contains("tok"), "got {narrow_text}");
     assert!(!narrow_text.contains("cache"), "got {narrow_text}");
     assert!(narrow_text.contains("ctx 36%"), "got {narrow_text}");
-    assert!(narrow_text.contains("ready"), "got {narrow_text}");
-    // One cell tighter and the status truncates with the marker instead.
-    let tighter =
-        bottom_text(&compose_bottom_row(40, "ready", None, None, &metrics));
-    assert!(tighter.contains("ctx 36%"), "got {tighter}");
-    assert!(tighter.contains("rea…"), "got {tighter}");
+    assert!(narrow_text.ends_with("ctx 36%"), "got {narrow_text}");
+    // One third narrower and even `ctx` cannot hold whole: the metrics
+    // group truncates with the marker — the left group never does here.
+    let tighter = bottom_text(&compose_bottom_row(30, None, None, &metrics));
+    assert!(tighter.starts_with("no provider configured"), "got {tighter:?}");
+    assert!(tighter.contains("ctx…"), "got {tighter}");
+    assert!(!tighter.contains("36%"), "got {tighter}");
+    assert!(tighter.ends_with("ctx…"), "got {tighter}");
+    // Absurdly narrow: the provider/model block itself truncates in place
+    // and nothing else renders.
+    let absurd = bottom_text(&compose_bottom_row(21, None, None, &metrics));
+    assert_eq!(absurd, "no provider configure", "got {absurd:?}");
     // Unobserved values render nothing rather than a fabricated number.
     let observed = SessionMetrics {
         context_assembled: Some(2_048),
         ..SessionMetrics::default()
     };
     let unobserved =
-        bottom_text(&compose_bottom_row(80, "ready", None, None, &observed));
+        bottom_text(&compose_bottom_row(80, None, None, &observed));
+    assert!(
+        unobserved.starts_with("no provider configured"),
+        "got {unobserved:?}"
+    );
     assert!(unobserved.contains("ctx 50%"));
+    assert!(unobserved.ends_with("ctx 50%"), "got {unobserved:?}");
     assert!(!unobserved.contains("tok"));
     assert!(!unobserved.contains("cache"));
-    // The whole status wins over decorative metrics: with a long
-    // provider/model block, `tps` drops so `ready` survives untruncated.
-    let priority = bottom_text(&compose_bottom_row(
+    // With a long provider/model block, the widest metrics still fit whole
+    // at 80 columns; nothing spills and no marker appears.
+    let wide = bottom_text(&compose_bottom_row(
         80,
-        "ready",
         Some("example-vendor"),
         Some("model-a"),
         &metrics,
     ));
-    assert!(priority.contains("ready"), "got {priority}");
-    assert!(!priority.contains("…"), "got {priority}");
-    assert!(!priority.contains("tps"), "got {priority}");
-    assert!(priority.contains("tok 12.3k/4.1k"), "got {priority}");
-    assert!(priority.contains("cache 68%"), "got {priority}");
-    assert!(priority.contains("ctx 36%"), "got {priority}");
-    assert!(priority.contains("example-vendor / model-a"), "got {priority}");
+    assert!(wide.starts_with("example-vendor / model-a"), "got {wide:?}");
+    assert!(!wide.contains("…"), "got {wide}");
+    assert!(wide.contains("tps 41.0"), "got {wide}");
+    assert!(wide.contains("tok 12.3k/4.1k"), "got {wide}");
+    assert!(wide.contains("cache 68%"), "got {wide}");
+    assert!(wide.contains("ctx 36%"), "got {wide}");
+    // Squeezed to 60 columns the metrics lose segments first — `tps`, then
+    // `tok` — while the left block stays whole and untruncated.
+    let squeezed = bottom_text(&compose_bottom_row(
+        60,
+        Some("example-vendor"),
+        Some("model-a"),
+        &metrics,
+    ));
+    assert!(
+        squeezed.starts_with("example-vendor / model-a"),
+        "got {squeezed:?}"
+    );
+    assert!(!squeezed.contains("tps"), "got {squeezed}");
+    assert!(!squeezed.contains("tok"), "got {squeezed}");
+    assert!(squeezed.contains("cache 68%"), "got {squeezed}");
+    assert!(squeezed.contains("ctx 36%"), "got {squeezed}");
+    assert!(squeezed.ends_with("ctx 36%"), "got {squeezed}");
+    // One further cell-tightening step and even the surviving metrics
+    // group truncates with the marker before the left block ever does.
+    let clipped = bottom_text(&compose_bottom_row(
+        32,
+        Some("example-vendor"),
+        Some("model-a"),
+        &metrics,
+    ));
+    assert!(
+        clipped.starts_with("example-vendor / model-a"),
+        "got {clipped:?}"
+    );
+    assert!(clipped.contains("ctx…"), "got {clipped}");
+    assert!(!clipped.contains("36%"), "got {clipped}");
+    assert!(clipped.ends_with("ctx…"), "got {clipped}");
 }
 
 #[test]
@@ -2263,7 +2309,10 @@ fn t4_frames_still_deterministic_without_header() {
     // is not injected by the renderer.
     let content: String = a.content().iter().map(|c| c.symbol()).collect();
     assert!(!content.contains("Siralos"));
-    assert!(content.contains("ready"));
+    // No status text in the footer since owner 2026-10-18: the fallback
+    // label takes the left edge on its own.
+    assert!(!content.contains("ready"));
+    assert!(content.contains("no provider configured"));
 }
 
 // H2: banner + greeting (TUI-only, bounded width <= 80)
@@ -2341,7 +2390,9 @@ fn local_timestamp_now_format_and_fallback() {
     assert!(now_local.is_ok() || now_local.is_err());
 }
 
-// H5: working marker styled distinctly
+// H5: the working predicate still classifies status strings; the pulsing
+// liveness row above the input (owner QoL 2026-09-12) renders the working
+// state in cyan, and the footer itself carries no status text.
 #[test]
 fn working_status_is_detected_and_styled() {
     assert!(is_working_status("working"));
@@ -2349,16 +2400,48 @@ fn working_status_is_detected_and_styled() {
     assert!(!is_working_status("ready"));
     let mut state = TuiState::new();
     state.status = "working".to_owned();
-    assert!(is_working_status(&state.status));
+    state.busy_since = Some(std::time::Instant::now());
     let buf = render(&state, 80, 24);
     let content: String = buf.content().iter().map(|c| c.symbol()).collect();
-    assert!(content.contains("working"));
-    // Styled: check buffer cell style for "working" substring is yellow bold
-    let has_yellow = buf
-        .content()
-        .iter()
-        .any(|cell| cell.style().fg == Some(Color::Yellow));
-    assert!(has_yellow, "working status should be styled yellow");
+    // The pulse row above the input carries the working marker...
+    assert!(content.contains("working"), "pulse row not rendered");
+    // ...styled cyan, not the retired footer-yellow.
+    let has_cyan =
+        buf.content().iter().any(|cell| cell.style().fg == Some(Color::Cyan));
+    assert!(has_cyan, "working pulse should be styled cyan");
+    // No status text was emitted into the footer.
+    let row23 = bottom_row_of(&buf);
+    assert_eq!(row23.trim(), "no provider configured", "got {row23:?}");
+}
+
+/// The bottom frame row of a rendered buffer (tests only).
+fn bottom_row_of(buf: &ratatui::buffer::Buffer) -> String {
+    let cells: Vec<&str> = buf.content().iter().map(|c| c.symbol()).collect();
+    let width = buf.area.width as usize;
+    cells[cells.len() - width..].concat()
+}
+
+#[test]
+fn footer_has_no_status_or_turn_state_text() {
+    // Owner 2026-10-18 (D1): 'ready' and the turn-state word are gone from
+    // the footer row; the left group is provider/model — the fallback text
+    // when none is configured.
+    for word in ["ready", "working", "awaiting approval"] {
+        let mut without = TuiState::new();
+        without.status = word.to_owned();
+        let buf = render(&without, 80, 24);
+        let row = bottom_row_of(&buf);
+        assert_eq!(row.trim(), "no provider configured", "got {row:?}");
+        assert!(!row.contains(word), "footer leaked {word}: {row:?}");
+        let mut with = TuiState::new();
+        with.status = word.to_owned();
+        with.provider = Some("example-vendor".to_owned());
+        with.model = Some("model-a".to_owned());
+        let buf2 = render(&with, 80, 24);
+        let row2 = bottom_row_of(&buf2);
+        assert_eq!(row2.trim(), "example-vendor / model-a", "got {row2:?}");
+        assert!(!row2.contains(word), "footer leaked {word}: {row2:?}");
+    }
 }
 
 // `/model` switch picker: same ModelPicker, wrap navigation, Enter
@@ -3987,7 +4070,6 @@ fn picker_failure_fallback_note() {
 fn bottom_row_shows_display_name() {
     let row = compose_bottom_row(
         80,
-        "ready",
         Some("openai"),
         Some("My GPT"),
         &SessionMetrics::default(),

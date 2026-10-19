@@ -7,10 +7,9 @@ use super::{
     ProviderAddField, ProviderAddForm, Rect, Span, Style, Text,
     TranscriptEntry, TuiState, Widget, compose_bottom_row, context_pane_lines,
     display_width, model_picker_lines, redacted_form_credential,
-    safe_display_label, safe_form_endpoint_edit,
-    safe_form_endpoint_for_credential, safe_form_message,
-    safe_form_message_for_credential, safe_model_id, working_line,
-    wrap_line_to_width,
+    safe_form_endpoint_edit, safe_form_endpoint_for_credential,
+    safe_form_message, safe_form_message_for_credential, safe_model_id,
+    working_line, wrap_line_to_width,
 };
 
 /// The rows a frame paints that are NOT stored transcript, and where they
@@ -507,14 +506,12 @@ pub fn draw_with_pane(
         frame.render_widget(paragraph, inner);
     }
 
-    // Bottom row (owner 2026-10-17): status left, usage metrics middle,
-    // provider/model flush right. Working status keeps its distinct yellow
-    // bold word style (H5).
+    // Bottom row (owner 2026-10-18): provider/model left, usage metrics
+    // flush right, no status text; the liveness row above the input carries
+    // the working state.
     {
-        let status = safe_display_label(&state.status);
         let bottom = compose_bottom_row(
             status_area.width,
-            &status,
             state.provider.as_deref(),
             state.model.as_deref(),
             &state.metrics,
@@ -1250,10 +1247,8 @@ pub fn render_to_buffer_with_pane(
 
     // Bottom row — same single row the Frame path composes.
     {
-        let status = safe_display_label(&state.status);
         let bottom = compose_bottom_row(
             status_area.width,
-            &status,
             state.provider.as_deref(),
             state.model.as_deref(),
             &state.metrics,

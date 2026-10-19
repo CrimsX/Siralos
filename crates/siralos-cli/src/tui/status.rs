@@ -159,72 +159,40 @@ fn format_token_count(value: u64) -> String {
     }
 }
 
-/// Push the status text into `spans`, styling a `working` word (any case)
-/// yellow bold — the frozen-state marker stays unmistakable — and the rest
-/// cyan.
-fn push_status_spans(spans: &mut Vec<Span<'static>>, status: &str) {
-    let lower = status.to_ascii_lowercase();
-    if let Some(pos) = lower.find("working") {
-        let end = pos + "working".len();
-        if pos > 0 {
-            spans.push(Span::styled(
-                status[..pos].to_owned(),
-                Style::default().fg(Color::Cyan),
-            ));
-        }
-        spans.push(Span::styled(
-            status[pos..end].to_owned(),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(ratatui::style::Modifier::BOLD),
-        ));
-        if end < status.len() {
-            spans.push(Span::styled(
-                status[end..].to_owned(),
-                Style::default().fg(Color::Cyan),
-            ));
-        }
-    } else {
-        spans.push(Span::styled(
-            status.to_owned(),
-            Style::default().fg(Color::Cyan),
-        ));
-    }
-}
-
-/// Fit the status text to `budget` cells: whole when it fits, otherwise
-/// truncated on a scalar boundary with a `…` marker.
+/// Fit `text` to `budget` cells: whole when it fits, otherwise truncated
+/// on a scalar boundary with a `…` marker.
 #[must_use]
-fn fit_status_to_budget(status: &str, budget: usize) -> String {
-    if display_width(status) <= budget {
-        return status.to_owned();
+fn fit_to_budget(text: &str, budget: usize) -> String {
+    if display_width(text) <= budget {
+        return text.to_owned();
     }
     if budget == 0 {
         return String::new();
     }
-    format!("{}…", truncate_to_width(status, budget.saturating_sub(1)))
+    format!("{}…", truncate_to_width(text, budget.saturating_sub(1)))
 }
 
-/// Compose the single bottom row: status at the left, usage metrics in the
-/// middle, provider/model flush right.
+/// Compose the single bottom row (owner 2026-10-18): provider/model at the
+/// left edge, usage metrics flushed right, and no status text.
 ///
-/// The row is `status | tps … · tok in/out · cache % · ctx % | provider / model`.
-/// When the frame is too narrow the metrics segments drop in order
-/// `tps` → `tok` → `cache` (`ctx` is kept while it exists) so the whole
-/// status survives; only when even the surviving middle leaves no room
-/// does the status truncate with `…`. The provider/model block is never
-/// dropped except on absurdly narrow frames, where it is truncated in
-/// place.
+/// The row is `provider / model            | tps 42.1 · tok in/out · cache %`
+/// (… ` · ctx %` last); the `|` separator is present only while any metric
+/// segment survives. When the frame is too narrow the metrics segments drop
+/// in order `tps` → `tok` → `cache` (`ctx` is lost last) so the whole
+/// provider/model block stays intact; only when even the surviving metrics
+/// leave no room does the metrics group truncate with `…`. The
+/// provider/model block is never truncated except on absurdly narrow
+/// frames, where it is truncated in place. When no provider is configured
+/// the plain `no provider configured` text takes the left edge itself.
 #[must_use]
 pub fn compose_bottom_row(
     width: u16,
-    status: &str,
     provider: Option<&str>,
     model: Option<&str>,
     metrics: &SessionMetrics,
 ) -> Line<'static> {
     let width = width as usize;
-    let right = match (provider, model) {
+    let left = match (provider, model) {
         (Some(p), Some(m)) if !p.is_empty() && !m.is_empty() => {
             let sp = safe_display_label(p);
             let sm = safe_display_label(m);
@@ -233,10 +201,10 @@ pub fn compose_bottom_row(
         (Some(p), _) if !p.is_empty() => safe_display_label(p),
         _ => "no provider configured".to_owned(),
     };
-    let right_len = display_width(&right);
-    if width <= right_len + 3 {
+    let left_len = display_width(&left);
+    if width < left_len {
         return Line::from(Span::styled(
-            truncate_to_width(&right, width),
+            truncate_to_width(&left, width),
             Style::default().fg(Color::Green),
         ));
     }
@@ -252,64 +220,35 @@ pub fn compose_bottom_row(
         droppable.push(format!("cache {cache}%"));
     }
     let ctx = metrics.context_percent().map(|pct| format!("ctx {pct}%"));
-    let status_len = display_width(status);
-    let mid = loop {
+    let mut mid = loop {
         let mut segments = droppable.clone();
         if let Some(ctx) = &ctx {
             segments.push(ctx.clone());
         }
         let mid = segments.join(" · ");
         let mid_len = display_width(&mid);
-        let fixed = if mid.is_empty() {
-            3 + right_len
-        } else {
-            3 + mid_len + 3 + right_len
-        };
-        // Room for the whole status wins over decorative metrics: keep
-        // dropping until the row can hold status + gap + middle + right.
-        if width >= fixed + 1 + status_len || droppable.is_empty() {
+        // Keep dropping until the row can hold the left block, one spare
+        // gap cell, the `" | "` separator, and the live metrics.
+        if left_len + mid_len + 4 <= width || droppable.is_empty() {
             break mid;
         }
         droppable.remove(0);
     };
-    let mid_len = display_width(&mid);
-    // Each present block is preceded by `" | "`; the gap pads only between
-    // the middle block and the right block, so provider/model stays flush
-    // right. An absent middle prints no separators of its own.
-    let fixed = if mid.is_empty() {
-        3 + right_len
-    } else {
-        mid_len + 3 + 3 + right_len
-    };
-    let left_budget = width.saturating_sub(fixed + 1);
-    let left = fit_status_to_budget(status, left_budget);
+    let mut mid_len = display_width(&mid);
+    if !mid.is_empty() && left_len + mid_len + 4 > width {
+        // Even the surviving metrics are too long: the metrics group (never
+        // the provider/model block) truncates with the `…` marker.
+        mid = fit_to_budget(&mid, width.saturating_sub(left_len + 4));
+        mid_len = display_width(&mid);
+    }
     let mut spans: Vec<Span<'static>> = Vec::new();
-    let mut used = 0usize;
-    if !left.is_empty() {
-        push_status_spans(&mut spans, &left);
-        used += display_width(&left);
-    }
+    spans.push(Span::styled(left, Style::default().fg(Color::Green)));
     if !mid.is_empty() {
-        if used > 0 {
-            spans.push(Span::styled(
-                " | ",
-                Style::default().fg(Color::DarkGray),
-            ));
-            used += 3;
-        }
-        spans.push(Span::styled(
-            mid.clone(),
-            Style::default().fg(Color::DarkGray),
-        ));
-        used += mid_len;
-    }
-    let trailing_sep = if used > 0 { 3 } else { 0 };
-    let gap = width.saturating_sub(used + trailing_sep + right_len).max(1);
-    spans.push(Span::raw(" ".repeat(gap)));
-    if used > 0 {
+        let gap = width - (left_len + 3 + mid_len);
+        spans.push(Span::raw(" ".repeat(gap)));
         spans.push(Span::styled(" | ", Style::default().fg(Color::DarkGray)));
+        spans.push(Span::styled(mid, Style::default().fg(Color::DarkGray)));
     }
-    spans.push(Span::styled(right, Style::default().fg(Color::Green)));
     Line::from(spans)
 }
 
@@ -338,8 +277,9 @@ pub fn context_assembled_total(
 }
 
 /// Returns true when the base status indicates a working/loading state (H5).
-/// The synchronous architecture freezes redraw during blocking dispatch, so the
-/// working marker is styled distinctly to make the frozen state unmistakable.
+/// Since owner 2026-10-18 the footer carries no status text, so this
+/// predicate classifies status strings only; the liveness row above the
+/// input keys off `busy_since`.
 #[must_use]
 pub fn is_working_status(base_status: &str) -> bool {
     let lower = base_status.to_ascii_lowercase();

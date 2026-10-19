@@ -1511,7 +1511,7 @@ fn the_worker_adapter_reports_the_header_the_frontend_showed() {
     );
     assert_eq!(
         status.status, "ready",
-        "the worker's bottom row starts from the plain ready base"
+        "the worker ships the plain ready base for field consumers"
     );
     assert_eq!(
         status.metrics,
