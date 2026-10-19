@@ -796,13 +796,28 @@ impl GenericProvider {
                     return CallOutcome::Events(events);
                 }
             };
-            let events =
-                vec![ProviderEvent::Failed(http_error_message_with_secret(
-                    status.as_u16(),
-                    &url,
-                    &text,
-                    credential.as_deref(),
-                ))];
+            let mut message = http_error_message_with_secret(
+                status.as_u16(),
+                &url,
+                &text,
+                credential.as_deref(),
+            );
+            // Owner repair 2026-10-18: only the completions request sends
+            // `stream_options.include_usage`, so only a completions refusal
+            // whose bounded body names the option earns the typed category
+            // the footer's token accounting depends on. The body is sniffed,
+            // never reflected (the refusal-language boundary is unchanged);
+            // every other failure keeps its plain class.
+            if protocol == Protocol::OpenAiCompletions
+                && status.is_client_error()
+                && text.to_ascii_lowercase().contains("stream_options")
+            {
+                message.push_str(
+                    " -- gateway rejected stream_options.include_usage; \
+                     token usage stays unobserved",
+                );
+            }
+            let events = vec![ProviderEvent::Failed(message)];
             record_outcome_with_secret(
                 hooks,
                 last_replay,
@@ -1769,6 +1784,63 @@ mod tests {
             );
         }
         assert!(message.len() <= 512, "bounded: {}", message.len());
+    }
+
+    #[test]
+    fn completions_400_naming_stream_options_declares_the_usage_framing_rejected()
+     {
+        // A gateway that refuses the completions request because of the
+        // usage option must say so by name: the footer's token accounting
+        // stays unobserved and the user can act on the refusal.
+        let server = serve(Fixture {
+            status: 400,
+            body: r#"{"error":{"message":"stream_options is not supported here"}}"#
+                .to_owned(),
+        });
+        let events =
+            drive(&server.base_url, Protocol::OpenAiCompletions, None);
+        let _ = server.recorded();
+        let message = failed_message(&events);
+        assert!(message.starts_with("response failed: 400 at "), "{message}");
+        assert!(
+            message.ends_with(
+                " -- gateway rejected stream_options.include_usage; \
+                 token usage stays unobserved"
+            ),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn completions_400_without_the_option_mention_keeps_the_plain_class() {
+        // The typed category is body-derived: a refusal that does not name
+        // `stream_options` keeps the plain status class exactly as before.
+        let server = serve(Fixture {
+            status: 400,
+            body: r#"{"error":"boom"}"#.to_owned(),
+        });
+        let events =
+            drive(&server.base_url, Protocol::OpenAiCompletions, None);
+        let _ = server.recorded();
+        let message = failed_message(&events);
+        assert!(message.starts_with("response failed: 400 at "), "{message}");
+        assert!(!message.contains("stream_options"), "{message}");
+    }
+
+    #[test]
+    fn other_protocols_never_declare_the_usage_framing_rejected() {
+        // The option is sent only for completions; a protocol whose request
+        // carries no `stream_options` cannot truthfully name its rejection.
+        let server = serve(Fixture {
+            status: 400,
+            body: r#"{"error":"stream_options is not supported"}"#.to_owned(),
+        });
+        let events =
+            drive(&server.base_url, Protocol::AnthropicMessages, None);
+        let _ = server.recorded();
+        let message = failed_message(&events);
+        assert!(message.starts_with("response failed: 400 at "), "{message}");
+        assert!(!message.contains("stream_options"), "{message}");
     }
 
     #[test]
