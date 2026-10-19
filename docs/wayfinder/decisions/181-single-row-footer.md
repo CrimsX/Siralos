@@ -3,7 +3,7 @@ title: "The Footer Is One Row: Header Bar Out, Observed Round Metrics In"
 label: "wayfinder:decision"
 status: "accepted"
 date: "2026-10-17"
-supersedes: []
+supersedes: [117, 118]
 ---
 
 # The Footer Is One Row: Header Bar Out, Observed Round Metrics In
@@ -28,7 +28,13 @@ one row more informative**.
   shrinks the segments drop tps → tok → cache (ctx is kept), `…` truncation is
   the final loss, and the provider/model block flushes right. The header row is
   gone; its layout height goes to the transcript. 118 P2's header is repealed
-  by this decision.
+  by this decision, and the pass's plan origin (117's P2 row) is recorded
+  here; 117 and 118 stay historical for their other fixes (latency, role
+  colors, borders).
+- **Rendered symbols are claimed exactly.** The row renders `|`, `·`, and the
+  `…` truncation marker and nothing more; a repo-wide sweep found no doc
+  claiming a literal `—` glyph renders anywhere, and the owner approved
+  recording that result on 2026-10-17 (HITL session).
 - **Observed only, never fabricated** (decision 102 P2's rule). A segment
   renders only when a real observation exists: tps needs output tokens and a
   measured round time, tok needs both reported counts (a partial report renders
@@ -42,7 +48,11 @@ one row more informative**.
   observe tokens but never a fabricated wall time; a refused or cancelled
   round observes nothing. The OpenAI-completions streaming body now asks for
   `stream_options.include_usage` so the final usage frame arrives; buffered
-  protocols are unchanged.
+  protocols are unchanged. A completions 4xx refusal whose bounded (redacted)
+  body names the option is typed: the status-only message appends
+  `-- gateway rejected stream_options.include_usage; token usage stays
+  unobserved`; any other refusal keeps its plain class, and a protocol whose
+  request carries no option can never claim its rejection.
 - **Harvest per poll.** `ToolLoopEvent::ResponseStarted` is emitted once per
   prompt, not per round, so per-round attribution cannot hang off events.
   `SessionComposition` harvests the take-once cells after every application
@@ -79,6 +89,10 @@ one row more informative**.
   while its measured throughput still surfaces — found by the independent
   review and repaired at the root cause (`SessionMetrics` token counts are
   `Option`, so absence is representable).
+- `completions_400_naming_stream_options_declares_the_usage_framing_rejected`
+  and its two controls pin the typed refusal: a 4xx body naming `stream_options`
+  appends the category after the stable status base; a refusal without the
+  mention and any non-completions protocol keep the plain class.
 - `a_settled_turn_reannounces_the_header_with_fresh_metrics`: the double
   changes its status after the first announcement, so a loop echoing the
   startup snapshot cannot pass; a refused prompt announces nothing extra.
@@ -87,6 +101,11 @@ one row more informative**.
 - `a_replayed_round_populates_the_footer_metrics_without_inventing_time`: an
   all-legacy replay store through the real composition surfaces tokens 10/4
   with `provider_millis` 0 and tps `None`.
+- `a_multi_round_tool_turn_accumulates_every_round_of_usage`: a replayed
+  two-round tool turn (a `workspace.list` call the host executes
+  approval-free, then the final answer) through the real composition lands
+  13/6 — both rounds of usage attributed; a round lost at the take-once seam
+  would read only the last round's 3/2.
 - Differential parity held 345/345 applicable required (4 explicit platform
   skips, 0 informational deviations); supersession and retirement guards held
   (8 + 8 adversarial refusals with named codes); `npm run check` exit 0
@@ -101,8 +120,9 @@ over measured live rounds only; replay and fake sessions show tokens but no
 time; the cache segment exists only where a provider reports cached tokens;
 the `tui-render` record echo still writes an unobserved count as `0` for
 record-shape compatibility (the pinned frame is the artifact that shows the
-absence, and the echo's note in the harness subject says so); no end-to-end
-fixture drives a multi-round tool turn (per-round attribution rests on the
-take-once cells plus the per-poll harvest, proven by code inspection and the
-single-round replay test); and verification is headless plus replayed, not a
-live terminal.
+absence, and the echo's note in the harness subject says so); multi-round
+attribution is now end-to-end proven for a replayed two-round tool turn (both
+rounds of usage land in the session totals), while live multi-round wall time
+still rests on the take-once cells plus the per-poll harvest proven by code
+inspection (replay never observes a clock, and no fixture drives live
+rounds); and verification is headless plus replayed, not a live terminal.
