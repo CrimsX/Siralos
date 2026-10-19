@@ -109,6 +109,14 @@ and the number does not change any of it.
   `tui-render` subject gains optional provider/model/metrics input
   and its expectation records are re-pinned from candidate output;
   the stdio frontend is byte-unchanged.
+  Revision (owner-directed, 2026-10-18, decision 181): the row's
+  layout is provider/model left and usage metrics flush right behind a
+  single `|` separator, and the status segment — including "ready" —
+  leaves the footer entirely; the pulsing liveness row above the input
+  keeps carrying the working state. The corpus moved to v90 with the
+  four `tui-render` expectation records re-pinned from candidate
+  output and the guards re-stamped; the frozen oracle stays
+  byte-identical.
 
 - **The `godot-*` differential subjects are retired and the external
   plugin coupling is gone** (owner-directed, 2026-10-10, ADR 0037 option

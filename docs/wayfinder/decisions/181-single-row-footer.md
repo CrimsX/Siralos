@@ -126,3 +126,42 @@ rounds of usage land in the session totals), while live multi-round wall time
 still rests on the take-once cells plus the per-poll harvest proven by code
 inspection (replay never observes a clock, and no fixture drives live
 rounds); and verification is headless plus replayed, not a live terminal.
+
+## 5. Owner-directed revision (2026-10-18): the row's internal layout
+
+One day after this decision landed, the owner re-decided the bottom row's
+internal layout (in-conversation revision; sections 1–4 above stay as the
+2026-10-17 record). The two-group rule replaces the three-block rule of
+section 2's `compose_bottom_row` description:
+
+- The row is `provider / model            | tps 42.1 · tok in/out · cache %`
+  (… ` · ctx %` last): provider/model in green at the LEFT edge, usage
+  metrics in dark gray flushed RIGHT behind a single `" | "` separator that
+  exists only while any metrics segment survives; no separator when the
+  metrics group is empty. When no provider is configured the plain
+  `no provider configured` text takes the left edge itself.
+- The status segment leaves the footer entirely — "ready" and the turn-state
+  word render nowhere in the row. The pulsing liveness row above the input
+  (`working`/`working..`/`working...`, owner QoL 2026-09-12) keeps carrying
+  the working state; `TuiState.status`, the worker's `SessionStatus.status`
+  re-announcement, and every transient/notice write are unchanged plumbing
+  (the `/panels` view still surfaces the status hint).
+- Width policy: the metrics segments drop `tps` → `tok` → `cache` so the
+  provider/model block stays whole (`ctx` is lost last, only through
+  truncation); when even the surviving metrics leave no room the metrics
+  group truncates with the same `…` marker, and the provider/model block
+  truncates in place only on absurdly narrow frames. Same segments, same
+  formulas, same observed-only rule as section 2 — no usage capture, replay
+  digest, or streaming refusal changed.
+- Evidence: footer tests rewritten for the two-group row including
+  `footer_has_no_status_or_turn_state_text` and the truncation-priority
+  assertions (`usage_metrics_format_real_values_and_drop_order` now pins
+  the whole/wide/squeeze/clip/absurd ladder); the `t4_frame_*` mirrors kept
+  their transcript-window, pane, and modal assertions. Corpus v90:
+  manifest version + digest regenerated, the four `tui-render` expectation
+  records re-pinned from fresh candidate output with the printed audit, the
+  supersession/retirement envelopes and their negative guards re-stamped,
+  the two stale corpus-mismatch fixtures and zero-digest pairs preserved;
+  the frozen oracle stays byte-identical. Pinned differential held parity
+  345/345 (4 platform skips, 0 deviations); guards held (8 + 8 named
+  refusals); workspace tests green (adapters 521 / cli 422), harness 77.
