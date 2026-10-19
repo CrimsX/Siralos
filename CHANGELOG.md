@@ -118,6 +118,24 @@ and the number does not change any of it.
   output and the guards re-stamped; the frozen oracle stays
   byte-identical.
 
+- **The provider requests prompt caching** (owner-directed, 2026-10-18,
+  [decision
+  181](docs/wayfinder/decisions/181-single-row-footer.md) §6). The
+  Anthropic message bodies — the named adapter and the generic protocol
+  shim — attach deterministic `cache_control` breakpoints to the stable
+  prefix (the system block, promoted to its one-block array form, and the
+  penultimate message block; the trailing message is the round's volatile
+  content and stays unmarked), so the footer's cache% reflects a real
+  retrieval instead of an accidental one. The OpenAI-completions body
+  carries the fixed literal `prompt_cache_key` (`"siralos"`), reversing
+  the measurement-only refusal recorded in
+  [decision
+  102](docs/wayfinder/decisions/102-provider-interface-takeaways.md) §5.
+  Identical conversations still assemble identical bodies; the neutral
+  replay digest hashes the structured request and never the wire body, so
+  existing recordings replay unchanged and the corpus needed no
+  amendment.
+
 - **The `godot-*` differential subjects are retired and the external
   plugin coupling is gone** (owner-directed, 2026-10-10, ADR 0037 option
   A executed). A new digest-bound retired-subjects list

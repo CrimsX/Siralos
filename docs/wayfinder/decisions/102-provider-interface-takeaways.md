@@ -49,3 +49,17 @@ Governing plan 68 · entry review [79](79-context-management-foundations.md) · 
 ## 4. Result
 
 The comparison machinery is complete and unit-proven; real-usage evidence awaits a live recorded session with a provider that reports usage. The recorded response bodies in the existing fixtures do not contain `usage` objects, so the e1 informational table has no real measured rows to report. Decision 94's informational status is unchanged, and the e1 evidence is recorded as prerequisite material for any future estimator-range argument. No scheduler, assembly, tool, or benchmark change was made; the cache-stability rule is pre-committed as measurement-only; the recording format change is backward-compatible (v1 for absent usage, v2 for present) and left the corpus at v75.
+
+## 5. Adoption note: prompt_cache_key (2026-10-18)
+
+The §2 refusal row "`prompt_cache_key` / retention adoption" is reversed by
+owner direction (in-conversation, 2026-10-18, provider footer ticket): a
+session's prompts may now opt into a stable cache namespace. The
+OpenAI-completions request body carries the fixed literal
+`prompt_cache_key: "siralos"` — a stable value rather than a per-session
+identity, so identical conversations still assemble identical bodies and
+the neutral replay hashing stays request-derived, never wire-body-derived.
+The row above stays historical exactly as refused on 2026-08-31; this
+section is the reversal record. Every other refusal (workflows,
+compaction, reasoning-effort, structured output, gate changes on verdict
+grounds, rewind-as-authority) remains refused.

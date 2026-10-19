@@ -165,3 +165,56 @@ section 2's `compose_bottom_row` description:
   the frozen oracle stays byte-identical. Pinned differential held parity
   345/345 (4 platform skips, 0 deviations); guards held (8 + 8 named
   refusals); workspace tests green (adapters 521 / cli 422), harness 77.
+
+## 6. Requested prompt caching (2026-10-18): the cache% gains a cause
+
+The observed-only rule of section 2 is unchanged: the cache segment still
+renders only what the provider reports, a reported zero stays 0%, and an
+unreported cache count renders nothing. What changes is that the provider
+requests now ask for caching, so the reported number reflects a real
+retrieval rather than an accidental one:
+
+- Both Anthropic message bodies (the named adapter and the generic
+  protocol shim) request prompt caching by the deterministic owner
+  convention: the system block is promoted to its one-block array form
+  carrying an `ephemeral` `cache_control` marker, and, when the
+  conversation brings at least two message blocks, the penultimate
+  message's last content block carries the marker too — the trailing
+  message is the round's volatile content and stays unmarked, so each
+  round's marker extends the prefix the next round reuses. Placement is a
+  pure function of the assembled conversation: identical requests assemble
+  identical bodies (no randomness, no timestamps, at most two breakpoints,
+  API cap four).
+- The OpenAI-completions body carries the fixed literal
+  `prompt_cache_key: "siralos"` so compatible gateways route every request
+  of a session into the same cache namespace; decision 102's
+  measurement-only refusal is reversed by owner direction and recorded in
+  that decision's adoption note (§5 there), which stays historical
+  otherwise.
+- Replay neutrality is proven by construction and by test: the neutral
+  request digest hashes the structured `ModelRequest` plus route strings
+  and never the wire body (`provider/record.rs`), so the existing
+  recordings replay unchanged — `legacy_playback_uses_only_unbound_entries_in_a_mixed_cache`
+  and `route_bound_composer_records_and_replays_the_live_route_digest`
+  pass untouched.
+- Corpus answer (W6): no subject pins the Anthropic wire request body —
+  the 350 corpus scenario inputs carry zero "anthropic" occurrences and
+  the pinned expectations carry zero usage/request-digest fields; the four
+  `tui-render` records pin footer frames, which do not change. No corpus
+  amendment needed; parity and oracle byte-identity were verified with
+  this change in place (no `CORPUS_VERSION` bump).
+- Tests: `anthropic_request_carries_the_system_and_second_to_last_message_breakpoints`,
+  `anthropic_request_keeps_the_historical_shape_without_a_stable_penultimate`,
+  `anthropic_request_breakpoints_are_identical_for_identical_conversations`,
+  `generic_anthropic_protocol_body_carries_the_identical_breakpoints`,
+  `completions_body_carries_the_stable_prompt_cache_key`, and the footer
+  chain `two_turn_observation_surfaces_cache_reads_on_the_second_turn`
+  (turn 1 zero read → 0%, turn 2 reads → the composed row renders the
+  percentage). The no-fabrication battery is untouched and stayed green:
+  `observation_anthropic_cache_is_normalized` (creation counts into the
+  prompt total, never the cached count), `accumulate_round_adds_only_observed_fields`,
+  and the stream_options refusal pair.
+- Recorded limit: below the provider's cacheable minimum the reported
+  read is zero and the footer truthfully shows 0% — asking for caching
+  never fabricates a hit; live verification of the climbing percentage
+  rests on a real provider session on the owner's machine.
