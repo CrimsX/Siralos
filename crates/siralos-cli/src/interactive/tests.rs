@@ -2530,6 +2530,101 @@ fn a_replayed_round_populates_the_footer_metrics_without_inventing_time() {
     );
     let _ = remove_dir_all(root);
 }
+#[test]
+fn a_multi_round_tool_turn_accumulates_every_round_of_usage() {
+    // The multi-round attribution gate (decision 181 §4): two provider
+    // rounds completing within one poll would leave the take-once cell
+    // carrying only the LAST round, and the footer would silently
+    // undercount. This drives a REAL two-round tool turn through the real
+    // composition -- round 1 replays a workspace tool call, the host
+    // executes it, round 2 replays the final answer -- so the totals must
+    // read BOTH rounds. Only the last round would read 3/2.
+    use crate::session_worker::WorkerSession;
+    use siralos_adapters::replay_store::write_replay_store;
+    use siralos_core::determinism::{
+        ProviderResponseIdentity, ReplayRecording,
+    };
+    fn recording(
+        body: &str,
+        input: Option<u64>,
+        output: Option<u64>,
+    ) -> ReplayRecording {
+        ReplayRecording {
+            identity: ProviderResponseIdentity {
+                provider_id: "example-vendor".to_owned(),
+                model: "example/model-a".to_owned(),
+                status: Some(200),
+                body_sha256: siralos_core::identity::sha256_hex(
+                    body.as_bytes(),
+                ),
+                body_bytes: body.len() as u64,
+                observed_at_ms: Some(1000),
+                input_tokens: input,
+                output_tokens: output,
+                cached_tokens: None,
+            },
+            body: body.to_owned(),
+            request_sha256: None,
+        }
+    }
+    let root = temporary_directory("footer-replay-two-rounds");
+    write(
+        root.join("siralos.toml"),
+        "[profile]\nname = \"default\"\nprovider = \"example-vendor\"\nmodel = \"example/model-a\"\nprotocol = \"openai-completions\"\nreplay = true\n",
+    )
+    .expect("profile");
+    // The replay flag is a dangerous field: materialize the test-only trust.
+    let config = write_test_profile_approval(&root);
+    // Wired tool names carry the provider alias; restore_events maps it back.
+    let tool_body = r#"{"choices":[{"message":{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"workspace_list","arguments":"{}"}}]}}],"usage":{"prompt_tokens":10,"completion_tokens":4}}"#;
+    let final_body = r#"{"choices":[{"message":{"content":"final answer"}}],"usage":{"prompt_tokens":3,"completion_tokens":2}}"#;
+    let recs = vec![
+        recording(tool_body, Some(10), Some(4)),
+        recording(final_body, Some(3), Some(2)),
+    ];
+    let store_path = root.join(".siralos").join("replay-store.json");
+    std::fs::create_dir_all(store_path.parent().expect("parent"))
+        .expect("mkdir");
+    write_replay_store(&store_path, &recs).expect("write");
+
+    let mut session = compose_session(InteractiveOptions {
+        workspace_root: Some(&root),
+        config_path: Some(&config),
+    })
+    .expect("compose");
+    session.send_prompt("list the workspace").expect("prompt");
+    let mut events = Vec::new();
+    while let Some(event) = session.poll_event() {
+        events.push(event);
+    }
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            siralos_core::tool::ToolLoopEvent::ToolCompleted { tool_name, .. }
+                if tool_name == "workspace.list"
+        )),
+        "the read-only tool must execute approval-free: {events:?}"
+    );
+    let metrics = session.status().metrics;
+    assert_eq!(
+        metrics.input_tokens,
+        Some(13),
+        "round 1 + round 2, never the last round alone"
+    );
+    assert_eq!(metrics.output_tokens, Some(6));
+    assert_eq!(metrics.cached_tokens, None);
+    assert_eq!(
+        metrics.tokens_segment().as_deref(),
+        Some("13/6"),
+        "both rounds render as the pair"
+    );
+    assert_eq!(
+        metrics.provider_millis, 0,
+        "replay verifies the totals without inventing wall time"
+    );
+    assert_eq!(metrics.tokens_per_second(), None);
+    let _ = remove_dir_all(root);
+}
 
 #[test]
 fn session_replay_store_hermetic() {
