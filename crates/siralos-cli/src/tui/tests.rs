@@ -2298,6 +2298,47 @@ fn accumulate_round_adds_only_observed_fields() {
 }
 
 #[test]
+fn two_turn_observation_surfaces_cache_reads_on_the_second_turn() {
+    use siralos_core::determinism::provider_replay::ProviderUsageObservation;
+    // Turn 1: caching is now requested on the wire (owner 2026-10-18, the
+    // provider footer ticket), but the prefix was below the cacheable
+    // minimum — the provider reports a zero cache read, and a reported
+    // zero is a real observation that keeps the segment truthfully at 0%.
+    let mut metrics = SessionMetrics::default();
+    metrics.accumulate_round(
+        Some(8_000),
+        &ProviderUsageObservation {
+            input_tokens: Some(100),
+            output_tokens: Some(20),
+            cached_tokens: Some(0),
+        },
+    );
+    assert_eq!(metrics.cache_percent(), Some(0));
+    // Turn 2: the stable prefix was served from cache and the provider
+    // reported the reads into the normalized observation (creation counts
+    // into the prompt total, never into the cached count): prompt 100 + 6
+    // fresh, served-from-cache 90.
+    metrics.accumulate_round(
+        Some(5_000),
+        &ProviderUsageObservation {
+            input_tokens: Some(6),
+            output_tokens: Some(20),
+            cached_tokens: Some(90),
+        },
+    );
+    assert_eq!(metrics.input_tokens, Some(106));
+    assert_eq!(metrics.output_tokens, Some(40));
+    assert_eq!(metrics.cached_tokens, Some(90));
+    assert_eq!(metrics.cache_percent(), Some(84));
+    let row = compose_bottom_row(80, Some("p"), Some("m"), &metrics);
+    assert!(
+        bottom_text(&row).contains("cache 84%"),
+        "the second turn's cache reads must surface: {:?}",
+        bottom_text(&row)
+    );
+}
+
+#[test]
 fn t4_frames_still_deterministic_without_header() {
     let mut state = TuiState::new();
     state.transcript_lines = vec!["hello".to_owned()];
