@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "corpusVersion": 89,
-  "entriesSha256": "37ac34c88e7e8b3a2dc9cea11f04896a1f2462c908196840bca420d4ceffcf48",
+  "corpusVersion": 90,
+  "entriesSha256": "b8e17c6e26b08c4c3dc9281b1200cf06c36c1ffba5277b0cf46226962da0665d",
   "retirements": [
     {
       "scenarioId": "godot-develop-plan.mixed-dependency-order",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "c67e0dd06bf8665b5405cffc1fdc03e873f107834e64c9dbd16dabf03a085d13",
       "candidateRecordSha256": "c67e0dd06bf8665b5405cffc1fdc03e873f107834e64c9dbd16dabf03a085d13"
@@ -14,7 +14,7 @@
     {
       "scenarioId": "godot-develop-plan.native-only-unresolved-reference",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "66af6e249d62be8e166bb9c45d5b79e83afcccc8ba00c2fc8ea0d29d7b841481",
       "candidateRecordSha256": "66af6e249d62be8e166bb9c45d5b79e83afcccc8ba00c2fc8ea0d29d7b841481"
@@ -22,7 +22,7 @@
     {
       "scenarioId": "godot-develop-plan.none-empty-targets",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "82eb8f7a4f95b5b2df71c3fae9f1a9868722ee6b4702adb153a2488fecff551a",
       "candidateRecordSha256": "82eb8f7a4f95b5b2df71c3fae9f1a9868722ee6b4702adb153a2488fecff551a"
@@ -30,7 +30,7 @@
     {
       "scenarioId": "godot-develop-plan.script-only-path-order",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "ea474029baa3a8622369cb4a698a14120cc1f9e39510d599c77c8f6cb37eb45e",
       "candidateRecordSha256": "ea474029baa3a8622369cb4a698a14120cc1f9e39510d599c77c8f6cb37eb45e"
@@ -38,7 +38,7 @@
     {
       "scenarioId": "godot-diagnostics.execute-fails-unknown-handle",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "bc3aef0cb7ff18aab2e8ca2566040fe81d85b448ede8450171efe72268a3ac79",
       "candidateRecordSha256": "bc3aef0cb7ff18aab2e8ca2566040fe81d85b448ede8450171efe72268a3ac79"
@@ -46,7 +46,7 @@
     {
       "scenarioId": "godot-diagnostics.prepare-cancelled",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "ccd3bebb51f05170aff3dcffcc4805b8db19585c244053febd6e90f388c957e1",
       "candidateRecordSha256": "ccd3bebb51f05170aff3dcffcc4805b8db19585c244053febd6e90f388c957e1"
@@ -54,7 +54,7 @@
     {
       "scenarioId": "godot-diagnostics.prepare-refuses",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "fcd0edbb1f44dee5b5c5dd7cd5ec01548c7dab67d7610f3aee2f7c45b608e212",
       "candidateRecordSha256": "fcd0edbb1f44dee5b5c5dd7cd5ec01548c7dab67d7610f3aee2f7c45b608e212"
@@ -62,7 +62,7 @@
     {
       "scenarioId": "godot-diagnostics.status-untrusted",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "55da2bcaa4b0732e8ee9d120e1bd1f7db0d3ae401e13c5c6345462279e32ac9a",
       "candidateRecordSha256": "55da2bcaa4b0732e8ee9d120e1bd1f7db0d3ae401e13c5c6345462279e32ac9a"
@@ -70,7 +70,7 @@
     {
       "scenarioId": "godot-discovery.config-invalid-installation",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "2d9df01c25a0422245d090536240c5c9fb3a1f5958a85af915b7292d156283aa",
       "candidateRecordSha256": "2d9df01c25a0422245d090536240c5c9fb3a1f5958a85af915b7292d156283aa"
@@ -78,7 +78,7 @@
     {
       "scenarioId": "godot-discovery.path-scan-no-candidates",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "8d99cb779bb90eda25ca027b2f72ed6d6904fad20b52e08c83fc340d71ffdfc0",
       "candidateRecordSha256": "8d99cb779bb90eda25ca027b2f72ed6d6904fad20b52e08c83fc340d71ffdfc0"
@@ -86,7 +86,7 @@
     {
       "scenarioId": "godot-discovery.select-config-active-missing",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "bfda2e93ef259b74b0e22b3166da28c85a46c0339919b424d54698b5adacc85a",
       "candidateRecordSha256": "bfda2e93ef259b74b0e22b3166da28c85a46c0339919b424d54698b5adacc85a"
@@ -94,7 +94,7 @@
     {
       "scenarioId": "godot-discovery.select-explicit-path-missing",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "0076088ea493d6dfbf65307f2095f2f457b0f97ee2a477011b7a0c27adb3345b",
       "candidateRecordSha256": "0076088ea493d6dfbf65307f2095f2f457b0f97ee2a477011b7a0c27adb3345b"
@@ -102,7 +102,7 @@
     {
       "scenarioId": "godot-knowledge.lookup-unavailable",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "03d9d3ea1a02209eec8ea39ae97664c9daba40d4636a991b577c1394e072ae75",
       "candidateRecordSha256": "03d9d3ea1a02209eec8ea39ae97664c9daba40d4636a991b577c1394e072ae75"
@@ -110,7 +110,7 @@
     {
       "scenarioId": "godot-knowledge.refresh-cancelled",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "d66fa8598b61d6b71c900441435acdecb19dde8a5586676ee681ba6c9f7bac1a",
       "candidateRecordSha256": "d66fa8598b61d6b71c900441435acdecb19dde8a5586676ee681ba6c9f7bac1a"
@@ -118,7 +118,7 @@
     {
       "scenarioId": "godot-knowledge.search-invalid-query",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "afbd1d129b19fdf9c1b3dc1b3a0eb2539c326d5f37b4c2c766186a30fe4182a3",
       "candidateRecordSha256": "afbd1d129b19fdf9c1b3dc1b3a0eb2539c326d5f37b4c2c766186a30fe4182a3"
@@ -126,7 +126,7 @@
     {
       "scenarioId": "godot-knowledge.search-unavailable",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "a80a4e984512d306d78d776e061068ddc6b3a51cd0f3f4290250a88e42855742",
       "candidateRecordSha256": "a80a4e984512d306d78d776e061068ddc6b3a51cd0f3f4290250a88e42855742"
@@ -134,7 +134,7 @@
     {
       "scenarioId": "godot-knowledge.status-unavailable",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "fbf0c1c1c902c8bb925a3c4e07caedc728c99ee659c14f0407ebb45cd15f55b4",
       "candidateRecordSha256": "fbf0c1c1c902c8bb925a3c4e07caedc728c99ee659c14f0407ebb45cd15f55b4"
@@ -142,7 +142,7 @@
     {
       "scenarioId": "godot-lsp.prepare-cancelled",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "2ee15cf12533dab7041643c00381c00b1305d2d31b33408b17452de7bacf5ee1",
       "candidateRecordSha256": "2ee15cf12533dab7041643c00381c00b1305d2d31b33408b17452de7bacf5ee1"
@@ -150,7 +150,7 @@
     {
       "scenarioId": "godot-lsp.prepare-refuses",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "a9793960e61eee7b6bafb16473b0766e62277f6dff2079f4296c7a06a1b40f4f",
       "candidateRecordSha256": "a9793960e61eee7b6bafb16473b0766e62277f6dff2079f4296c7a06a1b40f4f"
@@ -158,7 +158,7 @@
     {
       "scenarioId": "godot-lsp.status-empty",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "b9fd55380756f2c20ab4b6f5fdec41e5f5c2b8abcab7c43d830bdb5324b9b968",
       "candidateRecordSha256": "b9fd55380756f2c20ab4b6f5fdec41e5f5c2b8abcab7c43d830bdb5324b9b968"
@@ -166,7 +166,7 @@
     {
       "scenarioId": "godot-lsp.support-unavailable",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "54f1eaddfc28081f4233c749c666986a5c50a44b533e75957bcae9045fc25dd9",
       "candidateRecordSha256": "54f1eaddfc28081f4233c749c666986a5c50a44b533e75957bcae9045fc25dd9"
@@ -174,7 +174,7 @@
     {
       "scenarioId": "godot-mutation-prepare.add-node-expectations",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "db1aa62a34ad8b5523db143f2722778dbaee95622aadc384489d2f187ff57eb1",
       "candidateRecordSha256": "db1aa62a34ad8b5523db143f2722778dbaee95622aadc384489d2f187ff57eb1"
@@ -182,7 +182,7 @@
     {
       "scenarioId": "godot-mutation-prepare.invalid-node-path-error",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "2e815b2f94718c958db538650151000d704b7abaf558ef0cbf873c7559d2d468",
       "candidateRecordSha256": "2e815b2f94718c958db538650151000d704b7abaf558ef0cbf873c7559d2d468"
@@ -190,7 +190,7 @@
     {
       "scenarioId": "godot-mutation-prepare.resource-root-reference",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "0ad3d2fdb7a79d5413256c7880725a2f175980d1457ad18a5036006363d9973b",
       "candidateRecordSha256": "0ad3d2fdb7a79d5413256c7880725a2f175980d1457ad18a5036006363d9973b"
@@ -198,7 +198,7 @@
     {
       "scenarioId": "godot-mutation-prepare.scene-property-fingerprint",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "b40624549cd6e5216c5856a72d12128fe715fb74a9d78e12afd2fb70ccb26fdf",
       "candidateRecordSha256": "b40624549cd6e5216c5856a72d12128fe715fb74a9d78e12afd2fb70ccb26fdf"
@@ -206,7 +206,7 @@
     {
       "scenarioId": "godot-review-context.autoload-runtime-gap-partial",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "9df9b69d5c5fea661bf21bba4bd067c05a14bb5517680e789f95a0f51c2a8705",
       "candidateRecordSha256": "9df9b69d5c5fea661bf21bba4bd067c05a14bb5517680e789f95a0f51c2a8705"
@@ -214,7 +214,7 @@
     {
       "scenarioId": "godot-review-context.depth-bound-bounded",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "f93b9bde0a4c147507a5eeb9ff7f9540bbd41ff557a8b527cf349af1b48bb499",
       "candidateRecordSha256": "f93b9bde0a4c147507a5eeb9ff7f9540bbd41ff557a8b527cf349af1b48bb499"
@@ -222,7 +222,7 @@
     {
       "scenarioId": "godot-review-context.stale-excluded-partial",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "c976f36fd2f4375185253b663ce5eabb71424630835358dc9ea9f5db872f196e",
       "candidateRecordSha256": "c976f36fd2f4375185253b663ce5eabb71424630835358dc9ea9f5db872f196e"
@@ -230,7 +230,7 @@
     {
       "scenarioId": "godot-review-context.verified-graph-complete",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "c83930fe2df4295ce8a56d7bebfb9eec7ac16e97145a8080ca609923b36ec4c3",
       "candidateRecordSha256": "c83930fe2df4295ce8a56d7bebfb9eec7ac16e97145a8080ca609923b36ec4c3"
@@ -238,7 +238,7 @@
     {
       "scenarioId": "godot-scene-resolve.complete-scene",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "4a8d0693190ff7c2388832ba48925055e39c19815ff51234943984038ff76c19",
       "candidateRecordSha256": "4a8d0693190ff7c2388832ba48925055e39c19815ff51234943984038ff76c19"
@@ -246,7 +246,7 @@
     {
       "scenarioId": "godot-scene-resolve.null-tres-is-missing",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "a2e46aafcf446b474dfd94e666d7ba245466d4d9e982b2779b6e8d512db856fe",
       "candidateRecordSha256": "a2e46aafcf446b474dfd94e666d7ba245466d4d9e982b2779b6e8d512db856fe"
@@ -254,7 +254,7 @@
     {
       "scenarioId": "godot-scene-resolve.tres-precedence",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "430b53a5e7f94790342a093060cd90a48e53b10741a0be096fa1d095000b4963",
       "candidateRecordSha256": "430b53a5e7f94790342a093060cd90a48e53b10741a0be096fa1d095000b4963"
@@ -262,7 +262,7 @@
     {
       "scenarioId": "godot-scene-resolve.typed-resource-under-tscn",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "edc5c48ac8152332dd32a469bfab655700143519fba8043659bf22980255d19f",
       "candidateRecordSha256": "edc5c48ac8152332dd32a469bfab655700143519fba8043659bf22980255d19f"
@@ -270,7 +270,7 @@
     {
       "scenarioId": "godot-scene-resolve.unknown-keys-ignored",
       "reason": "The Godot module's differential subjects retire with the siralos-godot decoupling (owner directive 2026-10-10, ADR 0037 option A, executed). The frozen record stays byte-identical in oracle.json; execution and matching stop because the subject no longer exists.",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "Retire the frozen godot record: scenario file deleted, harness runners removed, plugin dependency dropped. Owner directive 2026-10-10, ADR 0037 section 7 option A. Last executed candidate output bound by digest (v83 green run).",
       "oracleRecordSha256": "72f0b5ec44e460692bc38c64653d9776943ed40a8517d87c2125c4fbf8993b14",
       "candidateRecordSha256": "72f0b5ec44e460692bc38c64653d9776943ed40a8517d87c2125c4fbf8993b14"
@@ -278,7 +278,7 @@
     {
       "scenarioId": "godot-discovery.path-scan-no-candidates",
       "reason": "negative-evidence fixture",
-      "retiredIn": 89,
+      "retiredIn": 90,
       "decision": "negative-evidence fixture",
       "oracleRecordSha256": "0000000000000000000000000000000000000000000000000000000000000000",
       "candidateRecordSha256": "0000000000000000000000000000000000000000000000000000000000000000"
