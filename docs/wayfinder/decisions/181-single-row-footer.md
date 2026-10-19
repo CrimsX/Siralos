@@ -51,7 +51,7 @@ one row more informative**.
   protocols are unchanged. A completions 4xx refusal whose bounded (redacted)
   body names the option is typed: the status-only message appends
   `-- gateway rejected stream_options.include_usage; token usage stays
-  unobserved`; any other refusal keeps its plain class, and a protocol whose
+unobserved`; any other refusal keeps its plain class, and a protocol whose
   request carries no option can never claim its rejection.
 - **Harvest per poll.** `ToolLoopEvent::ResponseStarted` is emitted once per
   prompt, not per round, so per-round attribution cannot hang off events.
