@@ -231,6 +231,54 @@ fn messages_url(base_url: &str) -> String {
     format!("{}/messages", base_url.trim_end_matches('/'))
 }
 
+/// Attach the deterministic Anthropic prompt-caching breakpoints to an
+/// assembled `messages` request body.
+///
+/// Owner convention (2026-10-18, decision 181 §6): the cacheable prefix is
+/// marked on the system block — rewritten into the array form a bare string
+/// cannot carry `cache_control` on — and, when the conversation brings at
+/// least two message blocks, the second-to-last message's last content
+/// block. The trailing message is the round's volatile content (the fresh
+/// prompt or the newest tool result), so it stays outside every breakpoint
+/// and no round ever re-marks content it assembled in that round; each
+/// round's marker then extends the prefix the next round reuses. Placement
+/// is a pure function of the assembled conversation: identical requests
+/// assemble identical bodies with no randomness or timestamps, and at most
+/// two breakpoints are added per request (the API's cap is four). Bodies
+/// without a system block or with fewer than two messages keep the
+/// historical shape untouched.
+pub(crate) fn apply_prompt_cache_breakpoints(body: &mut Value) {
+    if let Some(system) = body.get_mut("system").filter(|v| v.is_string()) {
+        let text = system.as_str().unwrap_or_default().to_owned();
+        // A bare string cannot carry `cache_control`; the documented block
+        // array form can, so the string is promoted to a one-block array.
+        *system = json!([{
+            "type": "text",
+            "text": text,
+            "cache_control": {"type": "ephemeral"},
+        }]);
+    }
+    let Some(messages) =
+        body.get_mut("messages").and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    let Some(penultimate) = messages.len().checked_sub(2) else {
+        return;
+    };
+    let Some(block) = messages[penultimate]
+        .get_mut("content")
+        .and_then(Value::as_array_mut)
+        .and_then(|blocks| blocks.last_mut())
+    else {
+        return;
+    };
+    let Some(object) = block.as_object_mut() else {
+        return;
+    };
+    object.insert("cache_control".to_owned(), json!({"type": "ephemeral"}));
+}
+
 impl AnthropicProvider {
     fn call_anthropic(
         model: &str,
@@ -356,6 +404,7 @@ impl AnthropicProvider {
         if !tools_json.is_empty() {
             body["tools"] = Value::Array(tools_json);
         }
+        apply_prompt_cache_breakpoints(&mut body);
         if cancellation.is_cancelled() {
             *last_replay.borrow_mut() =
                 ProviderReplayAvailability::Unavailable {
@@ -660,10 +709,11 @@ mod tests {
         ERROR_STATUSES, Fixture, error_bodies, retaining_hooks, serve,
         serve_truncated,
     };
+    use serde_json::{Value, json};
     use siralos_core::determinism::ProviderReplayAvailability;
     use siralos_core::provider::{
-        CancellationSignal, CancellationToken, ModelEvent, ModelProvider,
-        ModelRequest, ProviderEvent,
+        CancellationSignal, CancellationToken, ConversationItem, ModelEvent,
+        ModelProvider, ModelRequest, ProviderEvent,
     };
 
     /// A request that carries nothing workspace-specific.
@@ -673,6 +723,43 @@ mod tests {
             tools: vec![],
             system: Some("probe".to_owned()),
         }
+    }
+
+    /// A request bringing a system prefix and a three-message conversation:
+    /// breakpoint tests need a non-trivial penultimate block.
+    fn breakpoint_request() -> ModelRequest {
+        ModelRequest {
+            messages: vec![
+                ConversationItem::UserMessage { content: "first".to_owned() },
+                ConversationItem::AssistantMessage {
+                    content: "second".to_owned(),
+                },
+                ConversationItem::UserMessage { content: "third".to_owned() },
+            ],
+            tools: vec![],
+            system: Some("stable system".to_owned()),
+        }
+    }
+
+    /// POST one request through the real call path against a loopback
+    /// fixture and return the JSON body that reached the wire. The body is
+    /// recorded server-side, so the response fixture stays a plain one.
+    fn recorded_request_body(request: &ModelRequest) -> Value {
+        let server = serve(Fixture {
+            status: 200,
+            body: r#"{"content":[{"type":"text","text":"ok"}]}"#.to_owned(),
+        });
+        let _ = AnthropicProvider::call_anthropic(
+            "claude-3-5-sonnet",
+            &server.base_url,
+            "test-cred",
+            request,
+            CancellationToken::new().signal(),
+            &ReplayHooks::default(),
+            &probe_replay(),
+        );
+        let recorded = server.recorded();
+        serde_json::from_str(&recorded.body).expect("json request body")
     }
 
     /// Fresh per-call replay availability; the call path takes it by reference.
@@ -797,6 +884,98 @@ mod tests {
             event,
             ProviderEvent::Event(ModelEvent::TextDelta { text }) if text == "hello"
         )));
+    }
+
+    #[test]
+    fn anthropic_request_carries_the_system_and_second_to_last_message_breakpoints()
+     {
+        // Owner convention 2026-10-18 (decision 181 §6): the cacheable
+        // prefix is marked on the system block and the penultimate message
+        // block; nothing else in the body carries a marker.
+        let body = recorded_request_body(&breakpoint_request());
+        assert_eq!(
+            body["system"],
+            json!([{
+                "type": "text",
+                "text": "stable system",
+                "cache_control": {"type": "ephemeral"},
+            }])
+        );
+        let messages = body["messages"].as_array().expect("messages array");
+        assert_eq!(messages.len(), 3);
+        assert!(
+            messages[0]["content"][0].get("cache_control").is_none(),
+            "the far head of the history stays unmarked: {body}"
+        );
+        // The penultimate block is the last stable prefix position; the
+        // round's volatile trailing content stays outside every breakpoint.
+        assert_eq!(
+            messages[1]["content"][0]["cache_control"],
+            json!({"type": "ephemeral"})
+        );
+        assert!(
+            messages[2]["content"][0].get("cache_control").is_none(),
+            "the trailing message is this round's volatile content: {body}"
+        );
+        // Exactly the two markers, nowhere else in the body.
+        assert_eq!(
+            serde_json::to_string(&body)
+                .expect("body serializes")
+                .matches("cache_control")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn anthropic_request_keeps_the_historical_shape_without_a_stable_penultimate()
+     {
+        // The probe conversation brings no messages: only the system block
+        // carries a breakpoint, and the messages array stays empty.
+        let body = recorded_request_body(&probe_request());
+        assert_eq!(
+            body["system"],
+            json!([{
+                "type": "text",
+                "text": "probe",
+                "cache_control": {"type": "ephemeral"},
+            }])
+        );
+        assert_eq!(
+            body["messages"].as_array().expect("messages array").len(),
+            0
+        );
+        assert_eq!(
+            serde_json::to_string(&body)
+                .expect("body serializes")
+                .matches("cache_control")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn anthropic_request_breakpoints_are_identical_for_identical_conversations()
+     {
+        // No timestamps, no randomness: the same conversation assembles the
+        // same bytes on every call, on the wire and off it.
+        let first = serde_json::to_string(&recorded_request_body(
+            &breakpoint_request(),
+        ))
+        .expect("body serializes");
+        let second = serde_json::to_string(&recorded_request_body(
+            &breakpoint_request(),
+        ))
+        .expect("body serializes");
+        assert_eq!(
+            first, second,
+            "identical conversations must assemble identical bodies"
+        );
+        assert_eq!(
+            first.matches("cache_control").count(),
+            2,
+            "the determinism holds with the breakpoints in place"
+        );
     }
 
     #[test]

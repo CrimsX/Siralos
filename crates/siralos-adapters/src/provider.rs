@@ -48,6 +48,7 @@ pub use strict_turn::{
     collect_bounded_model_turn,
 };
 
+pub(crate) use anthropic::apply_prompt_cache_breakpoints;
 pub(crate) use constants::{
     ANTHROPIC_VERSION, CANCELLED_AFTER_HTTP_RESPONSE,
     CANCELLED_BEFORE_HTTP_CALL, CANCELLED_BEFORE_HTTP_SEND,

@@ -696,6 +696,12 @@ impl GenericProvider {
                 // and a provider that does not implement the option simply
                 // omits the chunk (never fabricating usage).
                 value["stream_options"] = json!({ "include_usage": true });
+                // Owner direction 2026-10-18 (reversing decision 102's
+                // measurement-only refusal): a fixed cache key lets
+                // OpenAI-compatible gateways route every request to the
+                // same cache namespace. The value is a stable literal, so
+                // identical conversations still assemble identical bodies.
+                value["prompt_cache_key"] = json!("siralos");
                 value
             }
             Protocol::OpenAiResponses => {
@@ -717,6 +723,10 @@ impl GenericProvider {
                 if let Some(system) = &request.system {
                     value["system"] = Value::String(system.clone());
                 }
+                // Keep the generic protocol shim byte-identical to the named
+                // adapter: the same deterministic prompt-caching breakpoints
+                // ride along on the same blocks.
+                crate::provider::apply_prompt_cache_breakpoints(&mut value);
                 value
             }
         };
@@ -1682,11 +1692,12 @@ mod tests {
         ERROR_STATUSES, Fixture, error_bodies, retaining_hooks, serve,
         serve_truncated,
     };
+    use serde_json::Value;
     use siralos_core::composition::Protocol;
     use siralos_core::determinism::ProviderReplayAvailability;
     use siralos_core::provider::{
-        CancellationSignal, CancellationToken, ModelEvent, ModelProvider,
-        ModelRequest, ProviderEvent,
+        CancellationSignal, CancellationToken, ConversationItem, ModelEvent,
+        ModelProvider, ModelRequest, ProviderEvent,
     };
 
     /// A request that carries nothing workspace-specific.
@@ -1696,6 +1707,50 @@ mod tests {
             tools: vec![],
             system: Some("probe".to_owned()),
         }
+    }
+
+    /// A request bringing a system prefix and a three-message conversation:
+    /// breakpoint tests need a non-trivial penultimate block.
+    fn breakpoint_request() -> ModelRequest {
+        ModelRequest {
+            messages: vec![
+                ConversationItem::UserMessage { content: "first".to_owned() },
+                ConversationItem::AssistantMessage {
+                    content: "second".to_owned(),
+                },
+                ConversationItem::UserMessage { content: "third".to_owned() },
+            ],
+            tools: vec![],
+            system: Some("stable system".to_owned()),
+        }
+    }
+
+    /// POST one request through the real `call_generic` path against a
+    /// loopback fixture and return the JSON body that reached the wire.
+    /// The outcome is parsed server-side, so any fixture shape works.
+    fn recorded_request_body_for(
+        request: &ModelRequest,
+        protocol: Protocol,
+        response_body: String,
+    ) -> Value {
+        let server = serve(Fixture { status: 200, body: response_body });
+        let outcome = GenericProvider::call_generic(
+            "probe-vendor",
+            "probe-model",
+            &server.base_url,
+            protocol,
+            Some("test-cred".to_owned()),
+            request,
+            None,
+            &ReplayHooks::default(),
+            &probe_replay(),
+        );
+        // The protocol's 2xx handling may stream; the recorded request body
+        // exists before any of it is consumed, so the outcome is dropped
+        // without asserting its shape.
+        let _ = outcome;
+        let recorded = server.recorded();
+        serde_json::from_str(&recorded.body).expect("json request body")
     }
 
     /// Fresh per-call replay availability; the call path takes it by reference.
@@ -2111,6 +2166,88 @@ mod tests {
             hooks.take_round_millis().is_some(),
             "the buffered round must carry its measured wall time"
         );
+    }
+
+    #[test]
+    fn generic_anthropic_protocol_body_carries_the_identical_breakpoints() {
+        // The protocol shim must assemble the same cacheable prefix the
+        // named adapter does (owner convention 2026-10-18): system block
+        // array-form breakpoint plus the penultimate message block, nothing
+        // else, and no completions-only fields leaking into the body.
+        let body = recorded_request_body_for(
+            &breakpoint_request(),
+            Protocol::AnthropicMessages,
+            r#"{"content":[{"type":"text","text":"ok"}]}"#.to_owned(),
+        );
+        assert_eq!(
+            body["system"],
+            serde_json::json!([{
+                "type": "text",
+                "text": "stable system",
+                "cache_control": {"type": "ephemeral"},
+            }])
+        );
+        let messages = body["messages"].as_array().expect("messages array");
+        assert_eq!(messages.len(), 3);
+        assert!(
+            messages[0]["content"][0].get("cache_control").is_none(),
+            "the far head of the history stays unmarked: {body}"
+        );
+        assert_eq!(
+            messages[1]["content"][0]["cache_control"],
+            serde_json::json!({"type": "ephemeral"})
+        );
+        assert!(
+            messages[2]["content"][0].get("cache_control").is_none(),
+            "the trailing message is this round's volatile content: {body}"
+        );
+        assert_eq!(
+            serde_json::to_string(&body)
+                .expect("body serializes")
+                .matches("cache_control")
+                .count(),
+            2
+        );
+        assert!(
+            body.get("prompt_cache_key").is_none(),
+            "the completions cache key is not an anthropic field: {body}"
+        );
+    }
+
+    #[test]
+    fn completions_body_carries_the_stable_prompt_cache_key() {
+        // Owner direction 2026-10-18 (decision 102 adoption note): the
+        // OpenAI-compatible request names a fixed cache namespace, so a
+        // gateway can route every request of a session to the same cache.
+        // The value is a stable literal, so identical conversations
+        // assemble identical bodies.
+        let sse_body = [
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":20}}\n\n",
+            "data: [DONE]\n\n",
+        ]
+        .concat();
+        let first = recorded_request_body_for(
+            &probe_request(),
+            Protocol::OpenAiCompletions,
+            sse_body.clone(),
+        );
+        let second = recorded_request_body_for(
+            &probe_request(),
+            Protocol::OpenAiCompletions,
+            sse_body.clone(),
+        );
+        assert_eq!(first["prompt_cache_key"], "siralos");
+        assert_eq!(
+            serde_json::to_string(&first).expect("body serializes"),
+            serde_json::to_string(&second).expect("body serializes"),
+            "identical conversations must assemble identical bodies"
+        );
+        // The existing completions framing is untouched: streaming stays on
+        // and the usage chunk stays requested.
+        assert_eq!(first["stream"], true);
+        assert_eq!(first["stream_options"]["include_usage"], true);
     }
 
     #[test]
