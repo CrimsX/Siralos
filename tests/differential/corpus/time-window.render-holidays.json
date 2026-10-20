@@ -1,0 +1,28 @@
+{
+  "env": {},
+  "id": "time-window.render-holidays",
+  "input": {
+    "authority": [],
+    "calls": [
+      {
+        "now_utc_ms": 1791253380000,
+        "op": "render",
+        "selected": 0
+      }
+    ],
+    "files": [],
+    "fingerprint": "fixture-ui-components-time-window-render-holidays",
+    "modules": [
+      {
+        "folder": "mod",
+        "manifest": "id = \"deepseek\"\ndigest = \"9999999999999999999999999999999999999999999999999999999999999999\"\nabi = \"siralos:domain-abi@1.0.0\"\ncapabilities = []\n[ui]\n[[ui.components]]\nid = \"deepseek-hours\"\ntitle = \"DeepSeek hours\"\nfeed = \"time.window\"\nplacement = \"tab\"\nmax_rows = 20\nmax_cols = 60\nparams = { windows = \"01:00-04:00,06:00-10:00\", days = \"mon-fri\", holidays = \"2026-10-06\", label = \"DeepSeek peak\" }\n",
+        "state": "enabled"
+      }
+    ],
+    "uiDocument": null,
+    "verifyPaths": []
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "ui-components"
+}

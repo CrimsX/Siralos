@@ -1,6 +1,7 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 90,
+  "corpusVersion": 91,
+  "corpusSha256": "b971050d70c8783e49b7e7817f64edc59fddfda216135a145fb1594be442427d",
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -1119,6 +1120,22 @@
       "sha256": "d695b13f5feec3c28c0d9942537b15093625720939627833e72369b23f979ceb"
     },
     {
+      "file": "time-window.render-day-horizon.json",
+      "sha256": "fa90b96517db5be428f220675f922e956402d52b5cdb4d516ed97b319a25df53"
+    },
+    {
+      "file": "time-window.render-deepseek.json",
+      "sha256": "f8cc260031db10e66ec2d7f640330bff7e3d680a25692e1380ed9efb931d2402"
+    },
+    {
+      "file": "time-window.render-holidays.json",
+      "sha256": "7b100ee78f91b9a1539ebe8d76b6a0a3258c2aea4348736285153e6b3c874ca9"
+    },
+    {
+      "file": "time-window.render-no-clock.json",
+      "sha256": "60f39631652a34d49d13a775e201ee0d0700066cb549df6345500e1714669a5a"
+    },
+    {
       "file": "tool-loop.assistant-text-with-tools.json",
       "sha256": "3750792cbdf15e516471c03486cb5d9a46ab44318cdf039bb616640a64723d5a"
     },
@@ -1402,6 +1419,5 @@
       "file": "workspace-search.exclusions.json",
       "sha256": "654db65efabd96b5b2cec40456b455b444dee81a0a6af70d37b88f9b281d3606"
     }
-  ],
-  "corpusSha256": "a6f8929d4c98fb6041ffb7183133ded3205ab393e0e7686caebec3862e1a94f0"
+  ]
 }
