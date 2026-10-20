@@ -30,6 +30,17 @@ and the number does not change any of it.
   (`deepseek-hours`) is a user artifact installed from a local
   folder and never committed to this repository.
 
+- **Spec-only module enablement** (owner follow-up, 2026-10-19,
+  [decision 182 §5](docs/wayfinder/decisions/182-time-window-feed-module.md)).
+  A module whose manifest declares no component (pure data, like
+  `deepseek-hours`) can now be enabled: the interactive enable path
+  keeps the lifecycle in a hostless core `ModuleLifecycle` instead of
+  requiring component bytes, with mirrored kind guards on add and
+  enable. `/modules-activate` refuses spec-only modules with a typed
+  message (`nothing to activate`) — there is no execution surface to
+  bind. The pinned panel surface is unchanged; the corpus does not
+  move.
+
 - **Default mutation and execution tools** (owner-directed, 2026-10-13,
   [ADR 0038](docs/adr/0038-default-mutable-execution-tools.md)).
   `read`/`write`/`edit` are live behind their gates (containment,

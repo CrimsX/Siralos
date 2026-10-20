@@ -139,3 +139,44 @@ product-reachable (registry.rs:270 constructs it), unchanged by this
 work. The next extension, if asked for, now has a worked example: contribute
 a feed when a closed route genuinely fits, then hand the data over and
 ignore the folder.
+
+## 5. Amendment 2026-10-19 — spec-only enable (owner follow-up)
+
+The owner immediately hit the frontier behind §2: `/modules-enable
+deepseek-hours` refused with `manifest does not name a component; cannot
+enable without bytes`. The interactive enable path constructed a
+component host unconditionally, while the manifest layer (ADR 0039 §7)
+never required one — `verify_component` already accepted componentless
+manifests, and core's `ModuleLifecycle` supports the exact hostless
+sequence (`install(package)` → `enable()`) with no bytes involved.
+
+Decision (owner confirmation in session, Option A): spec-only modules
+enable hostlessly through the pure core state machine. Activation is
+refused with the typed message `manifest does not name a component;
+nothing to activate` — activation exists to bind execution authority
+for a live component, and the `Enabled` state already satisfies the
+ADR 0039 §5 render gate. Add and enable keep mirrored kind guards (an id
+holds one slot kind per record digest: a spec-only manifest may never sit
+over a host slot, a component manifest never over a hostless slot), and
+the panels state lookup consults component hosts first, hostless
+lifecycles second, `Absent` otherwise.
+
+Evidence: `modules.rs` `ensure_entity` + `ModuleEntity` +
+`module_ui_state`, session/stdio threading of the hostless lifecycle map;
+eight new interactive tests —
+`spec_only_module_enables_hostlessly_and_publishes_declared_specs`
+(publish through `module_ui_specs`),
+`spec_only_enable_follows_the_profile_selection_gate`,
+`spec_only_enable_rechecks_persisted_identity_before_enabling`,
+`changed_spec_only_manifest_conflicts_against_enabled_lifecycle`,
+`activate_refuses_spec_only_module_with_typed_message` (including the
+ordinary gate for a not-yet-enabled id),
+`render_add_module_refuses_component_manifest_over_hostless_slot`,
+`spec_only_enable_reports_already_enabled_state`,
+`stdio_flow_enables_a_spec_only_module_end_to_end`. `cargo test
+--workspace` green (core 682, adapters 534, differential 28, cli 431),
+clippy clean, `npm run check` exit 0. The differential corpus needed no
+amendment: it pins the panel surface at the `ModuleUiSource` level,
+which this change does not move. The owner runbook in
+`modules/deepseek-hours/README.md` records that the `/modules-activate`
+refusal is correct for this module.
