@@ -180,3 +180,15 @@ amendment: it pins the panel surface at the `ModuleUiSource` level,
 which this change does not move. The owner runbook in
 `modules/deepseek-hours/README.md` records that the `/modules-activate`
 refusal is correct for this module.
+
+Follow-up hardening: the owner then saw
+`Enable failed: module record conflict (code RECORD_CONFLICT)` in a
+window where this workspace's same build enabled the same module
+successfully, so the honest diagnosis is a stale session or a session
+launched from a different workspace root. That diagnosis was wrong-footed
+by the refusal text: a missing record reported the same conflict wording
+as a genuine digest/path mismatch. `read_persisted_identity` now says
+`no module record exists for this session's workspace (code
+RECORD_NOT_FOUND)` when the id is absent from the loaded records;
+misplaced or changed records keep the conflict wording. Pinned by
+`render_enable_module_says_missing_record_instead_of_conflict`.

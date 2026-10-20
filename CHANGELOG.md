@@ -38,7 +38,9 @@ and the number does not change any of it.
   requiring component bytes, with mirrored kind guards on add and
   enable. `/modules-activate` refuses spec-only modules with a typed
   message (`nothing to activate`) — there is no execution surface to
-  bind. The pinned panel surface is unchanged; the corpus does not
+  bind. A missing module record on enable now reports a distinct
+  `RECORD_NOT_FOUND` refusal instead of reusing the conflict wording.
+  The pinned panel surface is unchanged; the corpus does not
   move.
 
 - **Default mutation and execution tools** (owner-directed, 2026-10-13,
