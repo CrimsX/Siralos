@@ -5032,20 +5032,21 @@ fn ui_spec_form_modal_renders_fields_and_errors() {
 }
 
 #[test]
-fn entering_panels_view_arms_refresh_when_empty() {
+fn entering_panels_view_arms_refresh_every_time() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     let press = |code| KeyEvent::new(code, KeyModifiers::NONE);
     let mut state = TuiState::new();
     assert!(!handle_key(&mut state, press(KeyCode::F(2)), 24));
     assert!(state.panels_view);
     assert!(state.panels_refresh_pending);
-    // A staged snapshot needs no refresh.
+    // A staged snapshot still refreshes on re-entry: moment-bearing
+    // module feeds (`time.window`) age otherwise.
     state.panels = Some(fixture_panels());
     state.panels_refresh_pending = false;
     assert!(!handle_key(&mut state, press(KeyCode::Esc), 24));
     assert!(!handle_key(&mut state, press(KeyCode::F(2)), 24));
     assert!(state.panels_view);
-    assert!(!state.panels_refresh_pending);
+    assert!(state.panels_refresh_pending);
 }
 
 #[test]

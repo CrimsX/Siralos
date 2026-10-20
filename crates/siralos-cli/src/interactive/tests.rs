@@ -6662,7 +6662,7 @@ fn ui_tui_dispatch_lists_opens_forms_removes_and_previews() {
 }
 
 #[test]
-fn panels_refresh_fetches_once_when_view_opens_empty() {
+fn panels_refresh_fetches_on_entry_and_reentry() {
     use super::refresh_panels_if_requested;
     let mut tui = ScriptedTui::new();
     let mut ticks = 0usize;
@@ -6718,6 +6718,44 @@ fn panels_refresh_fetches_once_when_view_opens_empty() {
         &mut progress,
         &mut reasoning,
     ));
+    // Leaving closes the view: a pending flag with the view
+    // closed stays quiet.
+    tui.state.borrow_mut().panels_view = false;
+    tui.state.borrow_mut().panels_refresh_pending = true;
+    assert!(!refresh_panels_if_requested(
+        &mut tui.worker.source,
+        &mut tui.sink,
+        &tui.state,
+        &tui.pane,
+        &mut progress,
+        &mut reasoning,
+    ));
+    // Re-entering with the staged snapshot refreshes again:
+    // moment-bearing module feeds (`time.window`) age behind an
+    // old staged snapshot.
+    tui.state.borrow_mut().panels_view = true;
+    tui.answer(vec![crate::session_worker::WorkerEvent::Panels(Box::new(
+        crate::tui::UiPanels {
+            projection: siralos_core::ui::UiProjection {
+                tabs: Vec::new(),
+                grid: [[None, None], [None, None]],
+            },
+            selected: 0,
+        },
+    ))]);
+    assert!(refresh_panels_if_requested(
+        &mut tui.worker.source,
+        &mut tui.sink,
+        &tui.state,
+        &tui.pane,
+        &mut progress,
+        &mut reasoning,
+    ));
+    assert_eq!(
+        tui.command(),
+        Some(crate::session_worker::WorkerCommand::PanelsReport)
+    );
+    assert!(tui.state.borrow().panels.is_some());
 }
 
 fn write_module_manifest(root: &std::path::Path, text: &str) {

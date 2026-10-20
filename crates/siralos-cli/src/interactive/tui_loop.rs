@@ -17,10 +17,10 @@ use super::{
     switch_model_via_worker, transient_status, write_profile_config_at,
 };
 
-/// UI panels refresh (ADR 0039 P4): entering the view with no
-/// staged snapshot fetches one panel report; the pump arm stages
-/// the snapshot and clears nothing else. Returns whether a fetch
-/// ran (test seam; the loop ignores the answer either way).
+/// UI panels refresh (ADR 0039 P4): entering the view (F2 arm)
+/// asks for one panel report; the pump arm stages the snapshot and
+/// clears nothing else. Returns whether a fetch ran (test seam; the
+/// loop ignores the answer either way).
 pub(super) fn refresh_panels_if_requested(
     worker: &mut WorkerSource,
     sink: &mut crate::tui::TuiSink,
@@ -31,10 +31,7 @@ pub(super) fn refresh_panels_if_requested(
 ) -> bool {
     let refresh = {
         let mut guard = state.borrow_mut();
-        if guard.panels_view
-            && guard.panels.is_none()
-            && guard.panels_refresh_pending
-        {
+        if guard.panels_view && guard.panels_refresh_pending {
             guard.panels_refresh_pending = false;
             true
         } else {
