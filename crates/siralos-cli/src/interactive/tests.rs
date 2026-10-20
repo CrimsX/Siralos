@@ -5603,6 +5603,32 @@ fn spec_only_enable_rechecks_persisted_identity_before_enabling() {
 }
 
 #[test]
+fn render_enable_module_says_missing_record_instead_of_conflict() {
+    let root = temporary_directory("enable-no-record");
+    write(root.join("siralos.toml"), "[profile]\nname = \"default\"\n")
+        .expect("profile without module record");
+    let mut hosts = std::collections::BTreeMap::new();
+    let mut hostless = std::collections::BTreeMap::new();
+    let mut manifests = std::collections::BTreeMap::new();
+
+    let output = super::render_enable_module(
+        &root,
+        &mut hosts,
+        &mut hostless,
+        &mut manifests,
+        SPEC_ONLY_MODULE_ID,
+        None,
+    );
+    assert!(
+        output.contains("(code RECORD_NOT_FOUND)")
+            && !output.contains("conflict")
+            && !output.contains(SPEC_ONLY_MODULE_ID),
+        "a missing record must not report a conflict: {output:?}",
+    );
+    let _ = remove_dir_all(root);
+}
+
+#[test]
 fn changed_spec_only_manifest_conflicts_against_enabled_lifecycle() {
     use siralos_core::module::LifecycleState;
 

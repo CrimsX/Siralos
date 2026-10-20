@@ -206,9 +206,12 @@ fn read_persisted_identity(
     let records = load_module_records(workspace_root).map_err(|failure| {
         format!("module record rejected (code {})", failure.code())
     })?;
-    let record =
-        records.iter().find(|record| record.id == id).ok_or_else(|| {
-            "module record conflict (code RECORD_CONFLICT)".to_owned()
+    let record = records
+        .iter()
+        .find(|record| record.id == id)
+        .ok_or_else(|| {
+            "no module record exists for this session's workspace (code RECORD_NOT_FOUND)"
+                .to_owned()
         })?;
     validate_source_path(&record.path).map_err(|_| {
         "module record conflict (code RECORD_CONFLICT)".to_owned()
