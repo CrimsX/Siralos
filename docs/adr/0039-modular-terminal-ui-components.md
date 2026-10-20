@@ -86,6 +86,28 @@ passes the terminal sanitizer (§6).
 | `tools.catalog`    | registry definitions snapshot (name/description/status)                                                                                                | none (already provider-visible) |
 | `modules.status`   | install records (`format_modules` input)                                                                                                               | none (local user config)        |
 | `checkpoints.list` | `CheckpointStore::list` metadata only: id, path, created-at, state, byte counts — preimage bytes are structurally excluded, pinned by adversarial test | `workspace-read`                |
+| `time.window`      | pure clock arithmetic (`adapters::ui_feeds::now_utc_millis`), no host I/O                                                                              | none (no authority needed)      |
+
+**Amendment (owner-directed, 2026-10-19):** `time.window` joins the
+closed enum as the first genuinely moment-bearing feed. It renders a
+wall-clock window schedule — current time with a `peak`/`off-peak`
+verdict, the parsed schedule, and a countdown to the next window
+boundary — from declarative params only: `windows` (req, ≤8,
+`HH:MM-HH:MM` ranges, no midnight wrap, no overlap), `days` (`all`, a
+weekday name, or a wrap range), `holidays` (≤64 civil dates), `label`
+(≤256 chars). It computes in UTC with `None` when no clock is
+available (honest `now: no wall clock` lines), scans at most 400 days
+ahead (`switch: none within 400 days` otherwise), and requires no
+capability: pure deterministic arithmetic on injected inputs, so a
+module declares it with `capabilities = []`. It was added to serve
+the first third-party module (`deepseek-hours`), a pure-data manifest
+contributing one panel. Because the enum is closed (§1), the feed is
+product code: the module stays a user artifact, never committed.
+Panels-view entries now refresh every time (no `is_none` guard) so a
+staged snapshot cannot show an aged verdict; the corpus is re-pinned
+at v91 with four `time-window.*` render scenarios (peak schedule,
+day-horizon countdown, holiday off-peak, no-wall-clock honesty) as
+candidate-authored expectation records, with the freezer untouched.
 
 Unknown feed → typed refusal. A module spec naming a feed
 outside the module's authority is refused at projection: the
@@ -178,17 +200,19 @@ feed text.
 
 ## 7. Corpus amendment plan (v85 → v86)
 
-New `ui-components.*` subjects pinning the new behavior in
-detail (spec parse/validate, authoring round-trip, render pins
-for the starter components incl. the empty host, module
-precedence, refusal cases) with candidate-authored expectations;
-manifest regenerated; `CORPUS_VERSION` and the strict-loader
-count assert moved together; negative-guard fixtures extended
-or re-stamped; every amendment printed in the audit, never
-silently edited. `oracle.json` stays byte-identical
+Executed at v85 (the ui-components subjects) and again at v91 with
+the `time.window` amendment (§2): new `ui-components.*` subjects —
+for v91, four `time-window.*` render scenarios (peak schedule, day
+horizon, holidays, no wall clock) with candidate-authored
+expectation records; manifest regenerated; `CORPUS_VERSION` and the
+strict-loader version moved together; the supersession/retirement
+stamps moved to the new version with recomputed entry digests;
+negative-guard fixtures untouched (their mismatch stamps still
+refuse against any other version); every amendment printed in the
+audit, never silently edited. `oracle.json` stays byte-identical
 (`sha256 9f5f7861903b…`). Addition-only is expected (no pinned
-record echoes manifest keys or the slash catalog); any
-deviation retires + adds per the once-only wall, never edits.
+record echoes manifest keys or the slash catalog); any deviation
+retires + adds per the once-only wall, never edits.
 
 ## 8. Lean guardrails (unchanged)
 

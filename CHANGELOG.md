@@ -14,6 +14,22 @@ and the number does not change any of it.
 
 ### Added
 
+- **The `time.window` module feed** (owner-directed, 2026-10-19,
+  [decision 182](docs/wayfinder/decisions/182-time-window-feed-module.md),
+  [ADR 0039 §2](docs/adr/0039-modular-terminal-ui-components.md)).
+  The closed feed enum opens its first moment-bearing feed: a pure
+  clock calculator (declared windows with peak/off-peak verdict,
+  exact countdown to the next boundary, UTC, holiday dates, honest
+  lines when no wall clock is available, a bounded 400-day scan)
+  requiring no capability. The TUI now refreshes panel reports on
+  every `F2` entry instead of only when the view opens empty, so
+  moment-bearing components cannot show an aged snapshot. The corpus
+  moved to v91 with four new `time-window` subjects pinned by
+  candidate-authored expectation records and a printed audit; the
+  frozen oracle bundle is byte-identical. The first custom module
+  (`deepseek-hours`) is a user artifact installed from a local
+  folder and never committed to this repository.
+
 - **Default mutation and execution tools** (owner-directed, 2026-10-13,
   [ADR 0038](docs/adr/0038-default-mutable-execution-tools.md)).
   `read`/`write`/`edit` are live behind their gates (containment,

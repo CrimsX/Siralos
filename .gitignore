@@ -42,5 +42,11 @@ Thumbs.db
 **/siralos.toml
 **/.siralos/
 
+# Locally installed custom modules (ADR 0036 extension model: modules are
+# explicitly installed user artifacts, never committed source). The
+# differential audit walks untracked files, so an unignored module tree would
+# make the audit fail its byte bound.
+/modules/
+
 # Planning scaffolding for the 1.0 work (deleted at handoff).
 /.plan/
