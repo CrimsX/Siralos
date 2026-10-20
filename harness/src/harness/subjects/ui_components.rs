@@ -498,6 +498,25 @@ fn render_op(
     let policy = PermissionPolicy::default();
     let tools: Vec<RegisteredToolInfo> = Vec::new();
     let records = load_feed_module_records(root);
+    // The clock is scenario input, not the runner's wall: absent
+    // means "no wall clock" for the moment-bearing feeds.
+    let now_utc_ms = match entry.get("now_utc_ms") {
+        None => None,
+        Some(Value::Number(number)) => Some(number.as_u64().ok_or_else(
+            || {
+                HarnessError::corpus(
+                    "ui-components render now_utc_ms must be a non-negative integer"
+                        .to_owned(),
+                )
+            },
+        )?),
+        Some(_) => {
+            return Err(HarnessError::corpus(
+                "ui-components render now_utc_ms must be an integer"
+                    .to_owned(),
+            ));
+        }
+    };
     let inputs = UiFeedInputs {
         root,
         tools: &tools,
@@ -505,6 +524,7 @@ fn render_op(
         modules: &records,
         last_projection: None,
         checkpoint_state_dir: None,
+        now_utc_ms,
     };
     // Resolve at the seam: no intermediate map, so a feed
     // refusal defaults to the empty slot right where the

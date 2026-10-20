@@ -379,6 +379,7 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
             modules: &modules,
             last_projection: self.application.last_projection(),
             checkpoint_state_dir: state_dir.as_deref(),
+            now_utc_ms: siralos_adapters::ui_feeds::now_utc_millis(),
         };
         render_ui_preview_text(&inputs, id)
     }
@@ -440,6 +441,7 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
             modules: &modules,
             last_projection: self.application.last_projection(),
             checkpoint_state_dir: state_dir.as_deref(),
+            now_utc_ms: siralos_adapters::ui_feeds::now_utc_millis(),
         };
         let projection = project_components(&registry, |spec| {
             resolve_spec_content(&inputs, spec).unwrap_or_default()

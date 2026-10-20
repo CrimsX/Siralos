@@ -899,7 +899,7 @@ impl UiSpecField {
             Self::Id => "lowercase letters, numbers, hyphens, underscores",
             Self::Title => "the panel title",
             Self::Feed => {
-                "workspace.list, workspace.search, context.summary, tools.catalog, modules.status, checkpoints.list"
+                "workspace.list, workspace.search, context.summary, tools.catalog, modules.status, checkpoints.list, time.window"
             }
             Self::Placement => "tab, or cell:<row>,<col> (0..=1 each)",
             Self::MaxRows => "visible rows, 1 to 99",
@@ -1094,11 +1094,10 @@ pub(super) fn validate_ui_title(value: &str) -> Result<(), String> {
 }
 
 /// Validate feed wire string through the core parser: the closed
-/// six-feed vocabulary.
+/// seven-feed vocabulary.
 pub(super) fn validate_ui_feed(value: &str) -> Result<(), String> {
     siralos_core::ui::UiFeed::parse(value).map(|_| ()).map_err(|_| {
-        "Feed must be workspace.list, workspace.search, context.summary, tools.catalog, modules.status, or checkpoints.list."
-            .to_owned()
+        "Feed must be workspace.list, workspace.search, context.summary, tools.catalog, modules.status, checkpoints.list, or time.window.".to_owned()
     })
 }
 

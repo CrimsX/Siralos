@@ -56,6 +56,9 @@ pub enum UiFeed {
     ModulesStatus,
     /// Checkpoint metadata only, never preimages (`workspace.read`).
     CheckpointsList,
+    /// Tier countdown within declared recurring local-day windows
+    /// (wall clock, no gate — ADR 0039 §2 amendment 2026-10-19).
+    TimeWindow,
 }
 
 impl UiFeed {
@@ -69,6 +72,7 @@ impl UiFeed {
             "tools.catalog" => Ok(Self::ToolsCatalog),
             "modules.status" => Ok(Self::ModulesStatus),
             "checkpoints.list" => Ok(Self::CheckpointsList),
+            "time.window" => Ok(Self::TimeWindow),
             _ => Err(UiSpecError::UnknownFeed),
         }
     }
@@ -83,6 +87,7 @@ impl UiFeed {
             Self::ToolsCatalog => "tools.catalog",
             Self::ModulesStatus => "modules.status",
             Self::CheckpointsList => "checkpoints.list",
+            Self::TimeWindow => "time.window",
         }
     }
 }
@@ -434,6 +439,7 @@ mod tests {
             ("tools.catalog", UiFeed::ToolsCatalog),
             ("modules.status", UiFeed::ModulesStatus),
             ("checkpoints.list", UiFeed::CheckpointsList),
+            ("time.window", UiFeed::TimeWindow),
         ] {
             assert_eq!(UiFeed::parse(wire).expect("known feed"), feed);
             assert_eq!(feed.as_str(), wire);

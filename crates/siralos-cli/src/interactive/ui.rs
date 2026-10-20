@@ -43,6 +43,10 @@ pub struct UiFeedInputs<'a> {
     pub last_projection: Option<&'a LastProjection>,
     /// Caller state directory for the checkpoint store.
     pub checkpoint_state_dir: Option<&'a Path>,
+    /// Unix milliseconds now (UTC) for timestamp-bearing feeds
+    /// (`siralos_adapters::ui_feeds::now_utc_millis` on live
+    /// callers; tests inject fixed values).
+    pub now_utc_ms: Option<u64>,
 }
 
 /// Load the installed module records for feed resolution. An
@@ -106,6 +110,7 @@ pub fn resolve_spec_content(
         modules: inputs.modules,
         context,
         checkpoint_state_dir: inputs.checkpoint_state_dir,
+        now_utc_ms: inputs.now_utc_ms,
     };
     resolve_feed(&context, spec.feed(), spec.params())
         .map(|lines| {
@@ -1007,6 +1012,7 @@ mod tests {
             modules: &records,
             last_projection: None,
             checkpoint_state_dir: None,
+            now_utc_ms: Some(0),
         };
         let spec =
             siralos_core::ui::UiComponentSpec::parse(&UnvalidatedSpec {

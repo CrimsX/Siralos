@@ -544,6 +544,7 @@ where
                 modules: &modules,
                 last_projection: application.last_projection(),
                 checkpoint_state_dir: state_dir.as_deref(),
+                now_utc_ms: siralos_adapters::ui_feeds::now_utc_millis(),
             };
             let rendered = sanitize_for_display(&render_ui_preview_text(
                 &inputs,
