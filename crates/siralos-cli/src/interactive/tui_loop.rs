@@ -542,7 +542,7 @@ pub(super) fn resume_suspended_turn(
 /// `--stdio` forces the stdio frontend, plain non-TTY uses stdio silently).
 ///
 /// T1 composition: this function reuses the SAME seams the stdio loop calls
-/// (`ensure_host`, the command dispatch, `drain_events` with a [`crate::tui::TuiSink`],
+/// (`ensure_entity`, the command dispatch, `drain_events` with a [`crate::tui::TuiSink`],
 /// the sanitizer, the input-queue/command-catalog vocabulary). Because
 /// `run_interactive_session` blocks on `BufRead::read_line`, it would starve the
 /// `crossterm::event::poll` pump, so this loop calls the SAME shared helpers

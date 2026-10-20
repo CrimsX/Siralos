@@ -2,10 +2,11 @@
 
 use super::{
     BTreeMap, BufRead, ContextPolicy, HostCredential, InteractiveError,
-    InteractiveOptions, ModelListingGate, ModuleHost, ModuleManifest, Path,
-    PermissionPolicy, Rc, RefCell, ReloadAuthorityEvidence,
-    SessionComposition, SessionProvider, SiralosApplication, SlashCommand,
-    StdioApprovalPrompter, WorkspaceProfileLoad, Write, apply_model_switch,
+    InteractiveOptions, ModelListingGate, ModuleHost, ModuleLifecycle,
+    ModuleManifest, Path, PermissionPolicy, Rc, RefCell,
+    ReloadAuthorityEvidence, SessionComposition, SessionProvider,
+    SiralosApplication, SlashCommand, StdioApprovalPrompter,
+    WorkspaceProfileLoad, Write, apply_model_switch,
     apply_provider_remove_confirmation_at, apply_reloaded_config,
     approve_workspace_profile, compose_session, drain_events,
     drive_context_demand, execute_ui_remove, flush_record_replay, io,
@@ -139,6 +140,7 @@ where
         mut application,
         live_provider,
         mut hosts,
+        mut hostless,
         mut manifests,
         profile_modules,
         context_control,
@@ -231,6 +233,7 @@ where
                 &writer,
                 &reader,
                 &mut hosts,
+                &mut hostless,
                 &mut manifests,
                 profile_modules.as_deref(),
                 context_control.as_ref(),
@@ -352,6 +355,7 @@ pub(super) fn dispatch_stdio_command<P, W, R>(
     writer: &Rc<RefCell<W>>,
     reader: &Rc<RefCell<R>>,
     hosts: &mut BTreeMap<String, ModuleHost>,
+    hostless: &mut BTreeMap<String, ModuleLifecycle>,
     manifests: &mut BTreeMap<String, ModuleManifest>,
     profile_modules: Option<&[String]>,
     context_control: Option<&ContextPolicy>,
@@ -412,6 +416,7 @@ where
                 workspace_root,
                 folder.unwrap_or(""),
                 hosts,
+                hostless,
                 manifests,
             ));
             writer
@@ -423,6 +428,7 @@ where
             let rendered = sanitize_for_display(&render_enable_module(
                 workspace_root,
                 hosts,
+                hostless,
                 manifests,
                 id.unwrap_or(""),
                 profile_modules,
@@ -436,6 +442,7 @@ where
             let rendered = sanitize_for_display(&render_activate_module(
                 workspace_root,
                 hosts,
+                hostless,
                 manifests,
                 id.unwrap_or(""),
                 profile_modules,

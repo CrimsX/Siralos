@@ -7,16 +7,17 @@ use super::{
     ContextCapacity, ContextPolicy, ConversationItem,
     DEFAULT_REVIEW_PROVIDER_ID, EditTool, FlushError, FlushOutcome,
     HostCredential, HostProvider, InteractiveError, InteractiveOptions,
-    ModuleHost, ModuleManifest, PermissionPolicy, ProjectionService, Rc,
-    ReadTool, RecordedReplayProvider, ReplayStoreLoadError,
-    RetainingReplayRecorder, SIRALOS_SYSTEM_INSTRUCTIONS, SegmentInput,
-    SessionProvider, SiralosApplication, Stability, ToolLoopEvent,
-    ToolRegistry, UiFeedInputs, WorkspaceListTool, WorkspaceProfileLoad,
-    WorkspaceReadTool, WorkspaceSearchTool, WriteTool, apply_reloaded_config,
+    ModuleHost, ModuleLifecycle, ModuleManifest, PermissionPolicy,
+    ProjectionService, Rc, ReadTool, RecordedReplayProvider,
+    ReplayStoreLoadError, RetainingReplayRecorder,
+    SIRALOS_SYSTEM_INSTRUCTIONS, SegmentInput, SessionProvider,
+    SiralosApplication, Stability, ToolLoopEvent, ToolRegistry, UiFeedInputs,
+    WorkspaceListTool, WorkspaceProfileLoad, WorkspaceReadTool,
+    WorkspaceSearchTool, WriteTool, apply_reloaded_config,
     approve_workspace_profile, compose_skills_segment,
     declare_and_compose_profile, effective_profile_protocol,
     load_replay_store, load_sourced_user_specs, load_user_configuration,
-    load_workspace_profile_snapshot, non_live_state_digest,
+    load_workspace_profile_snapshot, module_ui_state, non_live_state_digest,
     redacted_credential_display, reload_authority_is_revalidated,
     reload_report_from_load, render_activate_module, render_add_module,
     render_context_segment, render_enable_module, render_tools_segment,
@@ -93,6 +94,9 @@ pub(crate) struct SessionComposition<'a> {
     pub(super) live_provider: &'a SessionProvider,
     /// Installed module hosts by module id.
     pub(super) hosts: BTreeMap<String, ModuleHost>,
+    /// Spec-only module lifecycles by module id (manifests that name
+    /// no component; ADR 0039 §7).
+    pub(super) hostless: BTreeMap<String, ModuleLifecycle>,
     /// Loaded module manifests by module id.
     pub(super) manifests: BTreeMap<String, ModuleManifest>,
     /// Applied profile's module selection, if any.
@@ -328,6 +332,7 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
             &self.workspace_root,
             folder,
             &mut self.hosts,
+            &mut self.hostless,
             &mut self.manifests,
         ))
     }
@@ -342,6 +347,7 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
         Ok(render_enable_module(
             &self.workspace_root,
             &mut self.hosts,
+            &mut self.hostless,
             &mut self.manifests,
             id,
             self.profile_modules.as_deref(),
@@ -358,6 +364,7 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
         Ok(render_activate_module(
             &self.workspace_root,
             &mut self.hosts,
+            &self.hostless,
             &mut self.manifests,
             id,
             self.profile_modules.as_deref(),
@@ -398,15 +405,8 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
             .collect::<Vec<_>>();
         let mut sources = Vec::new();
         for (id, manifest) in &self.manifests {
-            let (state, grant) = match self.hosts.get(id) {
-                Some(host) => {
-                    (host.state(), host.active().map(|active| active.grant()))
-                }
-                None => {
-                    use siralos_core::module::lifecycle::LifecycleState;
-                    (LifecycleState::Absent, None)
-                }
-            };
+            let (state, grant) =
+                module_ui_state(id, &self.hosts, &self.hostless);
             sources.push(crate::interactive::ui::ModuleUiSource {
                 id: id.clone(),
                 manifest,
@@ -1229,6 +1229,7 @@ pub(crate) fn compose_session(
         application,
         live_provider: session_provider,
         hosts: BTreeMap::new(),
+        hostless: BTreeMap::new(),
         manifests: BTreeMap::new(),
         profile_modules,
         context_control,

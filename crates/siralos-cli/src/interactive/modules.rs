@@ -2,8 +2,9 @@
 //! (source validation, rejection codes, activation gates).
 
 use super::{
-    ActivationRequest, BTreeMap, HostAuthority, LifecycleState, ModuleHost,
-    ModuleHostBounds, ModuleManifest, ModuleRecord, Path, PathValidationError,
+    ActivationRequest, BTreeMap, CapabilityGrant, HostAuthority,
+    LifecycleState, ModuleFailure, ModuleHost, ModuleHostBounds,
+    ModuleLifecycle, ModuleManifest, ModuleRecord, Path, PathValidationError,
     RuntimeCheckResult, decide_module_activation, format_module_added,
     format_modules, is_model_protected_workspace_path, load_manifest,
     load_module_records, resolve_workspace_path, sanitize_for_display,
@@ -43,6 +44,7 @@ pub(super) fn render_add_module(
     workspace_root: &Path,
     folder: &str,
     hosts: &mut BTreeMap<String, ModuleHost>,
+    hostless: &mut BTreeMap<String, ModuleLifecycle>,
     manifests: &mut BTreeMap<String, ModuleManifest>,
 ) -> String {
     if let Err(code) = validate_source_path(folder) {
@@ -100,7 +102,16 @@ pub(super) fn render_add_module(
         return "Add Module failed: module record conflict (code RECORD_CONFLICT)\n"
             .to_owned();
     }
-    if manifest.component().is_none() && hosts.contains_key(&id) {
+    // Kind pairing: an id may hold one slot kind per record digest —
+    // `render_add_module` and `ensure_entity` refuse the mirrored
+    // pairings (spec-only manifest under a host slot, component
+    // manifest over a hostless slot).
+    let kind_conflict = if manifest.component().is_none() {
+        hosts.contains_key(&id)
+    } else {
+        hostless.contains_key(&id)
+    };
+    if kind_conflict {
         return "Add Module failed: module record conflict (code RECORD_CONFLICT)\n"
             .to_owned();
     }
@@ -150,13 +161,48 @@ pub(super) fn render_add_module(
     format_module_added(&record)
 }
 
-pub(super) fn ensure_host<'a>(
+/// One enableable module slot: a component host, or the hostless
+/// lifecycle of a spec-only module. `verify_component` accepts
+/// manifests that name no component (ADR 0039 §7), so enablement
+/// must too: the manifest layer never required bytes.
+pub(super) enum ModuleEntity<'a> {
+    Host(&'a mut ModuleHost),
+    SpecOnly(&'a mut ModuleLifecycle),
+}
+
+impl ModuleEntity<'_> {
+    fn enable(&mut self) -> Result<(), ModuleFailure> {
+        match self {
+            Self::Host(host) => host.enable(),
+            Self::SpecOnly(lifecycle) => lifecycle.enable(),
+        }
+    }
+}
+
+/// The lifecycle state and Active grant the panels view reports for
+/// one module id: component hosts first, spec-only lifecycles
+/// second, and `Absent` when neither holds the id (`module_ui_specs`
+/// drops both).
+#[must_use]
+pub(super) fn module_ui_state<'h>(
+    id: &str,
+    hosts: &'h BTreeMap<String, ModuleHost>,
+    hostless: &BTreeMap<String, ModuleLifecycle>,
+) -> (LifecycleState, Option<&'h CapabilityGrant>) {
+    if let Some(host) = hosts.get(id) {
+        return (host.state(), host.active().map(|active| active.grant()));
+    }
+    if let Some(lifecycle) = hostless.get(id) {
+        return (lifecycle.state(), None);
+    }
+    (LifecycleState::Absent, None)
+}
+
+fn read_persisted_identity(
     workspace_root: &Path,
     id: &str,
-    hosts: &'a mut BTreeMap<String, ModuleHost>,
-    manifests: &mut BTreeMap<String, ModuleManifest>,
-) -> Result<&'a mut ModuleHost, String> {
-    // Always re-read the current record before considering an in-memory host.
+) -> Result<ModuleManifest, String> {
+    // Always re-read the current record before considering a slot.
     let records = load_module_records(workspace_root).map_err(|failure| {
         format!("module record rejected (code {})", failure.code())
     })?;
@@ -187,14 +233,54 @@ pub(super) fn ensure_host<'a>(
     if !id_matches || !digest_matches {
         return Err("module record conflict (code RECORD_CONFLICT)".to_owned());
     }
+    Ok(manifest)
+}
 
-    if let Some(host) = hosts.get(id) {
-        if manifest.component().is_none() {
+pub(super) fn ensure_entity<'a>(
+    workspace_root: &Path,
+    id: &str,
+    hosts: &'a mut BTreeMap<String, ModuleHost>,
+    hostless: &'a mut BTreeMap<String, ModuleLifecycle>,
+    manifests: &mut BTreeMap<String, ModuleManifest>,
+) -> Result<ModuleEntity<'a>, String> {
+    let manifest = read_persisted_identity(workspace_root, id)?;
+
+    // `render_add_module` refuses the mirrored pairing before any
+    // record lands, so the persisted digest also pins the slot kind;
+    // the kind checks below keep that pairing enforceable directly.
+    if manifest.component().is_none() {
+        if hosts.contains_key(id) {
             return Err(
-                "manifest does not name a component; cannot enable without bytes"
-                    .to_owned(),
+                "module record conflict (code RECORD_CONFLICT)".to_owned()
             );
         }
+        if let Some(lifecycle) = hostless.get(id) {
+            if lifecycle.installed_package() != Some(manifest.package())
+                || manifests.get(id) != Some(&manifest)
+            {
+                return Err(
+                    "module record conflict (code RECORD_CONFLICT)".to_owned()
+                );
+            }
+        } else {
+            let mut pending = ModuleLifecycle::new();
+            pending.install(manifest.package().clone()).map_err(
+                |failure| {
+                    format!(
+                        "module installation rejected (code {})",
+                        failure.code()
+                    )
+                },
+            )?;
+            manifests.insert(id.to_owned(), manifest);
+            hostless.insert(id.to_owned(), pending);
+        }
+        return Ok(ModuleEntity::SpecOnly(
+            hostless.get_mut(id).expect("just verified or inserted"),
+        ));
+    }
+
+    if let Some(host) = hosts.get(id) {
         if host.installed_package() != Some(manifest.package())
             || manifests.get(id) != Some(&manifest)
         {
@@ -207,19 +293,16 @@ pub(super) fn ensure_host<'a>(
                 "module record conflict (code RECORD_CONFLICT)".to_owned()
             );
         }
-        return hosts.get_mut(id).ok_or_else(|| {
-            "module record conflict (code RECORD_CONFLICT)".to_owned()
-        });
+        return Ok(ModuleEntity::Host(
+            hosts.get_mut(id).expect("just verified"),
+        ));
+    }
+    if hostless.contains_key(id) {
+        return Err("module record conflict (code RECORD_CONFLICT)".to_owned());
     }
 
-    let component = match manifest.component() {
-        Some(component) => component.to_path_buf(),
-        None => {
-            return Err(
-                "manifest does not name a component; cannot enable without bytes"
-                    .to_owned(),
-            );
-        }
+    let Some(component_path) = manifest.component() else {
+        return Err("module record conflict (code RECORD_CONFLICT)".to_owned());
     };
     let authority = HostAuthority::parse(&[]).map_err(|failure| {
         format!("module installation rejected (code {})", failure.code())
@@ -227,7 +310,7 @@ pub(super) fn ensure_host<'a>(
     let mut pending_host = ModuleHost::new(
         manifest.package().abi().clone(),
         authority,
-        component,
+        component_path.to_path_buf(),
         workspace_root.to_path_buf(),
         ModuleHostBounds::default(),
     );
@@ -239,12 +322,13 @@ pub(super) fn ensure_host<'a>(
     }
     manifests.insert(id.to_owned(), manifest);
     hosts.insert(id.to_owned(), pending_host);
-    Ok(hosts.get_mut(id).expect("just inserted"))
+    Ok(ModuleEntity::Host(hosts.get_mut(id).expect("just inserted")))
 }
 
 pub(super) fn render_enable_module(
     workspace_root: &Path,
     hosts: &mut BTreeMap<String, ModuleHost>,
+    hostless: &mut BTreeMap<String, ModuleLifecycle>,
     manifests: &mut BTreeMap<String, ModuleManifest>,
     id: &str,
     profile_modules: Option<&[String]>,
@@ -263,12 +347,17 @@ pub(super) fn render_enable_module(
         return "Enable failed: module is outside the applied profile selection\n"
             .to_owned();
     }
-    let host = match ensure_host(workspace_root, &sanitized, hosts, manifests)
-    {
-        Ok(host) => host,
+    let mut entity = match ensure_entity(
+        workspace_root,
+        &sanitized,
+        hosts,
+        hostless,
+        manifests,
+    ) {
+        Ok(entity) => entity,
         Err(reason) => return format!("Enable failed: {reason}\n"),
     };
-    match host.enable() {
+    match entity.enable() {
         Ok(()) => format!("Enabled {sanitized}.\n"),
         Err(failure) => {
             format!(
@@ -283,6 +372,7 @@ pub(super) fn render_enable_module(
 pub(super) fn render_activate_module(
     _workspace_root: &Path,
     hosts: &mut BTreeMap<String, ModuleHost>,
+    hostless: &BTreeMap<String, ModuleLifecycle>,
     manifests: &mut BTreeMap<String, ModuleManifest>,
     id: &str,
     profile_modules: Option<&[String]>,
@@ -305,11 +395,23 @@ pub(super) fn render_activate_module(
             )
             .then_some(module_id.clone())
         })
+        .chain(hostless.iter().filter_map(|(module_id, lifecycle)| {
+            matches!(lifecycle.state(), LifecycleState::Enabled)
+                .then_some(module_id.clone())
+        }))
         .collect();
     let gate =
         decide_module_activation(&enabled_ids, profile_modules, &sanitized);
     if let Some(reason) = &gate.reason {
         return format!("Activate failed: {reason}\n");
+    }
+    // A spec-only module has no execution surface to bind (ADR 0036
+    // lean model): activation exists to grant model-visible authority
+    // over a live component, and `Enabled` already publishes its
+    // declared specs to the panels view.
+    if hostless.contains_key(&sanitized) {
+        return "Activate failed: manifest does not name a component; nothing to activate\n"
+            .to_owned();
     }
 
     let manifest = match manifests.get(&sanitized) {

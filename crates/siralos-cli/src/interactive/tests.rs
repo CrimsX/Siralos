@@ -5021,12 +5021,14 @@ fn render_add_module_conflict_leaves_existing_host_unchanged() {
         "godot".to_owned(),
         existing_host,
     )]);
+    let mut hostless = std::collections::BTreeMap::new();
     let mut manifests = std::collections::BTreeMap::new();
 
     let output = super::render_add_module(
         &root,
         "modules/godot",
         &mut hosts,
+        &mut hostless,
         &mut manifests,
     );
 
@@ -5098,6 +5100,7 @@ fn render_add_componentless_conflict_leaves_existing_state_unchanged() {
         "godot".to_owned(),
         existing_host,
     )]);
+    let mut hostless = std::collections::BTreeMap::new();
     let mut manifests = std::collections::BTreeMap::from([(
         "godot".to_owned(),
         existing_manifest.clone(),
@@ -5117,6 +5120,7 @@ fn render_add_componentless_conflict_leaves_existing_state_unchanged() {
         &root,
         relative_path,
         &mut hosts,
+        &mut hostless,
         &mut manifests,
     );
 
@@ -5152,6 +5156,7 @@ fn render_add_module_rejects_unsafe_sources_before_root_resolution() {
         .join(format!("siralos-cli-add-module-missing-{nonce}"));
     assert!(!missing_root.exists(), "fixture root must not exist");
     let mut hosts = std::collections::BTreeMap::new();
+    let mut hostless = std::collections::BTreeMap::new();
     let mut manifests = std::collections::BTreeMap::new();
 
     let observed = [
@@ -5169,6 +5174,7 @@ fn render_add_module_rejects_unsafe_sources_before_root_resolution() {
             &missing_root,
             source,
             &mut hosts,
+            &mut hostless,
             &mut manifests,
         );
         let valid = output.contains(&format!("(code {expected_code})"))
@@ -5261,11 +5267,13 @@ fn render_enable_module_refuses_digest_mismatch_without_enabling() {
     )
     .expect("persisted record");
     let mut hosts = std::collections::BTreeMap::new();
+    let mut hostless = std::collections::BTreeMap::new();
     let mut manifests = std::collections::BTreeMap::new();
 
     let output = super::render_enable_module(
         &root,
         &mut hosts,
+        &mut hostless,
         &mut manifests,
         "godot",
         None,
@@ -5309,11 +5317,13 @@ fn render_enable_module_rechecks_persisted_identity_for_an_existing_host() {
     )
     .expect("manifest");
     let mut hosts = std::collections::BTreeMap::new();
+    let mut hostless = std::collections::BTreeMap::new();
     let mut manifests = std::collections::BTreeMap::new();
     let added = super::render_add_module(
         &root,
         relative_path,
         &mut hosts,
+        &mut hostless,
         &mut manifests,
     );
     assert!(added.contains("Installed godot"), "{added}");
@@ -5345,6 +5355,7 @@ fn render_enable_module_rechecks_persisted_identity_for_an_existing_host() {
     let output = super::render_enable_module(
         &root,
         &mut hosts,
+        &mut hostless,
         &mut manifests,
         "godot",
         None,
@@ -5386,11 +5397,13 @@ fn render_enable_module_rejects_changed_component_bytes_for_existing_host() {
     )
     .expect("manifest");
     let mut hosts = std::collections::BTreeMap::new();
+    let mut hostless = std::collections::BTreeMap::new();
     let mut manifests = std::collections::BTreeMap::new();
     let added = super::render_add_module(
         &root,
         relative_path,
         &mut hosts,
+        &mut hostless,
         &mut manifests,
     );
     assert!(added.contains("Installed godot"), "{added}");
@@ -5413,6 +5426,7 @@ fn render_enable_module_rejects_changed_component_bytes_for_existing_host() {
     let output = super::render_enable_module(
         &root,
         &mut hosts,
+        &mut hostless,
         &mut manifests,
         "godot",
         None,
@@ -5439,6 +5453,431 @@ fn render_enable_module_rejects_changed_component_bytes_for_existing_host() {
     );
     assert_eq!(read(&record_path).expect("reread record"), original_record);
     let _ = remove_dir_all(root);
+}
+
+const SPEC_ONLY_MODULE_ID: &str = "deepseek-hours";
+const SPEC_ONLY_MODULE_RELATIVE: &str = "modules/deepseek-hours";
+
+fn spec_only_manifest_text(digest: &str) -> String {
+    format!(
+        "id = \"{SPEC_ONLY_MODULE_ID}\"\ndigest = \"{digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncapabilities = []\n\n[ui]\n[[ui.components]]\nid = \"deepseek-hours\"\ntitle = \"DeepSeek hours\"\nfeed = \"time.window\"\nplacement = \"tab\"\n\n[ui.components.params]\nwindows = \"01:00-04:00,06:00-10:00\"\ndays = \"mon-fri\"\n"
+    )
+}
+
+fn spec_only_record_text(digest: &str) -> String {
+    format!(
+        "[modules.{SPEC_ONLY_MODULE_ID}]\npath = \"{SPEC_ONLY_MODULE_RELATIVE}\"\ndigest = \"sha256:{digest}\"\n",
+    )
+}
+
+#[test]
+fn spec_only_module_enables_hostlessly_and_publishes_declared_specs() {
+    use crate::interactive::ui::ModuleUiSource;
+    use siralos_core::module::LifecycleState;
+
+    let root = temporary_directory("spec-only-enable");
+    let folder = spec_only_fixture(&root, "b");
+    let mut hosts = std::collections::BTreeMap::new();
+    let mut hostless = std::collections::BTreeMap::new();
+    let mut manifests = std::collections::BTreeMap::new();
+    let added = super::render_add_module(
+        &root,
+        SPEC_ONLY_MODULE_RELATIVE,
+        &mut hosts,
+        &mut hostless,
+        &mut manifests,
+    );
+    assert!(added.contains("Installed deepseek-hours"), "{added}");
+    assert!(hosts.is_empty() && hostless.is_empty());
+
+    let enabled = super::render_enable_module(
+        &root,
+        &mut hosts,
+        &mut hostless,
+        &mut manifests,
+        SPEC_ONLY_MODULE_ID,
+        None,
+    );
+    assert_eq!(enabled, "Enabled deepseek-hours.\n");
+    assert!(hosts.is_empty());
+    assert_eq!(
+        hostless.get(SPEC_ONLY_MODULE_ID).expect("hostless lifecycle").state(),
+        LifecycleState::Enabled,
+    );
+
+    let (state, grant) =
+        super::module_ui_state(SPEC_ONLY_MODULE_ID, &hosts, &hostless);
+    assert_eq!(state, LifecycleState::Enabled);
+    assert!(grant.is_none());
+    let sources: Vec<ModuleUiSource<'_, '_>> = manifests
+        .iter()
+        .map(|(id, manifest)| {
+            let (state, grant) = super::module_ui_state(id, &hosts, &hostless);
+            ModuleUiSource { id: id.clone(), manifest, state, grant }
+        })
+        .collect();
+    let specs = super::ui::module_ui_specs(&sources);
+    assert_eq!(specs.len(), 1);
+    assert_eq!(specs[0].0, SPEC_ONLY_MODULE_ID);
+    assert_eq!(specs[0].1.feed().as_str(), "time.window");
+    let _ = remove_dir_all(root);
+    let _ = folder;
+}
+
+#[test]
+fn spec_only_enable_follows_the_profile_selection_gate() {
+    use siralos_core::module::LifecycleState;
+
+    let root = temporary_directory("spec-only-profile-gate");
+    let _folder = spec_only_fixture(&root, "b");
+    let mut hosts = std::collections::BTreeMap::new();
+    let mut hostless = std::collections::BTreeMap::new();
+    let mut manifests = std::collections::BTreeMap::new();
+    let added = super::render_add_module(
+        &root,
+        SPEC_ONLY_MODULE_RELATIVE,
+        &mut hosts,
+        &mut hostless,
+        &mut manifests,
+    );
+    assert!(added.contains("Installed deepseek-hours"), "{added}");
+
+    let narrowed = super::render_enable_module(
+        &root,
+        &mut hosts,
+        &mut hostless,
+        &mut manifests,
+        SPEC_ONLY_MODULE_ID,
+        Some(&["godot".to_owned()]),
+    );
+    assert_eq!(
+        narrowed,
+        "Enable failed: module is outside the applied profile selection\n"
+    );
+    assert!(hostless.is_empty());
+
+    let selected = super::render_enable_module(
+        &root,
+        &mut hosts,
+        &mut hostless,
+        &mut manifests,
+        SPEC_ONLY_MODULE_ID,
+        Some(&[SPEC_ONLY_MODULE_ID.to_owned()]),
+    );
+    assert_eq!(selected, "Enabled deepseek-hours.\n");
+    assert_eq!(
+        hostless.get(SPEC_ONLY_MODULE_ID).expect("enabled lifecycle").state(),
+        LifecycleState::Enabled,
+    );
+    let _ = remove_dir_all(root);
+}
+
+#[test]
+fn spec_only_enable_rechecks_persisted_identity_before_enabling() {
+    let root = temporary_directory("spec-only-digest-mismatch");
+    let _folder = spec_only_fixture(&root, "b");
+    let record_digest = "a".repeat(64);
+    write(root.join("siralos.toml"), spec_only_record_text(&record_digest))
+        .expect("stale record");
+    let mut hosts = std::collections::BTreeMap::new();
+    let mut hostless = std::collections::BTreeMap::new();
+    let mut manifests = std::collections::BTreeMap::new();
+
+    let output = super::render_enable_module(
+        &root,
+        &mut hosts,
+        &mut hostless,
+        &mut manifests,
+        SPEC_ONLY_MODULE_ID,
+        None,
+    );
+    let generic = output.contains("(code RECORD_CONFLICT)")
+        && !output.contains(&record_digest)
+        && !output.contains(SPEC_ONLY_MODULE_RELATIVE)
+        && !output.contains(SPEC_ONLY_MODULE_ID);
+    assert!(
+        generic && hostless.is_empty() && hosts.is_empty(),
+        "mismatched record was not a generic no-enable refusal: {output:?}",
+    );
+    let _ = remove_dir_all(root);
+}
+
+#[test]
+fn changed_spec_only_manifest_conflicts_against_enabled_lifecycle() {
+    use siralos_core::module::LifecycleState;
+
+    let root = temporary_directory("spec-only-manifest-drift");
+    let folder = spec_only_fixture(&root, "b");
+    let mut hosts = std::collections::BTreeMap::new();
+    let mut hostless = std::collections::BTreeMap::new();
+    let mut manifests = std::collections::BTreeMap::new();
+    let added = super::render_add_module(
+        &root,
+        SPEC_ONLY_MODULE_RELATIVE,
+        &mut hosts,
+        &mut hostless,
+        &mut manifests,
+    );
+    assert!(added.contains("Installed deepseek-hours"), "{added}");
+    let enabled = super::render_enable_module(
+        &root,
+        &mut hosts,
+        &mut hostless,
+        &mut manifests,
+        SPEC_ONLY_MODULE_ID,
+        None,
+    );
+    assert_eq!(enabled, "Enabled deepseek-hours.\n");
+    let installed_package = hostless
+        .get(SPEC_ONLY_MODULE_ID)
+        .expect("lifecycle")
+        .installed_package()
+        .cloned()
+        .expect("installed package");
+    let installed_manifest = manifests
+        .get(SPEC_ONLY_MODULE_ID)
+        .cloned()
+        .expect("install-time manifest");
+
+    let replacement_digest = "c".repeat(64);
+    write(
+        folder.join("module-manifest.toml"),
+        spec_only_manifest_text(&replacement_digest),
+    )
+    .expect("replacement manifest");
+    write(
+        root.join("siralos.toml"),
+        spec_only_record_text(&replacement_digest),
+    )
+    .expect("replacement record");
+
+    let output = super::render_enable_module(
+        &root,
+        &mut hosts,
+        &mut hostless,
+        &mut manifests,
+        SPEC_ONLY_MODULE_ID,
+        None,
+    );
+    let generic = output.contains("(code RECORD_CONFLICT)")
+        && !output.contains(&replacement_digest)
+        && !output.contains(SPEC_ONLY_MODULE_ID);
+    let lifecycle =
+        hostless.get(SPEC_ONLY_MODULE_ID).expect("existing lifecycle");
+    assert!(
+        generic
+            && lifecycle.state() == LifecycleState::Enabled
+            && lifecycle.installed_package() == Some(&installed_package),
+        "drifted manifest was not a generic no-enable refusal: {output:?}",
+    );
+    assert_eq!(manifests.get(SPEC_ONLY_MODULE_ID), Some(&installed_manifest));
+    let _ = remove_dir_all(root);
+}
+
+#[test]
+fn activate_refuses_spec_only_module_with_typed_message() {
+    use siralos_core::module::LifecycleState;
+
+    let root = temporary_directory("spec-only-activate-refusal");
+    let _folder = spec_only_fixture(&root, "b");
+    let mut hosts = std::collections::BTreeMap::new();
+    let mut hostless = std::collections::BTreeMap::new();
+    let mut manifests = std::collections::BTreeMap::new();
+    let added = super::render_add_module(
+        &root,
+        SPEC_ONLY_MODULE_RELATIVE,
+        &mut hosts,
+        &mut hostless,
+        &mut manifests,
+    );
+    assert!(added.contains("Installed deepseek-hours"), "{added}");
+    let enabled = super::render_enable_module(
+        &root,
+        &mut hosts,
+        &mut hostless,
+        &mut manifests,
+        SPEC_ONLY_MODULE_ID,
+        None,
+    );
+    assert_eq!(enabled, "Enabled deepseek-hours.\n");
+
+    let refusal = super::render_activate_module(
+        &root,
+        &mut hosts,
+        &hostless,
+        &mut manifests,
+        SPEC_ONLY_MODULE_ID,
+        None,
+    );
+    assert_eq!(
+        refusal,
+        "Activate failed: manifest does not name a component; nothing to activate\n"
+    );
+    assert_eq!(
+        hostless.get(SPEC_ONLY_MODULE_ID).expect("lifecycle").state(),
+        LifecycleState::Enabled,
+    );
+
+    let before_enable = super::render_activate_module(
+        &root,
+        &mut hosts,
+        &std::collections::BTreeMap::new(),
+        &mut manifests,
+        SPEC_ONLY_MODULE_ID,
+        None,
+    );
+    assert!(
+        before_enable.contains("Activate failed: ")
+            && !before_enable.contains("nothing to activate"),
+        "disabled activation must take the ordinary gate: {before_enable:?}",
+    );
+    let _ = remove_dir_all(root);
+}
+
+#[test]
+fn render_add_module_refuses_component_manifest_over_hostless_slot() {
+    use siralos_core::module::{
+        LifecycleState, ModuleLifecycle, ModulePackage,
+    };
+
+    let root = temporary_directory("add-mirrored-kind-conflict");
+    let relative = "modules/private-module-marker";
+    let folder = root.join(relative);
+    create_dir_all(&folder).expect("module folder");
+    let digest = "b".repeat(64);
+    let package = ModulePackage::parse(
+        "godot",
+        &digest,
+        "siralos:domain-abi@1.0.0",
+        &[],
+    )
+    .expect("existing package");
+    let mut hostless =
+        std::collections::BTreeMap::from([("godot".to_owned(), {
+            let mut lifecycle = ModuleLifecycle::new();
+            lifecycle.install(package.clone()).expect("install");
+            lifecycle
+        })]);
+    let mut hosts = std::collections::BTreeMap::new();
+    let mut manifests = std::collections::BTreeMap::new();
+
+    let component_bytes = b"component bytes for the mirrored refusal";
+    let component_digest = siralos_core::identity::sha256_hex(component_bytes);
+    write(folder.join("godot.component.wasm"), component_bytes)
+        .expect("component");
+    write(
+        folder.join("module-manifest.toml"),
+        format!(
+            "id = \"godot\"\ndigest = \"{component_digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncomponent = \"godot.component.wasm\"\n",
+        ),
+    )
+    .expect("componentful manifest");
+    write(
+        root.join("siralos.toml"),
+        format!(
+            "[modules.godot]\npath = \"{relative}\"\ndigest = \"sha256:{component_digest}\"\n",
+        ),
+    )
+    .expect("matching record");
+
+    let output = super::render_add_module(
+        &root,
+        relative,
+        &mut hosts,
+        &mut hostless,
+        &mut manifests,
+    );
+    let generic = output.contains("(code RECORD_CONFLICT)")
+        && !output.contains("godot")
+        && !output.contains(SPEC_ONLY_MODULE_RELATIVE)
+        && !output.contains(&component_digest);
+    let lifecycle = hostless.get("godot").expect("hostless slot unchanged");
+    assert!(
+        generic
+            && lifecycle.state() == LifecycleState::Installed
+            && lifecycle.installed_package() == Some(&package),
+        "component-over-hostless add was not refused: {output:?}",
+    );
+    assert!(hosts.is_empty() && manifests.is_empty());
+    let _ = remove_dir_all(root);
+}
+
+#[test]
+fn spec_only_enable_reports_already_enabled_state() {
+    use siralos_core::module::LifecycleState;
+
+    let root = temporary_directory("spec-only-already-enabled");
+    let _folder = spec_only_fixture(&root, "b");
+    let mut hosts = std::collections::BTreeMap::new();
+    let mut hostless = std::collections::BTreeMap::new();
+    let mut manifests = std::collections::BTreeMap::new();
+    let added = super::render_add_module(
+        &root,
+        SPEC_ONLY_MODULE_RELATIVE,
+        &mut hosts,
+        &mut hostless,
+        &mut manifests,
+    );
+    assert!(added.contains("Installed deepseek-hours"), "{added}");
+    let first = super::render_enable_module(
+        &root,
+        &mut hosts,
+        &mut hostless,
+        &mut manifests,
+        SPEC_ONLY_MODULE_ID,
+        None,
+    );
+    assert_eq!(first, "Enabled deepseek-hours.\n");
+
+    let second = super::render_enable_module(
+        &root,
+        &mut hosts,
+        &mut hostless,
+        &mut manifests,
+        SPEC_ONLY_MODULE_ID,
+        None,
+    );
+    assert!(second.contains("(code ALREADY_ENABLED)"), "{second:?}");
+    assert_eq!(
+        hostless.get(SPEC_ONLY_MODULE_ID).expect("lifecycle").state(),
+        LifecycleState::Enabled,
+    );
+    let _ = remove_dir_all(root);
+}
+
+#[test]
+fn stdio_flow_enables_a_spec_only_module_end_to_end() {
+    let root = temporary_directory("spec-only-stdio-flow");
+    let _folder = spec_only_fixture(&root, "b");
+
+    let output = run(
+        format!(
+            "/modules-add {SPEC_ONLY_MODULE_RELATIVE}\n/modules-enable {SPEC_ONLY_MODULE_ID}\n/modules-activate {SPEC_ONLY_MODULE_ID}\n/exit\n",
+        )
+        .as_str(),
+        &root,
+        None,
+    );
+    assert!(output.contains("Installed deepseek-hours"), "{output}");
+    assert!(output.contains("Enabled deepseek-hours."), "{output}");
+    assert!(
+        output
+            .contains("Activate failed: manifest does not name a component; nothing to activate"),
+        "activate refusal missing: {output}",
+    );
+    let _ = remove_dir_all(root);
+}
+
+fn spec_only_fixture(root: &Path, digest_byte: &str) -> std::path::PathBuf {
+    let folder = root.join(SPEC_ONLY_MODULE_RELATIVE);
+    create_dir_all(&folder).expect("spec-only module folder");
+    let digest = digest_byte.repeat(64);
+    write(
+        folder.join("module-manifest.toml"),
+        spec_only_manifest_text(&digest),
+    )
+    .expect("spec-only manifest");
+    folder
 }
 
 #[test]
@@ -5730,6 +6169,8 @@ fn dispatch_prompt(
 ) -> bool {
     use std::collections::BTreeMap;
     let mut hosts: BTreeMap<String, super::ModuleHost> = BTreeMap::new();
+    let mut hostless: BTreeMap<String, super::ModuleLifecycle> =
+        BTreeMap::new();
     let mut manifests: BTreeMap<String, super::ModuleManifest> =
         BTreeMap::new();
     let mut applied_model = None;
@@ -5753,6 +6194,7 @@ fn dispatch_prompt(
         writer,
         reader,
         &mut hosts,
+        &mut hostless,
         &mut manifests,
         None,
         None,

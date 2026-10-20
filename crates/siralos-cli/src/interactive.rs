@@ -55,9 +55,11 @@ use siralos_core::composition::{
 };
 use siralos_core::context::ContextPolicy;
 use siralos_core::determinism::RetainingReplayRecorder;
+use siralos_core::module::CapabilityGrant;
 use siralos_core::module::capability::HostAuthority;
+use siralos_core::module::failure::ModuleFailure;
 use siralos_core::module::lifecycle::{
-    ActivationRequest, LifecycleState, RuntimeCheckResult,
+    ActivationRequest, LifecycleState, ModuleLifecycle, RuntimeCheckResult,
 };
 use siralos_core::projection::{
     ProjectionService,
@@ -161,6 +163,7 @@ pub use model::InteractiveError;
 pub use model::InteractiveOptions;
 use model::SIRALOS_SYSTEM_INSTRUCTIONS;
 use model::SessionProvider;
+use modules::module_ui_state;
 use modules::render_activate_module;
 use modules::render_add_module;
 use modules::render_enable_module;

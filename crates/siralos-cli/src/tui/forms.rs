@@ -659,7 +659,7 @@ impl ProviderAddForm {
 // T1 composition note (updated T4): `run_interactive_session` blocks on
 // `BufRead::read_line`, which would starve the `crossterm::event::poll` pump,
 // so the live TUI loop duplicates the dispatch calling the SAME underlying seam
-// functions (sanitizer, `ensure_host`, command dispatch, `drain_events` with the
+// functions (sanitizer, `ensure_entity`, command dispatch, `drain_events` with the
 // `TuiSink`). T2 consolidated the approval surface (`evaluate_approval_input` /
 // `ApprovalModal::new` / `modal_key_decision` + the `interactive.rs` shims);
 // T3 consolidated the audit/pane gating (the single shared helper
