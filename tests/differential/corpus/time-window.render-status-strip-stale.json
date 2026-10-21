@@ -1,0 +1,31 @@
+{
+  "env": {},
+  "id": "time-window.render-status-strip-stale",
+  "input": {
+    "authority": [],
+    "calls": [
+      {
+        "now_utc_ms": 1792462980000,
+        "op": "strip",
+        "stale_ms": 121000
+      },
+      {
+        "op": "merge"
+      }
+    ],
+    "files": [],
+    "fingerprint": "fixture-ui-components-time-window-render-status-strip-stale",
+    "modules": [
+      {
+        "folder": "mod",
+        "manifest": "id = \"deepseek\"\ndigest = \"9999999999999999999999999999999999999999999999999999999999999999\"\nabi = \"siralos:domain-abi@1.0.0\"\ncapabilities = []\n[ui]\n[[ui.components]]\nid = \"deepseek-hours\"\ntitle = \"DeepSeek hours\"\nfeed = \"time.window\"\nplacement = \"status\"\nmax_rows = 20\nmax_cols = 60\nparams = { windows = \"01:00-04:00,06:00-10:00\", days = \"mon-fri\", label = \"DeepSeek peak\" }\n",
+        "state": "enabled"
+      }
+    ],
+    "uiDocument": null,
+    "verifyPaths": []
+  },
+  "parity": "required",
+  "platforms": ["*"],
+  "subject": "ui-components"
+}

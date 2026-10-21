@@ -1,6 +1,6 @@
 {
-  "corpusVersion": 91,
-  "entriesSha256": "c8e80e012171ff5fd82c787f8b6f2aa61db5f0da713336c8975da440d8c51a2a",
+  "corpusVersion": 92,
+  "entriesSha256": "c4251c16532dff57a9ec166ee69f632bc1667363da63f7eb81c3b4e371da7622",
   "schemaVersion": 1,
   "supersessions": [
     {
@@ -658,7 +658,7 @@
         "subject": "user-config"
       },
       "scenarioId": "user-config-matrix",
-      "supersededIn": 91
+      "supersededIn": 92
     },
     {
       "decision": "Supersede the frozen command-catalog-snapshot record with the candidate-authored modules-vocabulary record. Recorded 2026-10-10 during the modules reconsolidation (ADR 0037).",
@@ -1011,7 +1011,7 @@
         "subject": "command-catalog"
       },
       "scenarioId": "command-catalog-snapshot",
-      "supersededIn": 91
+      "supersededIn": 92
     },
     {
       "decision": "Supersede the frozen cli-session-set record with the candidate-authored modules-vocabulary record. Recorded 2026-10-10 during the modules reconsolidation (ADR 0037).",
@@ -1424,7 +1424,7 @@
         "subject": "cli-session"
       },
       "scenarioId": "cli-session-set",
-      "supersededIn": 91
+      "supersededIn": 92
     }
   ]
 }

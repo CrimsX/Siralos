@@ -557,6 +557,7 @@ const UI_COMPONENT_OPS = new Set([
   "list",
   "write",
   "render",
+  "strip",
   "merge",
 ]);
 const UI_COMPONENT_STATUSES = new Set(["ok", "refused"]);
@@ -659,6 +660,19 @@ function validateUiComponentsResult(record, label) {
       assertExactKeys(entry, ["op", "text"], entryLabel);
       if (typeof entry.text !== "string") {
         throw new Error(`${entryLabel}.text must be a string`);
+      }
+      continue;
+    }
+    if (entry.op === "strip") {
+      assertExactKeys(entry, ["marker", "op", "text", "width"], entryLabel);
+      if (typeof entry.text !== "string" && entry.text !== null) {
+        throw new Error(`${entryLabel}.text must be a string or null`);
+      }
+      if (typeof entry.marker !== "string" && entry.marker !== null) {
+        throw new Error(`${entryLabel}.marker must be a string or null`);
+      }
+      if (!Number.isSafeInteger(entry.width) || entry.width <= 0) {
+        throw new Error(`${entryLabel}.width is invalid`);
       }
       continue;
     }

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "corpusVersion": 91,
-  "corpusSha256": "b971050d70c8783e49b7e7817f64edc59fddfda216135a145fb1594be442427d",
+  "corpusVersion": 92,
+  "corpusSha256": "e05c85aef5ec14ef88e87be203fdfa0b385fa22b0ff85fc3d9dd634a801f74d0",
   "scenarios": [
     {
       "file": "capability-doctor-injected.json",
@@ -1134,6 +1134,14 @@
     {
       "file": "time-window.render-no-clock.json",
       "sha256": "60f39631652a34d49d13a775e201ee0d0700066cb549df6345500e1714669a5a"
+    },
+    {
+      "file": "time-window.render-status-strip-stale.json",
+      "sha256": "9bb336f87327d1ee04bd407d1c185f3f645eaf14f413ed7ec83b37d58538b3f2"
+    },
+    {
+      "file": "time-window.render-status-strip.json",
+      "sha256": "3aeb8425806b5bd7a748ab913b52fdd7d73982533b9fcff6d483fd3ef8438b19"
     },
     {
       "file": "tool-loop.assistant-text-with-tools.json",

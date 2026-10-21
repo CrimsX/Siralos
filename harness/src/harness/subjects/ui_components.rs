@@ -582,6 +582,123 @@ fn merge_op(
     }))
 }
 
+/// Run one `strip` op: merge, project with live feed content, and
+/// compose the always-visible status strip text through the
+/// PRODUCTION composer (`compose_status_strip_text`), with the
+/// scenario-supplied staleness driving the honest marker.
+/// Assembly mirrors the session `panels_report` bundle exactly like
+/// `render_op`, but nothing is drawn: the record pins the composed
+/// text pieces only.
+fn strip_op(
+    root: &std::path::Path,
+    modules: &[(
+        String,
+        siralos_adapters::module::manifest::ModuleManifest,
+        siralos_core::module::lifecycle::LifecycleState,
+    )],
+    entry: &Value,
+) -> Result<Value, HarnessError> {
+    use siralos_cli::interactive::ui::{
+        UiFeedInputs, load_feed_module_records, resolve_spec_content,
+    };
+    use siralos_cli::tui::{compose_status_strip_text, status_stale_marker};
+    use siralos_core::tool::PermissionPolicy;
+    use siralos_core::tool::registry::RegisteredToolInfo;
+    use siralos_core::ui::{UiRegistry, project_components};
+    let width = match entry.get("width") {
+        None => UI_VIEWPORT_WIDTH,
+        Some(Value::Number(number)) => {
+            let raw = number.as_u64().ok_or_else(|| {
+                HarnessError::corpus(
+                    "ui-components strip width must be a non-negative integer"
+                        .to_owned(),
+                )
+            })?;
+            u16::try_from(raw).map_err(|_| {
+                HarnessError::corpus(
+                    "ui-components strip width must fit u16".to_owned(),
+                )
+            })?
+        }
+        Some(_) => {
+            return Err(HarnessError::corpus(
+                "ui-components strip width must be an integer".to_owned(),
+            ));
+        }
+    };
+    let stale_marker = match entry.get("stale_ms") {
+        None => None,
+        Some(Value::Number(number)) => {
+            let raw = number.as_u64().ok_or_else(|| {
+                HarnessError::corpus(
+                    "ui-components strip stale_ms must be a non-negative integer"
+                        .to_owned(),
+                )
+            })?;
+            status_stale_marker(std::time::Duration::from_millis(raw))
+        }
+        Some(_) => {
+            return Err(HarnessError::corpus(
+                "ui-components strip stale_ms must be an integer".to_owned(),
+            ));
+        }
+    };
+    let merged = merged_specs(root, modules)?;
+    let mut registry = UiRegistry::new();
+    for item in &merged {
+        if !item.spec.enabled() {
+            continue;
+        }
+        if registry.insert(item.spec.clone()).is_err() {
+            continue;
+        }
+    }
+    let policy = PermissionPolicy::default();
+    let tools: Vec<RegisteredToolInfo> = Vec::new();
+    let records = load_feed_module_records(root);
+    let now_utc_ms = match entry.get("now_utc_ms") {
+        None => None,
+        Some(Value::Number(number)) => Some(number.as_u64().ok_or_else(
+            || {
+                HarnessError::corpus(
+                    "ui-components strip now_utc_ms must be a non-negative integer"
+                        .to_owned(),
+                )
+            },
+        )?),
+        Some(_) => {
+            return Err(HarnessError::corpus(
+                "ui-components strip now_utc_ms must be an integer"
+                    .to_owned(),
+            ));
+        }
+    };
+    let inputs = UiFeedInputs {
+        root,
+        tools: &tools,
+        policy: &policy,
+        modules: &records,
+        last_projection: None,
+        checkpoint_state_dir: None,
+        now_utc_ms,
+    };
+    let projection = project_components(&registry, |spec| {
+        resolve_spec_content(&inputs, spec).unwrap_or_default()
+    });
+    let panels = siralos_cli::tui::UiPanels { projection, selected: 0 };
+    let text = compose_status_strip_text(
+        Some(&panels),
+        width,
+        stale_marker.as_deref(),
+    );
+    Ok(json!({
+        "op": "strip",
+        "width": width,
+        "marker": stale_marker,
+        "text": text,
+    }))
+}
+
 /// Run one ui-components scenario: fixture files plus the UI
 /// document and module manifests, ops in order, verified file
 /// identities.
@@ -602,6 +719,7 @@ pub(in crate::harness) fn ui_components_record(
                 "list" => list_op(root)?,
                 "write" => write_op(scenario_id, root, entry)?,
                 "render" => render_op(root, &modules, entry)?,
+                "strip" => strip_op(root, &modules, entry)?,
                 "merge" => merge_op(root, &modules)?,
                 other => {
                     return Err(HarnessError::corpus(format!(
