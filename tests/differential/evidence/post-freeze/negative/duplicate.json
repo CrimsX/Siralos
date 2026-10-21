@@ -1,6 +1,6 @@
 {
-  "corpusVersion": 91,
-  "entriesSha256": "507d510640d02170919e49b5fc8709d9e7faf94c4c459a2aacf87774640d03ff",
+  "corpusVersion": 92,
+  "entriesSha256": "26ca2ad2c351db0f1c0fd2b2b586ecfa288c1f897a4df5c1e4112858b23fcc64",
   "schemaVersion": 1,
   "supersessions": [
     {
@@ -16,7 +16,7 @@
         "subject": "version-identity"
       },
       "scenarioId": "version.identity",
-      "supersededIn": 91
+      "supersededIn": 92
     },
     {
       "decision": "1.0 release: workspace version identity",
@@ -31,7 +31,7 @@
         "subject": "version-identity"
       },
       "scenarioId": "version.identity",
-      "supersededIn": 91
+      "supersededIn": 92
     }
   ]
 }

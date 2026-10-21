@@ -1,6 +1,6 @@
 {
-  "corpusVersion": 91,
-  "entriesSha256": "e8da4a1c48ec510e307622332bb3785c642d8db53cd9825e0bbebc10dcf53ec6",
+  "corpusVersion": 92,
+  "entriesSha256": "9a3991516ff1c4d66f04b3db450c857db1f1ef749a96ef312128183a25bb646a",
   "schemaVersion": 1,
   "supersessions": [
     {
@@ -16,7 +16,7 @@
         "subject": "version-identity"
       },
       "scenarioId": "does.not.exist",
-      "supersededIn": 91
+      "supersededIn": 92
     }
   ]
 }

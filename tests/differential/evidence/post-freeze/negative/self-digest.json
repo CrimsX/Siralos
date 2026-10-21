@@ -1,5 +1,5 @@
 {
-  "corpusVersion": 91,
+  "corpusVersion": 92,
   "entriesSha256": "0000000000000000000000000000000000000000000000000000000000000000",
   "schemaVersion": 1,
   "supersessions": [
@@ -16,7 +16,7 @@
         "subject": "version-identity"
       },
       "scenarioId": "version.identity",
-      "supersededIn": 91
+      "supersededIn": 92
     }
   ]
 }
