@@ -192,3 +192,56 @@ as a genuine digest/path mismatch. `read_persisted_identity` now says
 RECORD_NOT_FOUND)` when the id is absent from the loaded records;
 misplaced or changed records keep the conflict wording. Pinned by
 `render_enable_module_says_missing_record_instead_of_conflict`.
+
+## 6. Amendment 2026-10-20 — the status strip placement (owner follow-up)
+
+The owner then hit the next frontier behind §2: a panel only exists as a
+tab inside the F2 view, so the clock is invisible until someone opens the
+panels view. The owner directed the third placement: `status` — a
+component declared with `placement = "status"` always composes a line in a
+new bottom strip row of the main transcript view. No toggle exists; the
+row's content is host-composed from worker-staged panel snapshots (each
+slot renders `<title>: <feed lines joined by " · ">` in registration
+order, disabled and content-empty slots skipped, zero-height row with
+byte-identical idle frames when nothing resolves). Refresh is a host tick
+— staging stamps the time, a bounded 60 s tick re-requests the panel
+report while the strip is visible and no turn is busy — and aging is
+honest: a staged snapshot ≥75 s old truncates content to reserve marker
+room and appends `staged {N}m ago` in a dimmed accent instead of
+presenting stale data as current. The registry's replace-by-id semantics
+are unchanged, so a manifest that wants the same feed as a panel and as a
+strip line declares two ids; the owner's `deepseek-hours` artifact gains
+the second component (`deepseek-hours-strip`, same windows, `placement =
+"status"`).
+
+Corpus v92 codified it: two `time-window.*` strip scenarios (fresh and
+stale-marker) and the refreshed `spec-bad-placement` refusal message
+(`component placement must be \`tab\`, \`cell:<row>,<col>\`, or
+\`status\``) joined as candidate-authored expectation records (151
+total); manifest regenerated (digest
+`e05c85aef5ec14ef88e87be203fdfa0b385fa22b0ff85fc3d9dd634a801f74d0`),
+`CORPUS_VERSION`moved to 92 in`contract.mjs`and`harness.rs`, both
+evidence lists re-stamped with recomputed entry digests, and all
+stamped negative guards re-stamped in step (the deliberate wrong-version
+and stale-digest fixtures untouched). Parity held 351/351 applicable
+required (4 explicit platform skips, 0 accepted deviations); supersession
+guards held 8 + 8; the record contract's op validator gained the
+`strip` op shape (`{op, width, marker, text}`). `oracle.json` stays
+byte-identical.
+
+Evidence: the placement grammar round-trip and refusal-message pin in
+`spec.rs` (`placement_parses_tabs_cells_and_status_only`,
+`refusal_messages_are_stable`), the projection arm
+(`status_slots_keep_registration_order_and_skip_disabled`), and eight new
+CLI tests — `status_tick_stages_when_due_and_holds_when_fresh`,
+`status_tick_holds_while_a_turn_is_busy`,
+`status_stale_marker_follows_the_grace`,
+`status_strip_text_composes_slots_and_skips_empty`,
+`status_strip_text_truncates_and_reserves_marker_room`
+(width 30 / budget 30 − 3 − 13 = 14 → `"clock title: w"`),
+`status_strip_line_stylizes_the_marker_dim`,
+`status_tick_due_bounds_follow_the_refresh_period`,
+`strip_row_claims_space_only_with_content` (no-pin idle frame stays
+byte-identical). Workspace green (core 683, adapters 534,
+differential 28, cli 440), `check-supersessions` exit 0, differential
+audit exit 0.

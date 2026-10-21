@@ -52,7 +52,7 @@ id = "recent-files"                # 1..=64, [a-z0-9_-]
 title = "Recent files"             # 1..=128 chars, sanitized at render
 feed = "workspace.list"            # closed enum, §2
 enabled = true                     # default true (§5: the enable switch)
-placement = "cell:0,1"             # "tab" | "cell:<0|1>,<0|1>"
+placement = "cell:0,1"             # "tab" | "cell:<0|1>,<0|1>" | "status"
 max_rows = 20                      # 1..=99 size hints
 max_cols = 60                      # 1..=99
 
@@ -70,6 +70,15 @@ at parse (owned `String`s, no borrows into input buffers).
 components: writing a same-id user spec (the §5 override) with
 `enabled = true` enables it, `enabled = false` disables it.
 User-authored specs default to enabled.
+
+`placement = "status"` (owner-directed, 2026-10-20): the third
+placement in the same closed grammar. A status-placed spec shares
+no occupancy with `tab`/`cell` slots; the registry's
+replace-by-id semantics are unchanged, so a manifest that wants
+the same feed both as a panel and as a strip line declares two
+ids — one per form. Status-placed specs never render in the
+panels view: they project instead as strip slot lines composed by
+the Host (§6).
 
 ## 2. Feeds map to existing authority classes — no new authority
 
@@ -198,21 +207,45 @@ a component cannot render content outside the sanitizer
 (adversarial-pinned); truncation markers are host text, never
 feed text.
 
+**Status strip (owner-directed, 2026-10-20).** The main
+transcript view gains an always-on bottom strip row rendering
+every enabled `placement = "status"` component. The row is
+host-composed from the projection's `status_strip` slots —
+worker-staged panel snapshots, not live projection reads — with
+three mechanical properties:
+
+- **Composition is injective text.** Each slot renders
+  `<title>: <feed lines joined by " · ">`, slots compose in
+  registration order, disabled and content-empty slots are
+  skipped, and the strip renders nothing at all (zero-height row,
+  byte-identical idle frames) when no slot resolves — so panels
+  view pins and existing transcript pins do not move.
+- **Refreshing and aging are host-owned.** Staging a snapshot
+  stamps the staging time; a bounded 60 s tick re-requests the
+  panel report only while the strip is visible and no turn is
+  busy. Once a staged snapshot is ≥75 s old the strip truncates
+  its content to reserve marker room and appends `staged {N}m
+ago` in a dimmed accent instead of presenting stale data as
+  current. The model never controls strip refresh; there is no
+  toggle.
+
 ## 7. Corpus amendment plan (v85 → v86)
 
-Executed at v85 (the ui-components subjects) and again at v91 with
-the `time.window` amendment (§2): new `ui-components.*` subjects —
-for v91, four `time-window.*` render scenarios (peak schedule, day
-horizon, holidays, no wall clock) with candidate-authored
-expectation records; manifest regenerated; `CORPUS_VERSION` and the
-strict-loader version moved together; the supersession/retirement
-stamps moved to the new version with recomputed entry digests;
-negative-guard fixtures untouched (their mismatch stamps still
-refuse against any other version); every amendment printed in the
-audit, never silently edited. `oracle.json` stays byte-identical
-(`sha256 9f5f7861903b…`). Addition-only is expected (no pinned
-record echoes manifest keys or the slash catalog); any deviation
-retires + adds per the once-only wall, never edits.
+Executed at v85 (the ui-components subjects), at v91 with the
+`time.window` amendment (§2), and at v92 with the status strip
+(owner-directed, 2026-10-20): two `time-window.*` strip scenarios
+(fresh and stale-marker) and the refreshed `spec-bad-placement`
+refusal message joined as candidate-authored expectation records
+— new subjects, manifest regenerated, `CORPUS_VERSION` moved
+together in the contract and the runner — plus the v92 re-stamp
+of both evidence lists and the negative-guard fixtures that carry
+version stamps (the deliberate wrong-version and
+stale-digest fixtures untouched). The older mechanics are
+unchanged: candidate-authored records with printed audit
+disclosure, `oracle.json` byte-identical
+(`sha256 9f5f7861903b…`), addition-only edits (no pinned record
+echoes manifest keys or the slash catalog), and any deviation
+retires + adds per the once-only wall, never silently edited.
 
 ## 8. Lean guardrails (unchanged)
 

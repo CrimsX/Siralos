@@ -14,6 +14,22 @@ and the number does not change any of it.
 
 ### Added
 
+- **The `status` component placement and the always-on strip row**
+  (owner-directed, 2026-10-20,
+  [decision 182 §6](docs/wayfinder/decisions/182-time-window-feed-module.md),
+  [ADR 0039 §1/§6](docs/adr/0039-modular-terminal-ui-components.md)).
+  A component declared with `placement = "status"` (the third and last
+  value of the closed placement grammar) composes a line in a new bottom
+  strip row of the main transcript view: no toggle, no model control —
+  the row is host-composed from worker-staged panel snapshots, refreshed
+  by a bounded 60 s host tick, and it appends a dimmed `staged {N}m ago`
+  marker instead of presenting a ≥75 s old snapshot as current. The row
+  renders nothing at all when no slot resolves, so untouched baseline
+  frames stay byte-identical. The corpus moved to v92 with two new
+  `time-window` strip subjects and a refreshed placement-refusal record;
+  supersession and retirement evidence is re-stamped and printed in the
+  audit; the frozen oracle bundle is byte-identical.
+
 - **The `time.window` module feed** (owner-directed, 2026-10-19,
   [decision 182](docs/wayfinder/decisions/182-time-window-feed-module.md),
   [ADR 0039 §2](docs/adr/0039-modular-terminal-ui-components.md)).
