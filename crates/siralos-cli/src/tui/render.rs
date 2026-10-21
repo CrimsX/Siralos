@@ -5,10 +5,11 @@ use super::{
     Block, BorderType, Borders, Buffer, CONTEXT_PANE_WIDTH, Color, Constraint,
     ContextPaneData, Direction, Frame, Layout, Line, Paragraph,
     ProviderAddField, ProviderAddForm, Rect, Span, Style, Text,
-    TranscriptEntry, TuiState, Widget, compose_bottom_row, context_pane_lines,
-    display_width, model_picker_lines, redacted_form_credential,
-    safe_form_endpoint_edit, safe_form_endpoint_for_credential,
-    safe_form_message, safe_form_message_for_credential, safe_model_id,
+    TranscriptEntry, TuiState, Widget, compose_bottom_row,
+    compose_status_strip, context_pane_lines, display_width,
+    model_picker_lines, redacted_form_credential, safe_form_endpoint_edit,
+    safe_form_endpoint_for_credential, safe_form_message,
+    safe_form_message_for_credential, safe_model_id, status_stale_marker,
     working_line, wrap_line_to_width,
 };
 
@@ -231,45 +232,69 @@ pub fn draw_with_pane(
     // The turn timer IS the busy signal now that the bottom bar no longer
     // carries a `working` word.
     let busy_rows = u16::from(state.busy_since.is_some());
-    let (transcript_area, busy_area, input_area, status_area, pane_area) =
-        match pane {
-            None => {
-                // I5 OFF: transcript spans full width, no gap (Min(0) fill)
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Min(0),
-                        Constraint::Length(busy_rows),
-                        Constraint::Length(1),
-                        Constraint::Length(1),
-                    ])
-                    .split(area);
-                (chunks[0], chunks[1], chunks[2], chunks[3], None)
-            }
-            Some(_) => {
-                // I5 ON: transcript Min(0) + pane Length(40) fills width, no gap
-                let outer = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([Constraint::Min(0), Constraint::Length(1)])
-                    .split(area);
-                let cols = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([
-                        Constraint::Min(0),
-                        Constraint::Length(CONTEXT_PANE_WIDTH),
-                    ])
-                    .split(outer[0]);
-                let rows = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Min(0),
-                        Constraint::Length(busy_rows),
-                        Constraint::Length(1),
-                    ])
-                    .split(cols[0]);
-                (rows[0], rows[1], rows[2], outer[1], Some(cols[1]))
-            }
-        };
+    // The status strip (ADR 0039 amendment 2026-10-20): one optional
+    // row of always-visible component content between the input and
+    // the metrics row. Owned ONLY while staged content exists, so
+    // idle frames stay byte-identical to the pinned ones.
+    let strip_marker = state
+        .staged_panels_at
+        .and_then(|staged| status_stale_marker(staged.elapsed()));
+    let strip = compose_status_strip(
+        state.panels.as_ref(),
+        area.width,
+        strip_marker.as_deref(),
+    );
+    let strip_rows = u16::from(strip.is_some());
+    let (
+        transcript_area,
+        busy_area,
+        input_area,
+        strip_area,
+        status_area,
+        pane_area,
+    ) = match pane {
+        None => {
+            // I5 OFF: transcript spans full width, no gap (Min(0) fill)
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(0),
+                    Constraint::Length(busy_rows),
+                    Constraint::Length(1),
+                    Constraint::Length(strip_rows),
+                    Constraint::Length(1),
+                ])
+                .split(area);
+            (chunks[0], chunks[1], chunks[2], chunks[3], chunks[4], None)
+        }
+        Some(_) => {
+            // I5 ON: transcript Min(0) + pane Length(40) fills width, no gap
+            let outer = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(0),
+                    Constraint::Length(strip_rows),
+                    Constraint::Length(1),
+                ])
+                .split(area);
+            let cols = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Min(0),
+                    Constraint::Length(CONTEXT_PANE_WIDTH),
+                ])
+                .split(outer[0]);
+            let rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(0),
+                    Constraint::Length(busy_rows),
+                    Constraint::Length(1),
+                ])
+                .split(cols[0]);
+            (rows[0], rows[1], rows[2], outer[1], outer[2], Some(cols[1]))
+        }
+    };
     // The modal backdrop covers the transcript in OFF mode and the whole
     // body (transcript + pane) in ON mode.
     let backdrop_area = match pane_area {
@@ -504,6 +529,13 @@ pub fn draw_with_pane(
         let paragraph = Paragraph::new(Text::from(text))
             .style(Style::default().fg(Color::White));
         frame.render_widget(paragraph, inner);
+    }
+
+    // Status strip (owner want 2026-10-20): the always-visible
+    // component summary row sits directly under the input; it owns
+    // no frame real estate at all when nothing projects (above).
+    if let Some(strip_line) = &strip {
+        frame.render_widget(Paragraph::new(strip_line.clone()), strip_area);
     }
 
     // Bottom row (owner 2026-10-18): provider/model left, usage metrics
@@ -1028,45 +1060,67 @@ pub fn render_to_buffer_with_pane(
     // The turn timer IS the busy signal now that the bottom bar no longer
     // carries a `working` word.
     let busy_rows = u16::from(state.busy_since.is_some());
-    let (transcript_area, busy_area, input_area, status_area, pane_area) =
-        match pane {
-            None => {
-                // I5 OFF: transcript spans full width, no gap (Min(0) fill)
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Min(0),
-                        Constraint::Length(busy_rows),
-                        Constraint::Length(1),
-                        Constraint::Length(1),
-                    ])
-                    .split(area);
-                (chunks[0], chunks[1], chunks[2], chunks[3], None)
-            }
-            Some(_) => {
-                // I5 ON: transcript Min(0) + pane Length(40) fills width, no gap
-                let outer = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([Constraint::Min(0), Constraint::Length(1)])
-                    .split(area);
-                let cols = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([
-                        Constraint::Min(0),
-                        Constraint::Length(CONTEXT_PANE_WIDTH),
-                    ])
-                    .split(outer[0]);
-                let rows = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Min(0),
-                        Constraint::Length(busy_rows),
-                        Constraint::Length(1),
-                    ])
-                    .split(cols[0]);
-                (rows[0], rows[1], rows[2], outer[1], Some(cols[1]))
-            }
-        };
+    // The status strip, mirrored from [`draw_with_pane`]: one optional
+    // row of component content between the input and the metrics row.
+    let strip_marker = state
+        .staged_panels_at
+        .and_then(|staged| status_stale_marker(staged.elapsed()));
+    let strip = compose_status_strip(
+        state.panels.as_ref(),
+        area.width,
+        strip_marker.as_deref(),
+    );
+    let strip_rows = u16::from(strip.is_some());
+    let (
+        transcript_area,
+        busy_area,
+        input_area,
+        strip_area,
+        status_area,
+        pane_area,
+    ) = match pane {
+        None => {
+            // I5 OFF: transcript spans full width, no gap (Min(0) fill)
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(0),
+                    Constraint::Length(busy_rows),
+                    Constraint::Length(1),
+                    Constraint::Length(strip_rows),
+                    Constraint::Length(1),
+                ])
+                .split(area);
+            (chunks[0], chunks[1], chunks[2], chunks[3], chunks[4], None)
+        }
+        Some(_) => {
+            // I5 ON: transcript Min(0) + pane Length(40) fills width, no gap
+            let outer = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(0),
+                    Constraint::Length(strip_rows),
+                    Constraint::Length(1),
+                ])
+                .split(area);
+            let cols = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Min(0),
+                    Constraint::Length(CONTEXT_PANE_WIDTH),
+                ])
+                .split(outer[0]);
+            let rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(0),
+                    Constraint::Length(busy_rows),
+                    Constraint::Length(1),
+                ])
+                .split(cols[0]);
+            (rows[0], rows[1], rows[2], outer[1], outer[2], Some(cols[1]))
+        }
+    };
 
     let h = transcript_area.height as usize;
     // The same rows the `Frame` path builds, and the same bounded work: see
@@ -1243,6 +1297,11 @@ pub fn render_to_buffer_with_pane(
         let paragraph = Paragraph::new(Text::from(text))
             .style(Style::default().fg(Color::White));
         paragraph.render(inner, &mut buf);
+    }
+
+    // Status strip — same row the Frame path paints.
+    if let Some(strip_line) = &strip {
+        Paragraph::new(strip_line.clone()).render(strip_area, &mut buf);
     }
 
     // Bottom row — same single row the Frame path composes.

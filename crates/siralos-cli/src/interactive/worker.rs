@@ -299,7 +299,13 @@ pub(super) fn pump_worker(
                 if matches!(until, Until::Answer | Until::Status) =>
             {
                 let panels = *boxed;
-                state.borrow_mut().panels = Some(panels.clone());
+                {
+                    let mut guard = state.borrow_mut();
+                    guard.panels = Some(panels.clone());
+                    // Any staged snapshot (view fetch or strip restage)
+                    // marks as fresh at this single staging point.
+                    guard.staged_panels_at = Some(std::time::Instant::now());
+                }
                 effects.answer = Some(WorkerEvent::Panels(Box::new(panels)));
                 stop = true;
             }

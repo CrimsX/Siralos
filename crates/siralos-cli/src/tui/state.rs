@@ -263,6 +263,11 @@ pub struct TuiState {
     /// panels view opens with no staged snapshot; the loop fetches
     /// one `PanelsReport` and clears the flag.
     pub panels_refresh_pending: bool,
+    /// When the staged panels snapshot (and thus the status strip)
+    /// was last fetched (ADR 0039 amendment 2026-10-20). `None`
+    /// before the first staging pass; the idle loop stages a fresh
+    /// report once per refresh period while it is not busy.
+    pub staged_panels_at: Option<std::time::Instant>,
 }
 
 impl std::fmt::Debug for TuiState {
@@ -348,6 +353,7 @@ impl Default for TuiState {
             panels: None,
             ui_spec_form: None,
             panels_refresh_pending: false,
+            staged_panels_at: None,
         }
     }
 }
@@ -356,6 +362,17 @@ impl TuiState {
     /// Create an empty state.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Whether the next status-strip staging pass is due (ADR 0039
+    /// amendment 2026-10-20): never staged yet (the first pass runs
+    /// as soon as the loop is idle) or the last staged snapshot is
+    /// at least one refresh period old.
+    #[must_use]
+    pub fn status_tick_due(&self, now: std::time::Instant) -> bool {
+        self.staged_panels_at.is_none_or(|staged| {
+            now.duration_since(staged) >= super::STATUS_STRIP_REFRESH
+        })
     }
 
     /// Sync `transcript` and `transcript_lines` when the caller assigned

@@ -92,8 +92,8 @@ impl UiFeed {
     }
 }
 
-/// Placement of one component in the panel host: a full-bleed tab
-/// or one cell of the 2×2 split.
+/// Placement of one component in the panel host: a full-bleed tab,
+/// one cell of the 2×2 split, or the always-visible status strip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiPlacement {
     /// Full-area panel behind its own tab.
@@ -105,14 +105,21 @@ pub enum UiPlacement {
         /// Grid column (`0..GRID_COLS`).
         col: usize,
     },
+    /// One bounded summary line in the always-visible TUI status
+    /// strip; never claims panel area and never opens a tab
+    /// (ADR 0039 §2 amendment 2026-10-20).
+    Status,
 }
 
 impl UiPlacement {
-    /// Parse `"tab"` or `"cell:<row>,<col>"` exactly (lowercase,
-    /// no whitespace). Anything else is refused.
+    /// Parse `"tab"`, `"cell:<row>,<col>"`, or `"status"` exactly
+    /// (lowercase, no whitespace). Anything else is refused.
     pub fn parse(value: &str) -> Result<Self, UiSpecError> {
         if value == "tab" {
             return Ok(Self::Tab);
+        }
+        if value == "status" {
+            return Ok(Self::Status);
         }
         let tail = value
             .strip_prefix("cell:")
@@ -131,9 +138,9 @@ impl UiPlacement {
 }
 
 impl std::fmt::Display for UiPlacement {
-    /// The canonical wire string: `"tab"` or `"cell:<row>,<col>"`.
-    /// This is the single spelling; every surface renders
-    /// placements through here and parses them with
+    /// The canonical wire string: `"tab"`, `"cell:<row>,<col>"`, or
+    /// `"status"`. This is the single spelling; every surface
+    /// renders placements through here and parses them with
     /// [`UiPlacement::parse`].
     fn fmt(
         &self,
@@ -144,6 +151,7 @@ impl std::fmt::Display for UiPlacement {
             Self::Cell { row, col } => {
                 write!(formatter, "cell:{row},{col}")
             }
+            Self::Status => formatter.write_str("status"),
         }
     }
 }
@@ -158,7 +166,8 @@ pub enum UiSpecError {
     InvalidTitle,
     /// The feed string names no closed-vocabulary feed.
     UnknownFeed,
-    /// The placement string is not `tab` or `cell:<row>,<col>`.
+    /// The placement string is not `tab`, `cell:<row>,<col>`, or
+    /// `status`.
     InvalidPlacement,
     /// A size hint is outside `1..=99`.
     SizeOutOfRange,
@@ -183,7 +192,7 @@ impl UiSpecError {
             }
             Self::UnknownFeed => "component feed is not a known feed",
             Self::InvalidPlacement => {
-                "component placement must be `tab` or `cell:<row>,<col>`"
+                "component placement must be `tab`, `cell:<row>,<col>`, or `status`"
             }
             Self::SizeOutOfRange => "component size hints must be 1..=99",
             Self::TooManyParams => "component carries too many params",
@@ -456,8 +465,12 @@ mod tests {
     }
 
     #[test]
-    fn placement_parses_tabs_and_in_grid_cells_only() {
+    fn placement_parses_tabs_cells_and_status_only() {
         assert_eq!(UiPlacement::parse("tab").expect("tab"), UiPlacement::Tab);
+        assert_eq!(
+            UiPlacement::parse("status").expect("strip"),
+            UiPlacement::Status
+        );
         assert_eq!(
             UiPlacement::parse("cell:0,0").expect("origin"),
             UiPlacement::Cell { row: 0, col: 0 }
@@ -477,6 +490,9 @@ mod tests {
             "cell:0,0 ",
             "Cell:0,0",
             "TAB",
+            "STATUS",
+            "status ",
+            " status",
         ] {
             assert_eq!(
                 UiPlacement::parse(bad),
@@ -490,6 +506,7 @@ mod tests {
     fn placement_display_round_trips_through_parse() {
         for placement in [
             UiPlacement::Tab,
+            UiPlacement::Status,
             UiPlacement::Cell { row: 0, col: 0 },
             UiPlacement::Cell { row: 0, col: 1 },
             UiPlacement::Cell { row: 1, col: 0 },
@@ -503,6 +520,7 @@ mod tests {
             );
         }
         assert_eq!(UiPlacement::Tab.to_string(), "tab");
+        assert_eq!(UiPlacement::Status.to_string(), "status");
         assert_eq!(
             UiPlacement::Cell { row: 1, col: 0 }.to_string(),
             "cell:1,0"
@@ -583,7 +601,7 @@ mod tests {
         );
         assert_eq!(
             UiSpecError::InvalidPlacement.message(),
-            "component placement must be `tab` or `cell:<row>,<col>`"
+            "component placement must be `tab`, `cell:<row>,<col>`, or `status`"
         );
     }
 

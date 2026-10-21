@@ -1977,6 +1977,7 @@ mod loop_tests {
                 projection: siralos_core::ui::UiProjection {
                     tabs: Vec::new(),
                     grid: [[None, None], [None, None]],
+                    status_strip: Vec::new(),
                 },
                 selected: 0,
             }
@@ -2809,6 +2810,7 @@ mod loop_tests {
                 projection: siralos_core::ui::UiProjection {
                     tabs: Vec::new(),
                     grid: [[None, None], [None, None]],
+                    status_strip: Vec::new(),
                 },
                 selected: 0,
             }

@@ -4892,6 +4892,179 @@ fn starter_specs_parse_and_cover_four_feeds() {
     assert!(specs.iter().all(|spec| spec.enabled()), "starters ship enabled");
 }
 
+// Status strip (ADR 0039 §2 amendment 2026-10-20): the
+// always-visible composed row over `status`-placed slots.
+
+fn status_fixture_panels(
+    slots: &[(&str, Vec<&str>)],
+) -> super::panels::UiPanels {
+    use siralos_core::ui::{
+        UiComponentSpec, UiRegistry, UnvalidatedSpec, project_components,
+    };
+    let mut registry = UiRegistry::new();
+    for (id, _lines) in slots {
+        let id = *id;
+        registry
+            .insert(
+                UiComponentSpec::parse(&UnvalidatedSpec {
+                    id: id.to_owned(),
+                    title: format!("{id} title"),
+                    feed: "tools.catalog".to_owned(),
+                    enabled: true,
+                    placement: "status".to_owned(),
+                    max_rows: 20,
+                    max_cols: 60,
+                    params: Vec::new(),
+                })
+                .expect("fixture parses"),
+            )
+            .expect("fixture inserts");
+    }
+    let projection = project_components(&registry, |spec| {
+        slots
+            .iter()
+            .find(|(id, _)| *id == spec.id())
+            .map(|(_, lines)| {
+                lines.iter().map(|line| line.to_string()).collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    });
+    super::panels::UiPanels { projection, selected: 0 }
+}
+
+#[test]
+fn status_stale_marker_follows_the_grace() {
+    use super::status_stale_marker;
+    assert_eq!(status_stale_marker(Duration::from_secs(60)), None);
+    assert_eq!(status_stale_marker(Duration::from_secs(74)), None);
+    assert_eq!(
+        status_stale_marker(Duration::from_secs(75)),
+        Some("staged 1m ago".to_owned())
+    );
+    assert_eq!(
+        status_stale_marker(Duration::from_secs(121)),
+        Some("staged 2m ago".to_owned())
+    );
+}
+
+#[test]
+fn status_strip_text_composes_slots_and_skips_empty() {
+    let panels = status_fixture_panels(&[
+        ("strip-a", vec!["a1", "a2"]),
+        ("strip-b", vec!["b1"]),
+        ("strip-empty", vec![]),
+    ]);
+    assert_eq!(
+        super::compose_status_strip_text(Some(&panels), 200, None),
+        Some("strip-a title: a1 · a2 · strip-b title: b1".to_owned())
+    );
+    // Nothing projects: no snapshot, no slots, or every slot empty.
+    assert_eq!(super::compose_status_strip_text(None, 80, None), None);
+    let empty = status_fixture_panels(&[("strip-empty", vec![])]);
+    assert_eq!(super::compose_status_strip_text(Some(&empty), 80, None), None);
+    let blank = status_fixture_panels(&[]);
+    assert_eq!(super::compose_status_strip_text(Some(&blank), 80, None), None);
+}
+
+#[test]
+fn status_strip_text_truncates_and_reserves_marker_room() {
+    let long = status_fixture_panels(&[("clock", vec!["within window"])]);
+    // No marker: the full width is the budget.
+    assert_eq!(
+        super::compose_status_strip_text(Some(&long), 30, None),
+        Some("clock title: within window".to_owned())
+    );
+    // A marker reserves exactly its own cells plus the separator.
+    let marker = "staged 1m ago";
+    let claimed =
+        super::compose_status_strip_text(Some(&long), 30, Some(marker))
+            .expect("claimed");
+    assert_eq!(claimed, "clock title: w");
+    // Golden recompute: content budget loses one to the separator guard.
+    let budget = 30usize - 3 - marker.chars().count();
+    assert_eq!(
+        claimed,
+        super::truncate_to_width("clock title: within window", budget)
+    );
+}
+
+#[test]
+fn status_strip_line_stylizes_the_marker_dim() {
+    let panels = status_fixture_panels(&[("clock", vec!["on"])]);
+    let plain =
+        super::compose_status_strip(Some(&panels), 80, None).expect("claimed");
+    assert_eq!(plain.spans.len(), 1);
+    assert_eq!(plain.spans[0].content, "clock title: on");
+    let marked =
+        super::compose_status_strip(Some(&panels), 80, Some("staged 1m ago"))
+            .expect("claimed");
+    assert_eq!(marked.spans.len(), 2);
+    assert_eq!(marked.spans[1].content, " — staged 1m ago");
+    assert_eq!(marked.spans[1].style, Style::default().fg(Color::DarkGray));
+}
+
+#[test]
+fn status_tick_due_bounds_follow_the_refresh_period() {
+    let mut state = TuiState::new();
+    let now = std::time::Instant::now();
+    assert!(state.status_tick_due(now), "never staged is due");
+    state.staged_panels_at = Some(now);
+    assert!(!state.status_tick_due(now), "freshly staged holds");
+    state.staged_panels_at = Some(now - Duration::from_secs(61));
+    assert!(state.status_tick_due(now), "past the period is due");
+}
+
+#[test]
+fn strip_row_claims_space_only_with_content() {
+    // Nothing projecting keeps the transcript frame byte-identical
+    // to the no-components one.
+    let staged_empty = {
+        let mut state = TuiState::new();
+        state.panels = Some(status_fixture_panels(&[]));
+        state.staged_panels_at = Some(std::time::Instant::now());
+        state
+    };
+    let absent = TuiState::new();
+    let symbols = |state: &TuiState| {
+        render_to_buffer(state, 80, 24)
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+    };
+    assert_eq!(
+        symbols(&absent),
+        symbols(&staged_empty),
+        "a staged snapshot without status content claims no row"
+    );
+    // With content the strip paints between input and metrics rows.
+    let with_content = {
+        let mut state = staged_empty;
+        state.panels =
+            Some(status_fixture_panels(&[("clock", vec!["within window"])]));
+        state
+    };
+    let text: String = render_to_buffer(&with_content, 80, 24)
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    assert!(text.contains("clock title: within window"), "{text:?}");
+    // The marker renders dimmed next to stale content.
+    let stale = {
+        let mut state = with_content;
+        state.staged_panels_at =
+            Some(std::time::Instant::now() - Duration::from_secs(130));
+        state
+    };
+    let stale_text: String = render_to_buffer(&stale, 80, 24)
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    assert!(stale_text.contains(" — staged 2m ago"), "{stale_text:?}");
+}
+
 #[test]
 fn panels_view_keys_enter_cycle_and_exit() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};

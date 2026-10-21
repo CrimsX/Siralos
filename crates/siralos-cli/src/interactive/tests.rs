@@ -7160,6 +7160,7 @@ fn panels_refresh_fetches_on_entry_and_reentry() {
             projection: siralos_core::ui::UiProjection {
                 tabs: Vec::new(),
                 grid: [[None, None], [None, None]],
+                status_strip: Vec::new(),
             },
             selected: 0,
         },
@@ -7207,6 +7208,7 @@ fn panels_refresh_fetches_on_entry_and_reentry() {
             projection: siralos_core::ui::UiProjection {
                 tabs: Vec::new(),
                 grid: [[None, None], [None, None]],
+                status_strip: Vec::new(),
             },
             selected: 0,
         },
@@ -7224,6 +7226,111 @@ fn panels_refresh_fetches_on_entry_and_reentry() {
         Some(crate::session_worker::WorkerCommand::PanelsReport)
     );
     assert!(tui.state.borrow().panels.is_some());
+}
+
+#[test]
+fn status_tick_stages_when_due_and_holds_when_fresh() {
+    use super::stage_status_tick_if_due;
+    let mut tui = ScriptedTui::new();
+    let mut ticks = 0usize;
+    let state = std::rc::Rc::clone(&tui.state);
+    let mut reasoning = move |text: &str| {
+        state.borrow_mut().reasoning.push_str(text);
+    };
+    let mut progress = || {
+        ticks += 1;
+        false
+    };
+    // Never staged: the first pass fetches and the pump arm stamps.
+    tui.answer(vec![crate::session_worker::WorkerEvent::Panels(Box::new(
+        crate::tui::UiPanels {
+            projection: siralos_core::ui::UiProjection {
+                tabs: Vec::new(),
+                grid: [[None, None], [None, None]],
+                status_strip: Vec::new(),
+            },
+            selected: 0,
+        },
+    ))]);
+    assert!(stage_status_tick_if_due(
+        &mut tui.worker.source,
+        &mut tui.sink,
+        &tui.state,
+        &tui.pane,
+        &mut progress,
+        &mut reasoning,
+    ));
+    assert_eq!(
+        tui.command(),
+        Some(crate::session_worker::WorkerCommand::PanelsReport)
+    );
+    assert!(tui.state.borrow().staged_panels_at.is_some());
+    // Freshly staged: quiet, no command sent.
+    tui.state.borrow_mut().staged_panels_at = Some(std::time::Instant::now());
+    assert!(!stage_status_tick_if_due(
+        &mut tui.worker.source,
+        &mut tui.sink,
+        &tui.state,
+        &tui.pane,
+        &mut progress,
+        &mut reasoning,
+    ));
+    assert_eq!(tui.command(), None);
+    // Past the refresh period: one more report.
+    tui.state.borrow_mut().staged_panels_at =
+        Some(std::time::Instant::now() - std::time::Duration::from_secs(120));
+    tui.answer(vec![crate::session_worker::WorkerEvent::Panels(Box::new(
+        crate::tui::UiPanels {
+            projection: siralos_core::ui::UiProjection {
+                tabs: Vec::new(),
+                grid: [[None, None], [None, None]],
+                status_strip: Vec::new(),
+            },
+            selected: 0,
+        },
+    ))]);
+    assert!(stage_status_tick_if_due(
+        &mut tui.worker.source,
+        &mut tui.sink,
+        &tui.state,
+        &tui.pane,
+        &mut progress,
+        &mut reasoning,
+    ));
+    assert_eq!(
+        tui.command(),
+        Some(crate::session_worker::WorkerCommand::PanelsReport)
+    );
+    assert!(tui.state.borrow().staged_panels_at.is_some());
+}
+
+#[test]
+fn status_tick_holds_while_a_turn_is_busy() {
+    use super::stage_status_tick_if_due;
+    let mut tui = ScriptedTui::new();
+    let mut ticks = 0usize;
+    let state = std::rc::Rc::clone(&tui.state);
+    let mut reasoning = move |text: &str| {
+        state.borrow_mut().reasoning.push_str(text);
+    };
+    let mut progress = || {
+        ticks += 1;
+        false
+    };
+    tui.state.borrow_mut().staged_panels_at =
+        Some(std::time::Instant::now() - std::time::Duration::from_secs(120));
+    tui.state.borrow_mut().busy_since = Some(std::time::Instant::now());
+    // The worker is blocked in the exchange and serves no queue, so
+    // the idle restage waits for the turn to end.
+    assert!(!stage_status_tick_if_due(
+        &mut tui.worker.source,
+        &mut tui.sink,
+        &tui.state,
+        &tui.pane,
+        &mut progress,
+        &mut reasoning,
+    ));
+    assert_eq!(tui.command(), None);
 }
 
 fn write_module_manifest(root: &std::path::Path, text: &str) {

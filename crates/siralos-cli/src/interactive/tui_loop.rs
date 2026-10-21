@@ -54,6 +54,42 @@ pub(super) fn refresh_panels_if_requested(
     true
 }
 
+/// Status strip restaging (ADR 0039 amendment 2026-10-20): the
+/// always-visible strip renders the staged panels projection, so the
+/// idle loop fetches one `PanelsReport` when never staged, or once
+/// per refresh period since the last stamping, and never while the
+/// turn marker is up (the worker is blocked in the exchange and
+/// serves no queue). Returns whether a fetch ran (test seam; the
+/// loop ignores the answer either way).
+pub(super) fn stage_status_tick_if_due(
+    worker: &mut WorkerSource,
+    sink: &mut crate::tui::TuiSink,
+    state: &Rc<RefCell<TuiState>>,
+    pane: &Rc<RefCell<Option<crate::tui::ContextPaneData>>>,
+    progress: &mut dyn FnMut() -> bool,
+    reasoning: &mut dyn FnMut(&str),
+) -> bool {
+    let due = {
+        let guard = state.borrow();
+        guard.status_tick_due(std::time::Instant::now())
+            && guard.busy_since.is_none()
+    };
+    if !due {
+        return false;
+    }
+    let _ = ask_worker(
+        worker,
+        sink,
+        state,
+        pane,
+        progress,
+        reasoning,
+        WorkerCommand::PanelsReport,
+        Until::Answer,
+    );
+    true
+}
+
 /// Dispatch one parsed [`SlashCommand`] to the TUI sink — the second thin
 /// per-frontend writer over the shared parse + render helpers, and since C2
 /// step 3 the frontend half of the worker boundary.
@@ -1003,6 +1039,17 @@ pub fn run_interactive_tui_with_options(
             if should_exit_outer {
                 break;
             }
+            // Status strip restaging runs on every outer pass while
+            // the loop is idle (ADR 0039 amendment 2026-10-20); the
+            // due check makes it a cheap compare across ~50 ms polls.
+            stage_status_tick_if_due(
+                worker.source(),
+                &mut sink,
+                &tui_state,
+                &pane_cache,
+                &mut progress,
+                &mut reasoning_sink,
+            );
             // Part B: a delivered tool-approval verdict resumes the
             // suspended turn. The modal is closed (verdict above) but
             // the exchange id is still armed; the resume helper clears

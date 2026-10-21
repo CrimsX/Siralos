@@ -197,6 +197,8 @@ use tui_loop::refresh_panels_if_requested;
 use tui_loop::resume_suspended_turn;
 pub use tui_loop::run_interactive_tui_stdio;
 pub use tui_loop::run_interactive_tui_with_options;
+#[cfg(test)]
+use tui_loop::stage_status_tick_if_due;
 use ui::UiFeedInputs;
 use ui::drain_ui_spec_form;
 use ui::execute_ui_remove;

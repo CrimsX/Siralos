@@ -27,14 +27,18 @@ pub struct ProjectedSlot {
     pub lines: Vec<String>,
 }
 
-/// The projected panel model: ordered tabs plus the 2×2 grid.
-/// Empty slots stay `None`; the host renders placeholders.
+/// The projected panel model: ordered tabs, the 2×2 grid, and the
+/// always-visible status strip. Empty grid slots stay `None`; the
+/// host renders placeholders.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UiProjection {
     /// `tab`-placed components in registration order.
     pub tabs: Vec<ProjectedSlot>,
     /// `cell`-placed components by row and column.
     pub grid: [[Option<ProjectedSlot>; GRID_COLS]; GRID_ROWS],
+    /// `status`-placed components in registration order, rendered
+    /// as one composed summary line; never claims panel area.
+    pub status_strip: Vec<ProjectedSlot>,
 }
 
 /// Why registration refused a spec.
@@ -105,7 +109,8 @@ impl UiRegistry {
     }
 
     /// Insert a spec, replacing any same-id entry. Refuses a grid
-    /// cell another spec already occupies.
+    /// cell another spec already occupies; `status` specs share no
+    /// occupancy, so any number may register.
     pub fn insert(
         &mut self,
         spec: UiComponentSpec,
@@ -160,6 +165,7 @@ pub fn project_components(
     resolve: impl Fn(&UiComponentSpec) -> Vec<String>,
 ) -> UiProjection {
     let mut tabs = Vec::new();
+    let mut status_strip = Vec::new();
     let mut grid: [[Option<ProjectedSlot>; GRID_COLS]; GRID_ROWS] =
         [[None, None], [None, None]];
     for spec in registry.specs() {
@@ -180,9 +186,10 @@ pub fn project_components(
             UiPlacement::Cell { row, col } => {
                 grid[row][col] = Some(slot);
             }
+            UiPlacement::Status => status_strip.push(slot),
         }
     }
-    UiProjection { tabs, grid }
+    UiProjection { tabs, grid, status_strip }
 }
 
 #[cfg(test)]
@@ -269,6 +276,42 @@ mod tests {
                 "héll".to_owned(),
                 "… (1 more lines)".to_owned()
             ]
+        );
+    }
+
+    #[test]
+    fn status_slots_keep_registration_order_and_skip_disabled() {
+        let mut registry = UiRegistry::new();
+        registry.insert(spec("strip-a", "status", true)).expect("insert");
+        registry.insert(spec("tab", "tab", true)).expect("insert");
+        registry.insert(spec("strip-off", "status", false)).expect("insert");
+        registry.insert(spec("strip-b", "status", true)).expect("insert");
+        let mut contents = BTreeMap::new();
+        contents.insert(
+            "strip-a".to_owned(),
+            vec!["a1".to_owned(), "a2".to_owned()],
+        );
+        contents.insert("tab".to_owned(), vec!["t".to_owned()]);
+        let projected = project_components(&registry, |spec| {
+            contents.get(spec.id()).cloned().unwrap_or_default()
+        });
+        assert_eq!(projected.tabs.len(), 1);
+        let titles: Vec<&str> = projected
+            .status_strip
+            .iter()
+            .map(|slot| slot.title.as_str())
+            .collect();
+        assert_eq!(titles, vec!["strip-a title", "strip-b title"]);
+        assert_eq!(
+            projected.status_strip[0].lines,
+            vec!["a1".to_owned(), "a2".to_owned()]
+        );
+        assert!(projected.status_strip[1].lines.is_empty());
+        assert!(
+            projected
+                .grid
+                .iter()
+                .all(|row| row.iter().all(|cell| cell.is_none()))
         );
     }
 

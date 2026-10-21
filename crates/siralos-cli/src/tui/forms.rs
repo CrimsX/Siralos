@@ -1101,12 +1101,13 @@ pub(super) fn validate_ui_feed(value: &str) -> Result<(), String> {
     })
 }
 
-/// Validate placement through the core parser: `tab` or
-/// `cell:<row>,<col>` in the 2x2 grid.
+/// Validate placement through the core parser: `tab`,
+/// `cell:<row>,<col>` in the 2x2 grid, or `status` (the
+/// always-visible strip).
 pub(super) fn validate_ui_placement(value: &str) -> Result<(), String> {
     siralos_core::ui::UiPlacement::parse(value).map(|_| ()).map_err(
         |_| {
-            "Placement must be \"tab\" or \"cell:<row>,<col>\" with row and column 0 or 1."
+            "Placement must be \"tab\", \"cell:<row>,<col>\" with row and column 0 or 1, or \"status\"."
                 .to_owned()
         },
     )

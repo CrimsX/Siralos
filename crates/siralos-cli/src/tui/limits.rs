@@ -9,6 +9,17 @@ pub const TUI_DRAIN_POLL: Duration = Duration::ZERO;
 /// Bounded idle poll for status/pane redraw when idle (P1 — raised 15ms → 50ms).
 pub const TUI_IDLE_POLL: Duration = Duration::from_millis(50);
 
+/// How often the idle loop restages the panels snapshot that feeds
+/// the status strip (ADR 0039 amendment 2026-10-20). One offline
+/// `PanelsReport` per period; skipped entirely while a turn runs.
+pub const STATUS_STRIP_REFRESH: Duration = Duration::from_secs(60);
+
+/// Staleness grace before the strip shows its marker: staged
+/// content younger than this is assumed fresh (one refresh period
+/// plus margin); older content earns an honest "staged Nm ago"
+/// marker instead of pretending liveness.
+pub const STATUS_STRIP_STALE: Duration = Duration::from_secs(75);
+
 /// Context budget for the status usage readout (P5).
 pub const CONTEXT_BUDGET_TOKENS: usize = 4096;
 
