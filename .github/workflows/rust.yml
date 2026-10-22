@@ -47,7 +47,7 @@ jobs:
         run: rustup show active-toolchain
 
       - name: Install pinned Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -211,7 +211,7 @@ jobs:
       # oracle, candidate, and comparison records as reviewable CI evidence,
       # including on parity failure or harness error.
       - name: Upload differential evidence (Linux)
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: differential-linux-${{ github.sha }}
           path: |
@@ -243,7 +243,7 @@ jobs:
         run: rustup show active-toolchain
 
       - name: Install pinned Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -325,7 +325,7 @@ jobs:
           node -e "const a=require('./tests/differential/out/audit.json'); if(!(a.applicableScenarios>0)) throw new Error('differential audit covered zero applicable scenarios'); if(!(a.requiredScenarios>0)) throw new Error('differential audit required zero scenarios'); if(a.parityHeld!==true) throw new Error('differential parity not held'); console.log('differential covered', a.applicableScenarios, 'applicable of', a.requiredScenarios, 'required scenarios');"
 
       - name: Upload differential evidence (${{ matrix.os }})
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: differential-${{ matrix.os }}-${{ github.sha }}
           path: |
