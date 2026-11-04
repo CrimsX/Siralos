@@ -118,8 +118,11 @@ it declares.
 A **Module** is the only optional executable extension package type
 ([ADR 0037](docs/adr/0037-module-composition-and-godot-decoupling.md)). A
 module may contribute Tools, Views, and specialized development
-intelligence — never a separate package ecosystem. Skills are declarative,
-digest-bound model guidance holding **no authority**.
+intelligence — never a separate package ecosystem. Every `[modules.<id>]`
+entry is desired state; the Host applies it at startup and on `/rebuild`,
+staging replacements before removing the old module
+([ADR 0040](docs/adr/0040-declarative-module-application.md)). Skills are
+declarative, digest-bound model guidance holding **no authority**.
 
 ## Sandbox enforcement
 

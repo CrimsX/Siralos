@@ -171,7 +171,7 @@ path when a fast model should be tracked exactly.
 host-rendered data views over the same terminal (`[` and `]` switch tabs,
 `F2`/`Esc` returns to the transcript). Panels are declared in workspace
 `.siralos/ui.toml` (`/ui-list`, `/ui-add`, `/ui-edit`, `/ui-remove`,
-`/ui-preview`) or contributed by installed modules; they are data, never
+`/ui-preview`) or contributed by declared modules; they are data, never
 code — every feed reuses an existing read-only surface and all text passes
 the terminal sanitizer ([ADR 0039](docs/adr/0039-modular-terminal-ui-components.md)).
 
@@ -194,7 +194,6 @@ endpoint = "https://openrouter.ai/api/v1"
 credential = "env:OPENROUTER_API_KEY"    # resolved from the environment at use time
 context = "live"                         # live | pinned | frozen
 skills = []                              # declarative guidance by name, e.g. ["my-skill"]
-modules = []                             # installed module ids to activate
 model_display_name = "OpenRouter"
 
 [profile.permissions]
@@ -217,28 +216,58 @@ Credential references come in two forms:
 
 In the CLI composition paths, a profile that declares a credential or endpoint,
 enables replay/record-replay, or enables `[profile.context_system]` is gated by
-the trusted user configuration's exact `profileApproval` SHA-256. `/reload`
-re-reads that trusted file before it accepts a changed dangerous profile. This
-approval binds authority to exact bytes; it does not convert a plaintext literal
-credential into a secret store.
+the trusted user configuration's `profileApproval` digest. `/reload` re-reads
+that trusted file before it accepts a changed dangerous profile. This approval
+binds authority to the profile's parsed semantics; it does not convert a
+plaintext literal credential into a secret store.
 
-Approving one takes two steps. Compute the digest of the profile's exact bytes,
-then put it in your own trusted configuration at `~/.siralos/config.json`, which
-lives outside every workspace so no repository can write it:
+Approving one takes two steps. Compute the canonical profile digest, then put
+it in your own trusted configuration at `~/.siralos/config.json`, which lives
+outside every workspace so no repository can write it:
 
 ```powershell
-(Get-FileHash -Algorithm SHA256 .\siralos.toml).Hash.ToLower()
+cargo run --locked --bin siralos -- --profile-digest .
 ```
 
 ```json
 { "profileApproval": "<the 64 hex characters the command printed>" }
 ```
 
-The approval binds to those exact bytes, so any edit to the profile, even
-whitespace, needs a fresh digest. The startup message prints the first 16
-characters of the digest it wanted; compare those against the value you computed
-instead of copying what is on screen. `/reload` re-reads the trusted file, so a
-config change does not need a restart.
+The digest covers the `[profile]` section and ignores `[modules.<id>]`, so
+adding or removing a module declaration does not need a fresh approval. Editing
+the profile's authority-bearing fields does. The startup message prints the
+first 16 characters of the digest it wanted; compare those against the value
+you computed instead of copying what is on screen. Existing whole-file
+approvals remain valid until the first module edit; after that, regenerate with
+`--profile-digest`. `/reload` re-reads the trusted file, so a config change does
+not need a restart.
+
+## Install modules declaratively
+
+Modules are declared under `[modules.<id>]` in the same `siralos.toml`. The
+declaration is the desired state: add an entry and rebuild to install, enable,
+and (for a component) activate it; delete the entry and rebuild to remove it.
+
+```toml
+[modules.godot]
+path = "modules/godot"
+# digest = "sha256:<64 hex characters>"  # optional; the manifest digest is used
+```
+
+The manifest id must match the table id, and the manifest and any named
+component are still verified against the manifest digest. At session startup,
+and whenever you run `/rebuild`, the Host reads every declaration, stages
+changes before touching the old module, and reports per-module failures without
+blocking the session. `/modules` lists the declarations; it does not claim live
+lifecycle state. Startup activation runs a component's guest `bind` with an
+empty Host authority, so a module cannot grant itself a capability.
+
+`/rebuild` applies module declarations only. It never re-applies `[profile]`,
+never edits `siralos.toml`, and never writes `siralos.lock`. Lock files, when
+present, are verified only. The old `/modules-add`, `/modules-enable`, and
+`/modules-activate` commands are removed. `[profile] modules` is accepted for
+compatibility but ignored with a startup notice; move that selection to
+`[modules.<id>]`.
 
 ## Run it
 
@@ -249,6 +278,7 @@ config change does not need a restart.
 | `cargo run --locked --bin siralos -- --print "<prompt>"` | one headless turn                      |
 | `... --print "<prompt>" --json`                          | the same turn as one structured record |
 | `... --print "<prompt>" --cwd <dir>`                     | run against another workspace root     |
+| `... --profile-digest <dir>`                             | print the canonical profile approval   |
 | `... --stdio`                                            | interactive stdio frontend             |
 
 Effects that cannot be enforced are reported as a typed `unavailable` before

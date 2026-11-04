@@ -516,6 +516,19 @@ later session needs must appear here or in a commit.
 
 ### Settled by decision
 
+- **Declarative module application (owner-directed 2026-10-20,
+  [ADR 0040](docs/adr/0040-declarative-module-application.md)).**
+  `[modules.<id>]` is the sole desired-state table. The product applies it at
+  session startup and on `/rebuild`; `/modules-add`, `/modules-enable`, and
+  `/modules-activate` are removed. `digest` may be omitted and resolved from
+  the manifest; per-module failures are isolated and a failed replacement
+  retains the prior working state. `[profile] modules` is accepted but ignored.
+  `profileApproval` hashes the canonical `[profile]` semantics rather than the
+  whole file, so module edits do not invalidate approval; the legacy raw digest
+  remains accepted until the first edit. `siralos --profile-digest <dir>`
+  exposes the canonical digest without composing a session. The frozen core
+  command catalog and differential corpus are untouched.
+
 - **W5.3 — lock honesty: verify-only.** Siralos verifies `siralos.lock` on the
   composition path and never writes one on any production path; the module doc of
   `crates/siralos-adapters/src/lockfile.rs` now records that. Its writer stays as
@@ -937,10 +950,10 @@ The current working tree is green for the complete local gate as of this
 update. `npm run check` passes end to end in this working tree: format, lint,
 documentation links, documentation truth, project context, identity,
 public hygiene, secret hygiene, the Rust architecture check, the reachability
-ratchet, the Rust format/clippy/test gates (siralos-core 650 library tests,
-siralos-adapters 428 library tests plus 28 domain-conformance tests,
-siralos-cli 358 library tests, differential harness 77), and
-`npm run check:differential` with **parity held on 309/309 applicable required
+ratchet, the Rust format/clippy/test gates (siralos-core 684 library tests,
+siralos-adapters 536 library tests plus 28 domain-conformance tests,
+siralos-cli 434 library tests, differential harness 77), and
+`npm run check:differential` with **parity held on 351/351 applicable required
 scenarios** (4 explicit platform skips, 0 accepted informational deviations).
 
 The differential gate is no longer blocked. `harness/Cargo.lock` was stale

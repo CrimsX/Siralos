@@ -74,7 +74,7 @@ The model-provider adapter may contact its configured API endpoint from the Sira
 
 ## Credential isolation
 
-In the live Rust implementation, provider credentials may be declared as either an `env:NAME` reference or a literal `key:VALUE` in the workspace profile (`HostCredential::from_credential_str`). The resolved secret bytes are retained by the live provider for its provider/session lifetime, not released after one call; `Debug`/`Display` are redacted, the type is never serialized, and diagnostics never echo the value. A profile containing a credential, endpoint, replay/record-replay flag, or context-system opt-in is applied only when the trusted user configuration contains the exact SHA-256 digest of the profile bytes (`profileApproval`); `/reload` re-reads that trusted configuration before accepting a changed dangerous profile. Provider HTTP adapters use TLS (`reqwest` + rustls) with bounded (1 MiB), control-character-sanitized response handling, and credentials are sent only as the endpoint's auth header.
+In the live Rust implementation, provider credentials may be declared as either an `env:NAME` reference or a literal `key:VALUE` in the workspace profile (`HostCredential::from_credential_str`). The resolved secret bytes are retained by the live provider for its provider/session lifetime, not released after one call; `Debug`/`Display` are redacted, the type is never serialized, and diagnostics never echo the value. A profile containing a credential, endpoint, replay/record-replay flag, or context-system opt-in is applied only when the trusted user configuration contains the canonical `[profile]` approval digest (`profileApproval`); `/reload` re-reads that trusted configuration before accepting a changed dangerous profile. The digest covers the parsed authority-bearing profile semantics and deliberately excludes `[modules.<id>]` declarations, so adding or removing a module does not invalidate an approved profile. The legacy exact-file SHA-256 remains accepted while the workspace bytes are unchanged. `siralos --profile-digest <dir>` computes the canonical digest read-only; it composes no session and mutates nothing. Provider HTTP adapters use TLS (`reqwest` + rustls) with bounded (1 MiB), control-character-sanitized response handling, and credentials are sent only as the endpoint's auth header.
 
 Provider credentials and Siralos internal secrets stay in the provider adapter or host process. They must never be:
 
@@ -237,6 +237,32 @@ Write tools (`workspace.create_file`, `workspace.edit_file`, `workspace.delete_f
 - Exact SHA-256 hashes are the conflict precondition; `workspace.read` returns the complete-file hash. Timestamps and file sizes are never conflict preconditions. Preconditions are revalidated immediately before the irreversible commit point, and every commit is identity-bound with an absence-preserving primitive: the target is first displaced to a same-directory quarantine (an atomic displacement of exactly the object at the target), the displaced object is hash-verified against the approved state, and the staged content is then committed with an exclusive hard link that atomically requires the destination to remain absent (fails on `EEXIST`) — a rename is never used for the commit or the rollback, so a target that appears after the quarantine displacement is never overwritten. Rollback restores the quarantined original with the same absence-preserving primitive; if a newer object occupies the target, the operation returns an explicit uncertain/conflict result that preserves both the quarantine and the later target and never reports success. The committed target is verified (type, bytes, hash, expected post-state) before the quarantine is released, and exclusive creation verifies every parent component's identity immediately before the open and proves the created object's identity (handle vs path) before any byte is written, so a parent swapped for a link is detected before any write and cleanup removes only the identity-proven object. A target or parent swapped after approval is therefore a `conflict` or `failed`/`uncertain` recovery, never an overwrite or delete of unapproved content. Where the filesystem cannot provide the absence-preserving primitive (hard links unsupported), the operation fails closed.
 - Protected paths (`.git/`, `.siralos/`, `.env`, `.env.*`, `*.pem`, `*.key`, Siralos configuration, sandbox metadata, anything outside the workspace) cannot be overridden by approval or provider requests, are applied again immediately before mutation, and are matched case-insensitively on Windows and macOS (treated conservatively as case-insensitive), so `.GIT`, `.Git`, `.ENV` and equivalents cannot address protected paths. Windows junctions and reparse points are rejected through canonical containment.
 - Mutations are serialized in-process; temp files use unpredictable names, stay in the target directory, are hidden from listings, and are cleaned up after success or failure. Cancellation before the commit section prevents mutation; once the irreversible commit point is reached, cancellation cannot interrupt verification and lifecycle finalization. Every replacement and every deletion first moves the target to a same-directory quarantine (an atomic displacement of exactly the object at the target), verifies the displaced object against the expected hash, and only then commits through the exclusive absence-preserving hard link — so a substituted or externally-changed target is detected and restored on every platform, never silently destroyed, and a target that appears after displacement is never overwritten. The quarantine (potentially the only remaining copy of the original) is kept until the new content is verified and the checkpoint lifecycle is durably finalized; rollback conflicts and failures report an explicit uncertain state naming the recoverable quarantine, and the only valid copy is never unlinked before replacement is committed. Undo uses the same quarantine discipline in both directions (undo-delete and undo-create included), so a later user change is never overwritten by a rollback.
+
+## Declarative module application (ADR 0040)
+
+`[modules.<id>]` entries in workspace `siralos.toml` are Host-controlled
+desired state. Startup and `/rebuild` resolve each declaration before any
+lifecycle mutation, verify the manifest id, the optional declared digest, the
+manifest digest, and any named component bytes, then install/enable/activate
+through the existing `ModuleHost` gates. A malformed whole document aborts the
+pass without changing any module; a malformed or unresolvable individual entry
+is reported and skipped, retains its previous working state, and does not block
+the session. A changed module is staged before the old host is deactivated or
+uninstalled, so a failed replacement leaves the previous working module in
+place.
+
+Startup activation executes a declared component's guest `bind`. The
+activation request uses an empty `HostAuthority`: a module that requests any
+capability cannot obtain it from a declaration, and activation fails and is
+reported. The guest remains bounded by the existing fuel, input/output,
+host-call, and component-byte limits, and by workspace containment and
+protected-path checks. Declarations grant no network, subprocess, filesystem,
+checkpoint, or approval authority.
+
+`/rebuild` applies module declarations only. It never re-reads or applies
+`[profile]`, never writes `siralos.toml`, and never creates or updates
+`siralos.lock`; existing lock files remain verify-only. `[profile] modules` is
+accepted for compatibility but ignored with a startup notice.
 
 ## Git inspection and recovery checkpoints
 

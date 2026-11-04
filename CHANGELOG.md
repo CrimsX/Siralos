@@ -14,6 +14,20 @@ and the number does not change any of it.
 
 ### Added
 
+- **Declarative module application** (owner-directed, 2026-10-20,
+  [ADR 0040](docs/adr/0040-declarative-module-application.md)).
+  Every `[modules.<id>]` entry is now desired state: `path` is required,
+  `digest` may be omitted and resolved from the manifest, and deleting the
+  entry is the removal operation. Declarations apply automatically at
+  session startup (including headless/evaluation composition) and again on
+  the new `/rebuild` command. Resolution precedes mutation; a broken entry
+  is reported and skipped while healthy modules continue, a failed
+  replacement keeps the previous working module, and spec-only ↔ component
+  kind changes use the same stage-then-swap path. `/rebuild` applies module
+  declarations only — never `[profile]`, `siralos.toml` writes, or
+  `siralos.lock` writes. `siralos --profile-digest <dir>` prints the
+  canonical profile approval digest.
+
 - **The `status` component placement and the always-on strip row**
   (owner-directed, 2026-10-20,
   [decision 182 §6](docs/wayfinder/decisions/182-time-window-feed-module.md),
@@ -139,6 +153,19 @@ and the number does not change any of it.
   which must stop the run with its named refusal.
 
 ### Changed
+
+- **The imperative module commands are removed and profile approval is
+  profile-scoped** (owner-directed, 2026-10-20,
+  [ADR 0040](docs/adr/0040-declarative-module-application.md)).
+  `/modules-add`, `/modules-enable`, and `/modules-activate` are replaced by
+  `/rebuild`; `/modules` remains a read-only declaration list. The
+  `[profile] modules` field is accepted but ignored with a startup notice.
+  `profileApproval` now binds the canonical parsed `[profile]` semantics
+  instead of the whole file, so module declaration edits do not invalidate an
+  approved profile. The legacy whole-file digest remains accepted while the
+  bytes are unchanged; regenerate with `siralos --profile-digest <dir>` after
+  the first module edit. The frozen core command catalog and differential
+  corpus are unchanged.
 
 - **The TUI footer is one observed row** (owner-directed, 2026-10-17,
   [decision 181](docs/wayfinder/decisions/181-single-row-footer.md)). The

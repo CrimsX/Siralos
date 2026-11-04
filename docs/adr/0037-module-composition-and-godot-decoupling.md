@@ -15,7 +15,8 @@ supersedes: [ADR-0036]
 
 # ADR 0037 — Module Composition Model and Godot Decoupling Boundary
 
-- Status: accepted (owner directive 2026-10-10)
+- Status: accepted (owner directive 2026-10-10; CLI and profile-selection
+  details amended by ADR 0040)
 - Date: 2026-10-10
 - Related: ADR 0036 (lean product, composition, extension model —
   superseded on domain/plugin vocabulary only), ADR 0034 (Godot domain

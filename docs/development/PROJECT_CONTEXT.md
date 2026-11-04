@@ -360,11 +360,12 @@ core thesis). Canonical product primitives:
   controllable (Live / Pinned / Frozen).
 - **Skill** — reusable declarative guidance for model reasoning; it has no
   authority (Skill != Capability).
-- **Module** — the only optional executable extension package; explicitly
-  installed, versioned, digestable, capability-scoped, and contained by the
-  Host boundary; core works with zero Modules. A module may contribute
-  Tools, Views, and specialized development intelligence (Godot is the
-  first and currently only planned Module).
+- **Module** — the only optional executable extension package; declared in
+  `[modules.<id>]`, versioned, digestable, capability-scoped, and contained
+  by the Host boundary; core works with zero Modules. Declarations apply at
+  startup and on `/rebuild` ([ADR 0040](../adr/0040-declarative-module-application.md)).
+  A module may contribute Tools, Views, and specialized development
+  intelligence (Godot is the first and currently only planned Module).
 - **Tool** — the one callable typed operation abstraction (stable identity,
   typed input/output, side-effect classification, capability requirements).
 - **View** — a Module-contributed presentation surface; it renders public
