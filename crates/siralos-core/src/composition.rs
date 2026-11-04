@@ -24,7 +24,9 @@ pub use lock::{LockModuleIdentity, WorkspaceLock, create_workspace_lock};
 use crate::context::{
     ContextControlOutcome, ContextPolicy, evaluate_context_policy,
 };
-use crate::identity::{CanonicalValue, compute_artifact_digest};
+use crate::identity::{
+    CanonicalValue, compute_artifact_digest, compute_artifact_digest_hex,
+};
 use crate::skills::{
     SkillCatalog, SkillResolution, SkillResolutionEvidence,
     create_skill_resolution_evidence, render_skill_resolution_evidence,
@@ -349,6 +351,108 @@ impl fmt::Debug for ProfileRecord {
             )
             .finish()
     }
+}
+
+/// Canonical approval digest of a profile's authority-bearing content.
+///
+/// `profileApproval` must stay stable when unrelated sections of
+/// `siralos.toml` change. In particular, adding or removing a
+/// `[modules.<id>]` declaration must not invalidate an approved profile.
+/// The digest therefore covers the parsed `[profile]` semantics (including
+/// permissions, routing, replay flags, context, and guidance selection) but
+/// deliberately excludes both the declared module table and the deprecated
+/// `[profile] modules` narrowing field, which the product no longer uses.
+#[must_use]
+pub fn profile_approval_digest(record: &ProfileRecord) -> String {
+    fn optional(value: Option<&str>) -> CanonicalValue {
+        value.map_or(CanonicalValue::Null, |value| {
+            CanonicalValue::Str(value.to_owned())
+        })
+    }
+
+    let mut overlay: Vec<CanonicalValue> = record
+        .overlay
+        .iter()
+        .map(|entry| {
+            CanonicalValue::Object(BTreeMap::from([
+                (
+                    "capability".to_owned(),
+                    CanonicalValue::Str(entry.capability.as_str().to_owned()),
+                ),
+                (
+                    "rule".to_owned(),
+                    CanonicalValue::Str(entry.requested.as_str().to_owned()),
+                ),
+            ]))
+        })
+        .collect();
+    overlay.sort_by_key(CanonicalValue::to_canonical);
+
+    let context = match &record.context {
+        None => CanonicalValue::Null,
+        Some(ContextPolicy::Live) => {
+            CanonicalValue::Object(BTreeMap::from([(
+                "kind".to_owned(),
+                CanonicalValue::Str("live".to_owned()),
+            )]))
+        }
+        Some(ContextPolicy::Pinned { digest })
+        | Some(ContextPolicy::Frozen { digest }) => {
+            CanonicalValue::Object(BTreeMap::from([
+                (
+                    "kind".to_owned(),
+                    CanonicalValue::Str(
+                        record
+                            .context
+                            .as_ref()
+                            .map_or("", ContextPolicy::kind)
+                            .to_owned(),
+                    ),
+                ),
+                ("digest".to_owned(), CanonicalValue::Str(digest.clone())),
+            ]))
+        }
+    };
+
+    let skills =
+        record.skills.as_ref().map_or(CanonicalValue::Null, |skills| {
+            CanonicalValue::Array(
+                skills
+                    .iter()
+                    .map(|skill| CanonicalValue::Str(skill.clone()))
+                    .collect(),
+            )
+        });
+
+    let payload = CanonicalValue::Object(BTreeMap::from([
+        ("name".to_owned(), CanonicalValue::Str(record.name.clone())),
+        ("overlay".to_owned(), CanonicalValue::Array(overlay)),
+        ("context".to_owned(), context),
+        ("skills".to_owned(), skills),
+        ("provider".to_owned(), optional(record.provider.as_deref())),
+        ("model".to_owned(), optional(record.model.as_deref())),
+        ("credential".to_owned(), optional(record.credential.as_deref())),
+        ("endpoint".to_owned(), optional(record.endpoint.as_deref())),
+        (
+            "record_replay".to_owned(),
+            CanonicalValue::Bool(record.record_replay),
+        ),
+        ("replay".to_owned(), CanonicalValue::Bool(record.replay)),
+        (
+            "context_system_enabled".to_owned(),
+            CanonicalValue::Bool(record.context_system_enabled),
+        ),
+        (
+            "protocol".to_owned(),
+            CanonicalValue::Str(record.protocol.as_str().to_owned()),
+        ),
+        (
+            "model_display_name".to_owned(),
+            optional(record.model_display_name.as_deref()),
+        ),
+    ]));
+    compute_artifact_digest_hex("ProfileApproval", 1, &payload)
+        .expect("the profile approval artifact type is valid")
 }
 
 /// Rank of a rule for the narrowing comparison: `Deny < Ask < Allow`.
@@ -1758,8 +1862,8 @@ mod tests {
     use super::{
         MAX_PROFILE_NAME_BYTES, MAX_PROFILE_OVERLAY_ENTRIES,
         ProfileOverlayEntry, ProfileRecord, create_profile_evidence,
-        declare_profile, default_profile_resolution, render_profile_evidence,
-        resolve_profile_overlay,
+        declare_profile, default_profile_resolution, profile_approval_digest,
+        render_profile_evidence, resolve_profile_overlay,
     };
     use crate::tool::capability::CapabilityId;
     use crate::tool::permission::{
@@ -1967,6 +2071,35 @@ mod tests {
                 .expect_err("count refused");
             assert!(error.message.contains("entry bound"));
         }
+    }
+
+    #[test]
+    fn profile_approval_digest_ignores_deprecated_module_filter() {
+        let mut record = ProfileRecord {
+            name: "dev".to_owned(),
+            overlay: Vec::new(),
+            modules: None,
+            context: None,
+            skills: None,
+            provider: Some("example".to_owned()),
+            model: Some("example/model".to_owned()),
+            credential: None,
+            endpoint: None,
+            record_replay: false,
+            replay: false,
+            context_system_enabled: false,
+            protocol: super::Protocol::default(),
+            model_display_name: None,
+        };
+        let before = profile_approval_digest(&record);
+        record.modules = Some(vec!["unused".to_owned()]);
+        assert_eq!(
+            before,
+            profile_approval_digest(&record),
+            "the deprecated [profile] modules filter must not invalidate approval"
+        );
+        record.provider = Some("different".to_owned());
+        assert_ne!(before, profile_approval_digest(&record));
     }
 
     #[test]
