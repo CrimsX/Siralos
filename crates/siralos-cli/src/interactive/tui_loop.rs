@@ -197,11 +197,9 @@ pub(super) fn dispatch_tui_command(
             let _ = sink.write_all(rendered.as_bytes());
         }
         SlashCommand::Exit => return Ok(true),
-        // The three module arms MUTATE the session's module registry and
-        // activate hosts, so the session does it (decision 168 R4). The worker
-        // calls the very same `render_*` helpers, so neither the report nor the
-        // side effect forks.
-        SlashCommand::ModulesAdd(folder) => {
+        // The module rebuild mutates the session's module registry and
+        // activates hosts, so the session does it (decision 168 R4).
+        SlashCommand::Rebuild => {
             let answer = ask_worker(
                 worker,
                 sink,
@@ -209,33 +207,7 @@ pub(super) fn dispatch_tui_command(
                 pane,
                 progress,
                 reasoning,
-                WorkerCommand::ModulesAdd(folder.unwrap_or("").to_owned()),
-                Until::Answer,
-            )?;
-            render_answer(answer, sink)?;
-        }
-        SlashCommand::ModulesEnable(id) => {
-            let answer = ask_worker(
-                worker,
-                sink,
-                state,
-                pane,
-                progress,
-                reasoning,
-                WorkerCommand::ModulesEnable(id.unwrap_or("").to_owned()),
-                Until::Answer,
-            )?;
-            render_answer(answer, sink)?;
-        }
-        SlashCommand::ModulesActivate(id) => {
-            let answer = ask_worker(
-                worker,
-                sink,
-                state,
-                pane,
-                progress,
-                reasoning,
-                WorkerCommand::ModulesActivate(id.unwrap_or("").to_owned()),
+                WorkerCommand::Rebuild,
                 Until::Answer,
             )?;
             render_answer(answer, sink)?;

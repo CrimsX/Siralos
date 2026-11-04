@@ -310,6 +310,42 @@ mod tests {
     }
 
     #[test]
+    fn startup_applies_declarations_without_blocking_the_turn() {
+        let root = workspace("declarations");
+        let mut document = std::fs::read_to_string(root.join("siralos.toml"))
+            .expect("profile");
+        document.push_str("\n[modules.missing]\npath = \"modules/missing\"\n");
+        std::fs::write(root.join("siralos.toml"), document)
+            .expect("declaration");
+        let (result, out) = run(&root, "hello", false);
+        assert!(result.is_ok(), "{result:?}");
+        assert!(
+            out.contains("not resolved:"),
+            "a broken declaration is reported before the turn: {out}"
+        );
+        assert!(out.contains("Siralos received: hello"), "{out}");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_malformed_workspace_document_does_not_block_the_turn() {
+        let root = workspace("malformed-document");
+        std::fs::write(
+            root.join("siralos.toml"),
+            "[modules.example\npath = \"modules/example\"\n",
+        )
+        .expect("malformed document");
+        let (result, out) = run(&root, "hello", false);
+        assert!(result.is_ok(), "{result:?}");
+        assert!(
+            out.contains("module declarations rejected"),
+            "the malformed module pass is reported: {out}"
+        );
+        assert!(out.contains("Siralos received: hello"), "{out}");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn the_record_shape_is_pinned() {
         // A frozen public interface for 1.0: the exact field order, and no
         // `usage` field until usage capture exists end to end.

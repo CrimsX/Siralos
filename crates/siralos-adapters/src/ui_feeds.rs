@@ -17,7 +17,7 @@ use siralos_core::tool::{
 use siralos_core::ui::UiFeed;
 use siralos_core::workspace::bounds::WORKSPACE_LIMITS;
 
-use crate::module::manifest::ModuleRecord;
+use crate::module::manifest::ModuleDeclaration;
 use crate::workspace::checkpoint::open_checkpoint_store;
 use crate::workspace::list::{ListOutcome, list_directory};
 use crate::workspace::search::{SearchInput, SearchOutcome, search};
@@ -97,8 +97,8 @@ pub struct FeedContext<'a> {
     pub tools: &'a [RegisteredToolInfo],
     /// Effective permission policy.
     pub policy: &'a PermissionPolicy,
-    /// Installed module records.
-    pub modules: &'a [ModuleRecord],
+    /// Declared modules, with an optional recorded digest.
+    pub modules: &'a [ModuleDeclaration],
     /// Latest context summary, when computed.
     pub context: Option<&'a ContextSummary>,
     /// Caller state directory for the checkpoint store. `None`
@@ -326,17 +326,23 @@ fn resolve_modules_status(
     context: &FeedContext<'_>,
 ) -> Result<Vec<String>, FeedError> {
     if context.modules.is_empty() {
+        // The pinned ui-components corpus records this line. The product's
+        // `/modules` view says "declared"; this feed keeps the frozen wording
+        // until a reviewed corpus amendment can change it.
         return Ok(vec!["modules: none installed".to_owned()]);
     }
     let mut lines = Vec::new();
-    for record in context.modules {
-        let digest =
-            record.digest.strip_prefix("sha256:").unwrap_or(&record.digest);
+    for declaration in context.modules {
+        let digest = match declaration.digest.as_deref() {
+            Some(digest) => {
+                let digest = digest.strip_prefix("sha256:").unwrap_or(digest);
+                digest.chars().take(8).collect::<String>()
+            }
+            None => "manifest".to_owned(),
+        };
         lines.push(format!(
             "{} (digest {}, path {})",
-            record.id,
-            digest.chars().take(8).collect::<String>(),
-            record.path
+            declaration.id, digest, declaration.path
         ));
     }
     Ok(lines)
@@ -791,7 +797,7 @@ mod tests {
         MAX_FEED_HOLIDAYS, ToolKind, civil_from_days, days_from_civil,
         feed_capability, resolve_feed, tool_kind, weekday_index,
     };
-    use crate::module::manifest::ModuleRecord;
+    use crate::module::manifest::ModuleDeclaration;
     use crate::tool::WriteTool;
     use crate::workspace::checkpoint::open_checkpoint_store;
 
@@ -1052,11 +1058,11 @@ mod tests {
     }
 
     #[test]
-    fn modules_status_lists_install_records() {
-        let modules = [ModuleRecord {
+    fn modules_status_lists_declarations() {
+        let modules = [ModuleDeclaration {
             id: "demo".to_owned(),
             path: "modules/demo".to_owned(),
-            digest: format!("sha256:{}", "a".repeat(64)),
+            digest: Some(format!("sha256:{}", "a".repeat(64))),
         }];
         let fixture = Fixture::new("modules");
         let context = FeedContext { modules: &modules, ..fixture.context() };

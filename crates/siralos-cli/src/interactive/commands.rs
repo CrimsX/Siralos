@@ -12,17 +12,13 @@ pub(super) enum SlashCommand<'a> {
     Context,
     /// `/tools` — no arguments.
     Tools,
-    /// `/modules` — no arguments.
+    /// `/modules` - no arguments.
     Modules,
-    /// `/exit` — no arguments.
+    /// `/rebuild` - re-read and apply declarative module declarations.
+    Rebuild,
+    /// `/exit` - no arguments.
     Exit,
-    /// `/modules-add` with optional folder argument (`None` = bare command).
-    ModulesAdd(Option<&'a str>),
-    /// `/modules-enable` with optional module id (`None` = bare command).
-    ModulesEnable(Option<&'a str>),
-    /// `/modules-activate` with optional module id (`None` = bare command).
-    ModulesActivate(Option<&'a str>),
-    /// `/provider` — display-only (U7).
+    /// `/provider` - display-only (U7).
     Provider,
     /// `/provider remove` — remove the configured provider (confirmed).
     ProviderRemove,
@@ -67,10 +63,8 @@ pub fn slash_command_catalog() -> Vec<(&'static str, &'static str)> {
     vec![
         ("/context", "Show context projection"),
         ("/tools", "List available tools"),
-        ("/modules", "List installed modules"),
-        ("/modules-add", "Add a module"),
-        ("/modules-enable", "Enable a module"),
-        ("/modules-activate", "Activate a module"),
+        ("/modules", "List declared modules"),
+        ("/rebuild", "Apply declared modules"),
         ("/provider", "Show applied provider"),
         ("/provider remove", "Remove configured provider"),
         ("/model", "Show applied model"),
@@ -109,13 +103,13 @@ pub(super) fn render_evolve_lines() -> String {
 /// vocabulary — the SINGLE parser both loops call (T4 consolidation).
 ///
 /// Empty input is the caller's no-op (both loops skip it before parsing);
-/// this function maps every other line, including the bare/prefixed
-/// `/modules-*` pairs, to exactly one variant.
+/// this function maps every other line to exactly one variant.
 pub(super) fn parse_slash_command(input: &str) -> SlashCommand<'_> {
     match input {
         "/context" => SlashCommand::Context,
         "/tools" => SlashCommand::Tools,
         "/modules" => SlashCommand::Modules,
+        "/rebuild" => SlashCommand::Rebuild,
         "/provider" => SlashCommand::Provider,
         "/provider remove" => SlashCommand::ProviderRemove,
         "/mouse" => SlashCommand::Mouse,
@@ -132,18 +126,10 @@ pub(super) fn parse_slash_command(input: &str) -> SlashCommand<'_> {
         "/evolve" => SlashCommand::Evolve,
         "/exit" => SlashCommand::Exit,
         _ => {
-            if input == "/modules-add" {
-                SlashCommand::ModulesAdd(None)
-            } else if let Some(folder) = input.strip_prefix("/modules-add ") {
-                SlashCommand::ModulesAdd(Some(folder))
-            } else if input == "/modules-enable" {
-                SlashCommand::ModulesEnable(None)
-            } else if let Some(id) = input.strip_prefix("/modules-enable ") {
-                SlashCommand::ModulesEnable(Some(id))
-            } else if input == "/modules-activate" {
-                SlashCommand::ModulesActivate(None)
-            } else if let Some(id) = input.strip_prefix("/modules-activate ") {
-                SlashCommand::ModulesActivate(Some(id))
+            if input.starts_with("/rebuild") {
+                // `/rebuild` takes no arguments: anything beyond the exact
+                // form stays an unknown command (honesty gate).
+                SlashCommand::Prompt(input)
             } else if let Some(id) = input.strip_prefix("/ui-edit ") {
                 SlashCommand::UiEdit(Some(id))
             } else if let Some(id) = input.strip_prefix("/ui-remove ") {

@@ -77,14 +77,10 @@ pub enum WorkerCommand {
     /// credential, so it happens where they live (decision 168 R2): a secret
     /// never crosses to the frontend just so the frontend can fetch.
     ModelsFetch,
-    /// Install a module folder into the session's module registry. These three
-    /// mutate the registry and activate hosts, so they belong with the session
+    /// Re-read declarative `[modules.<id>]` entries and reconcile the
+    /// session's module registry. This belongs with the session
     /// (decision 168 R4): the frontend cannot hold a registry it does not own.
-    ModulesAdd(String),
-    /// Enable an installed module.
-    ModulesEnable(String),
-    /// Activate an installed module through the profile's narrowing gate.
-    ModulesActivate(String),
+    Rebuild,
     /// Render one UI component preview with live feed content.
     UiPreview(String),
     /// Resolve and project the current UI panel snapshot.
@@ -397,12 +393,9 @@ pub trait WorkerSession {
         &mut self,
         cancellation: &CancelFlag,
     ) -> Result<Vec<String>, String>;
-    /// Install a module folder, returning the report the frontend shows.
-    fn modules_add(&mut self, folder: &str) -> Result<String, String>;
-    /// Enable an installed module.
-    fn modules_enable(&mut self, id: &str) -> Result<String, String>;
-    /// Activate an installed module through the profile's narrowing gate.
-    fn modules_activate(&mut self, id: &str) -> Result<String, String>;
+    /// Re-read and apply declarative module entries, returning the report
+    /// the frontend shows.
+    fn rebuild(&mut self) -> Result<String, String>;
     /// The header the frontend shows (C2 step 3). The status segment is derived
     /// from the composition and its context metrics, so the frontend cannot
     /// build it once the session lives here.
@@ -806,36 +799,16 @@ fn run_worker_loop_with_stop<S: WorkerSession>(
                 // normally; do not carry that bit into the next prompt.
                 cancel.clear();
             }
-            WorkerCommand::ModulesAdd(value) => {
-                match session.modules_add(&value) {
-                    Ok(report) => {
-                        let _ = events.send(WorkerEvent::Report(report));
-                    }
-                    Err(message) => {
-                        let _ = events.send(WorkerEvent::Failed(message));
-                    }
+            WorkerCommand::Rebuild => match session.rebuild() {
+                Ok(report) => {
+                    let _ = events.send(WorkerEvent::Report(report));
+                    let _ = events
+                        .send(WorkerEvent::Ready(Box::new(session.status())));
                 }
-            }
-            WorkerCommand::ModulesEnable(value) => {
-                match session.modules_enable(&value) {
-                    Ok(report) => {
-                        let _ = events.send(WorkerEvent::Report(report));
-                    }
-                    Err(message) => {
-                        let _ = events.send(WorkerEvent::Failed(message));
-                    }
+                Err(message) => {
+                    let _ = events.send(WorkerEvent::Failed(message));
                 }
-            }
-            WorkerCommand::ModulesActivate(value) => {
-                match session.modules_activate(&value) {
-                    Ok(report) => {
-                        let _ = events.send(WorkerEvent::Report(report));
-                    }
-                    Err(message) => {
-                        let _ = events.send(WorkerEvent::Failed(message));
-                    }
-                }
-            }
+            },
             WorkerCommand::Reload => match session.reload() {
                 Ok(report) => {
                     let _ = events.send(WorkerEvent::Report(report));
@@ -900,14 +873,12 @@ impl WorkerHandle {
         let string_len = match &command {
             WorkerCommand::Prompt(value)
             | WorkerCommand::SetModel(value)
-            | WorkerCommand::ModulesAdd(value)
-            | WorkerCommand::ModulesEnable(value)
-            | WorkerCommand::ModulesActivate(value)
             | WorkerCommand::UiPreview(value) => Some(value.len()),
             WorkerCommand::Cancel
             | WorkerCommand::ContextReport
             | WorkerCommand::ToolsReport
             | WorkerCommand::PanelsReport
+            | WorkerCommand::Rebuild
             | WorkerCommand::Reload
             | WorkerCommand::ModelsFetch
             | WorkerCommand::Shutdown => None,
@@ -2015,14 +1986,8 @@ mod loop_tests {
         ) -> Result<Vec<String>, String> {
             Ok(vec!["fake-model".to_owned()])
         }
-        fn modules_add(&mut self, folder: &str) -> Result<String, String> {
-            Ok(format!("added {folder}"))
-        }
-        fn modules_enable(&mut self, id: &str) -> Result<String, String> {
-            Ok(format!("enabled {id}"))
-        }
-        fn modules_activate(&mut self, id: &str) -> Result<String, String> {
-            Ok(format!("activated {id}"))
+        fn rebuild(&mut self) -> Result<String, String> {
+            Ok("rebuilt".to_owned())
         }
         fn status(&self) -> SessionStatus {
             let call = self.status_calls.get() + 1;
@@ -2079,18 +2044,15 @@ mod loop_tests {
         events
     }
     #[test]
-    fn a_module_command_reports_what_the_session_did() {
-        // Decision 168 R4: these mutate the session's module registry, so the
-        // report is the session's too -- the loop only relays it.
+    fn a_module_rebuild_reports_what_the_session_did() {
+        // Decision 168 R4: the rebuild mutates the session's module
+        // registry, so the report is the session's too -- the loop only
+        // relays it.
         let mut session = FakeSession::default();
         let cancel = CancelFlag::new();
-        let events = run(
-            vec![WorkerCommand::ModulesActivate("demo".to_owned())],
-            &mut session,
-            &cancel,
-        );
+        let events = run(vec![WorkerCommand::Rebuild], &mut session, &cancel);
         assert!(
-            events.contains(&WorkerEvent::Report("activated demo".to_owned())),
+            events.contains(&WorkerEvent::Report("rebuilt".to_owned())),
             "got: {events:?}"
         );
     }
@@ -2793,13 +2755,7 @@ mod loop_tests {
         ) -> Result<Vec<String>, String> {
             Ok(Vec::new())
         }
-        fn modules_add(&mut self, _folder: &str) -> Result<String, String> {
-            Ok(String::new())
-        }
-        fn modules_enable(&mut self, _id: &str) -> Result<String, String> {
-            Ok(String::new())
-        }
-        fn modules_activate(&mut self, _id: &str) -> Result<String, String> {
+        fn rebuild(&mut self) -> Result<String, String> {
             Ok(String::new())
         }
         fn ui_preview(&self, _id: &str) -> String {

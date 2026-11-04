@@ -13,7 +13,9 @@
 use std::path::Path;
 
 use siralos_adapters::atomic::stage_atomic;
-use siralos_adapters::module::manifest::{ModuleRecord, load_module_records};
+use siralos_adapters::module::manifest::{
+    ModuleDeclaration, load_module_declarations,
+};
 use siralos_adapters::observed_write::{
     ObservedRevision, ObservedWriteToken, observe_file_for_write,
 };
@@ -36,9 +38,9 @@ pub struct UiFeedInputs<'a> {
     pub tools: &'a [RegisteredToolInfo],
     /// Effective permission policy.
     pub policy: &'a PermissionPolicy,
-    /// Installed module records backing the `modules.status`
-    /// feed (ADR 0039 §2: install records, never live state).
-    pub modules: &'a [ModuleRecord],
+    /// Declared modules backing the `modules.status` feed (ADR 0039
+    /// §2: declarations, never live state).
+    pub modules: &'a [ModuleDeclaration],
     /// Latest projection snapshot, when computed.
     pub last_projection: Option<&'a LastProjection>,
     /// Caller state directory for the checkpoint store.
@@ -49,12 +51,13 @@ pub struct UiFeedInputs<'a> {
     pub now_utc_ms: Option<u64>,
 }
 
-/// Load the installed module records for feed resolution. An
-/// unreadable record set resolves as empty (no installed
-/// modules), matching the empty install state.
+/// Load declared modules for feed resolution. An unreadable declaration
+/// set resolves as empty (no declared modules), matching `/modules`.
 #[must_use]
-pub fn load_feed_module_records(root: &Path) -> Vec<ModuleRecord> {
-    load_module_records(root).unwrap_or_default()
+pub fn load_feed_module_declarations(root: &Path) -> Vec<ModuleDeclaration> {
+    load_module_declarations(root)
+        .map(|loaded| loaded.declarations)
+        .unwrap_or_default()
 }
 
 /// Resolve one spec's feed to sanitized display lines. Sanitizing
@@ -824,8 +827,8 @@ pub fn remove_ui_spec(
 mod tests {
     use super::{
         MAX_UI_COMPONENTS, UiDocument, UiFeedInputs, UiFileErrorKind,
-        add_ui_spec, edit_ui_spec, load_feed_module_records, load_ui_document,
-        observe_ui_document, remove_ui_spec, render_ui_list,
+        add_ui_spec, edit_ui_spec, load_feed_module_declarations,
+        load_ui_document, observe_ui_document, remove_ui_spec, render_ui_list,
         render_ui_preview, resolve_spec_content, save_ui_document,
     };
     use siralos_core::ui::{UnvalidatedSpec, merge_specs};
@@ -1000,7 +1003,7 @@ mod tests {
             "[modules.demo]\npath = \"mods/demo\"\ndigest = \"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"\n",
         )
         .expect("seed");
-        let records = load_feed_module_records(&root);
+        let records = load_feed_module_declarations(&root);
         assert_eq!(records.len(), 1, "{records:?}");
         let policy = siralos_core::tool::PermissionPolicy::default();
         let tools: Vec<siralos_core::tool::registry::RegisteredToolInfo> =

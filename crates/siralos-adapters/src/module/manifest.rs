@@ -309,7 +309,7 @@ pub fn load_manifest(
                     "component must be a single relative file name".to_owned(),
                 ));
             }
-            let relative = workspace_relative(root, folder)?;
+            let relative = workspace_relative(root, &canonical_folder)?;
             let requested = if relative.is_empty() {
                 name.replace('\\', "/")
             } else {
@@ -589,6 +589,82 @@ impl fmt::Debug for ModuleRecord {
     }
 }
 
+/// One `[modules.<id>]` declaration read from workspace `siralos.toml`.
+///
+/// A declaration is the desired-state input: `path` is always required,
+/// while `digest` may be omitted and resolved from the module manifest at
+/// rebuild time. A present digest remains an independent pin and must match
+/// the manifest.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ModuleDeclaration {
+    /// The declared module package id.
+    pub id: String,
+    /// Workspace-relative folder of the module source.
+    pub path: String,
+    /// Optional recorded package digest, spelled `sha256:<hex>`.
+    pub digest: Option<String>,
+}
+
+impl fmt::Debug for ModuleDeclaration {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ModuleDeclaration")
+            .field("id", &"<redacted>")
+            .field("path", &"<redacted>")
+            .field("digest", &self.digest.as_ref().map(|_| "<recorded>"))
+            .finish()
+    }
+}
+
+/// One declaration that failed bounded shape validation while the rest of
+/// the document remained readable. The id is retained for diagnostics only.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ModuleDeclarationFailure {
+    /// The declared id when the table key itself is readable.
+    pub id: String,
+    /// The typed shape failure.
+    pub failure: ModuleManifestFailure,
+}
+
+impl fmt::Debug for ModuleDeclarationFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ModuleDeclarationFailure")
+            .field("id", &"<redacted>")
+            .field("failure", &self.failure.code())
+            .finish()
+    }
+}
+
+/// The bounded parse result for `[modules.<id>]` declarations.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LoadedModuleDeclarations {
+    /// Valid declarations, sorted by id.
+    pub declarations: Vec<ModuleDeclaration>,
+    /// Per-entry shape failures; the valid declarations still apply.
+    pub failures: Vec<ModuleDeclarationFailure>,
+}
+
+/// One resolved declaration: the desired record plus its verified manifest.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ResolvedModuleDeclaration {
+    /// The resolved record (the digest is always present).
+    pub record: ModuleRecord,
+    /// The manifest whose package identity and optional component were
+    /// verified against the record.
+    pub manifest: ModuleManifest,
+}
+
+impl fmt::Debug for ResolvedModuleDeclaration {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ResolvedModuleDeclaration")
+            .field("record", &self.record)
+            .field("manifest", &self.manifest)
+            .finish()
+    }
+}
+
 /// Install one loaded manifest through the production host boundary.
 ///
 /// The host reads the exact component bytes (bounded, regular file,
@@ -654,13 +730,120 @@ pub fn install_module(
     record_module(workspace_root, &record)
 }
 
+/// Read the workspace module declarations from `siralos.toml`.
+///
+/// A missing file means no modules are declared (empty, not an error).
+/// Unreadable, oversized, non-UTF-8, or structurally malformed documents
+/// fail typed; an individual malformed entry is retained in `failures`
+/// while the remaining valid entries still load. This keeps one bad
+/// declaration from hiding every healthy module, without silently ignoring
+/// the bad one.
+pub fn load_module_declarations(
+    root: &Path,
+) -> Result<LoadedModuleDeclarations, ModuleManifestFailure> {
+    let path = root.join(SIRALOS_TOML_FILE_NAME);
+    let Some(text) = read_record_text(&path)? else {
+        return Ok(LoadedModuleDeclarations::default());
+    };
+    if text.trim().is_empty() {
+        return Ok(LoadedModuleDeclarations::default());
+    }
+    let value: toml::Value = toml::from_str(&text).map_err(|_| {
+        ModuleManifestFailure::ManifestSyntax(
+            "siralos.toml syntax is invalid".to_owned(),
+        )
+    })?;
+    let Some(modules_value) = value.get("modules") else {
+        return Ok(LoadedModuleDeclarations::default());
+    };
+    let toml::Value::Table(modules) = modules_value else {
+        return Err(ModuleManifestFailure::ManifestSyntax(
+            "the [modules] entry must be a table".to_owned(),
+        ));
+    };
+    if modules.len() > MAX_MODULE_RECORDS {
+        return Err(ModuleManifestFailure::RecordConflict(
+            "module declaration count exceeds the safety bound".to_owned(),
+        ));
+    }
+    let mut loaded = LoadedModuleDeclarations::default();
+    for (id, entry) in modules {
+        let fields = module_declaration_fields(entry);
+        let (path, digest) = match fields {
+            Ok(fields) => fields,
+            Err(failure) => {
+                loaded.failures.push(ModuleDeclarationFailure {
+                    id: id.clone(),
+                    failure,
+                });
+                continue;
+            }
+        };
+        if let Err(failure) = validate_declaration(id, path, digest) {
+            loaded
+                .failures
+                .push(ModuleDeclarationFailure { id: id.clone(), failure });
+            continue;
+        }
+        loaded.declarations.push(ModuleDeclaration {
+            id: id.clone(),
+            path: path.to_owned(),
+            digest: digest.map(str::to_owned),
+        });
+    }
+    loaded.declarations.sort();
+    loaded.failures.sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(loaded)
+}
+
+/// Resolve one declaration against its manifest and optional component.
+///
+/// The manifest id must match the declared id. A declared digest, when
+/// present, must match the manifest digest; when absent the manifest digest
+/// becomes the resolved record digest. A named component is re-read and
+/// digest-verified here (and again by `ModuleHost::install`).
+pub fn resolve_module_declaration(
+    root: &Path,
+    declaration: &ModuleDeclaration,
+) -> Result<ResolvedModuleDeclaration, ModuleManifestFailure> {
+    validate_declaration(
+        &declaration.id,
+        &declaration.path,
+        declaration.digest.as_deref(),
+    )?;
+    let manifest = load_manifest(root, Path::new(&declaration.path))?;
+    if manifest.package().id().as_str() != declaration.id {
+        return Err(ModuleManifestFailure::RecordConflict(
+            "module manifest id does not match its declaration".to_owned(),
+        ));
+    }
+    let manifest_digest = manifest.package().digest().as_str();
+    if let Some(declared) = declaration.digest.as_deref() {
+        let declared = declared.strip_prefix("sha256:").unwrap_or(declared);
+        if declared != manifest_digest {
+            return Err(ModuleManifestFailure::RecordConflict(
+                "module declaration digest does not match its manifest"
+                    .to_owned(),
+            ));
+        }
+    }
+    verify_component(&manifest)?;
+    Ok(ResolvedModuleDeclaration {
+        record: ModuleRecord {
+            id: declaration.id.clone(),
+            path: declaration.path.clone(),
+            digest: format!("sha256:{manifest_digest}"),
+        },
+        manifest,
+    })
+}
+
 /// Read the workspace module records from `siralos.toml`.
 ///
-/// A missing file means no modules are installed (empty, not an
-/// error). Unreadable, oversized, or non-UTF-8 files fail typed.
-/// Malformed `[modules]` content is skipped per entry with a typed
-/// failure? No: this slice treats a malformed record file as a typed
-/// refusal (fail-closed: never a silent partial success).
+/// This legacy accessor requires every record to carry a digest. Product
+/// callers use [`load_module_declarations`] plus
+/// [`resolve_module_declaration`] so a digest may be resolved from the
+/// manifest. The record writer and its conflict tests still use this shape.
 pub fn load_module_records(
     root: &Path,
 ) -> Result<Vec<ModuleRecord>, ModuleManifestFailure> {
@@ -727,6 +910,64 @@ fn module_record_fields(
             )
         })?;
     Ok((path, digest))
+}
+
+/// Borrow the required `path` and optional `digest` fields from one
+/// declaration entry.
+fn module_declaration_fields(
+    entry: &toml::Value,
+) -> Result<(&str, Option<&str>), ModuleManifestFailure> {
+    let fields = entry.as_table().ok_or_else(|| {
+        ModuleManifestFailure::RecordConflict(
+            "module declaration entry must be a table".to_owned(),
+        )
+    })?;
+    let path =
+        fields.get("path").and_then(toml::Value::as_str).ok_or_else(|| {
+            ModuleManifestFailure::RecordConflict(
+                "module declaration requires a string path".to_owned(),
+            )
+        })?;
+    let digest = match fields.get("digest") {
+        None => None,
+        Some(toml::Value::String(digest)) => Some(digest.as_str()),
+        Some(_) => {
+            return Err(ModuleManifestFailure::RecordConflict(
+                "module declaration digest must be a string".to_owned(),
+            ));
+        }
+    };
+    Ok((path, digest))
+}
+
+/// Validate one declaration's bounded shape without resolving it.
+fn validate_declaration(
+    id: &str,
+    path: &str,
+    digest: Option<&str>,
+) -> Result<(), ModuleManifestFailure> {
+    ModulePackageId::parse(id).map_err(|_| {
+        ModuleManifestFailure::RecordConflict(
+            "module declaration id is invalid".to_owned(),
+        )
+    })?;
+    let path_ok = path.len() <= MAX_MODULE_FIELD_BYTES
+        && !path.chars().any(char::is_control)
+        && !path.contains(':')
+        && !path.contains('\\')
+        && siralos_core::workspace::path::validate_relative_path(path).is_ok()
+        && !is_model_protected_workspace_path(path);
+    let digest_ok = digest.is_none_or(|digest| {
+        digest.len() == "sha256:".len() + 64
+            && digest.starts_with("sha256:")
+            && is_hex64(&digest["sha256:".len()..])
+    });
+    if !path_ok || !digest_ok {
+        return Err(ModuleManifestFailure::RecordConflict(
+            "module declaration has an invalid path or digest".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// Validate one record's bounded shape without resolving or rendering it.
@@ -1460,6 +1701,64 @@ mod tests {
         let temp = workspace();
         let records = load_module_records(&temp).expect("loads");
         assert!(records.is_empty());
+        let _ = remove_dir_all(temp);
+    }
+
+    #[test]
+    fn declarations_allow_omitted_digest_and_isolate_entry_failures() {
+        let temp = workspace();
+        create_dir_all(temp.join("plugins/good")).expect("good folder");
+        write(
+            temp.join("plugins/good/module-manifest.toml"),
+            manifest_text("good", &digest_hex(0x11), ABI, None),
+        )
+        .expect("good manifest");
+        write(
+            temp.join("siralos.toml"),
+            "[modules.good]\npath = \"plugins/good\"\n\n[modules.bad]\npath = \"../escape\"\n\n[modules.typed]\npath = \"plugins/typed\"\ndigest = 7\n",
+        )
+        .expect("declarations");
+
+        let loaded =
+            load_module_declarations(&temp).expect("load declarations");
+        assert_eq!(loaded.declarations.len(), 1);
+        assert_eq!(loaded.declarations[0].id, "good");
+        assert_eq!(loaded.declarations[0].digest, None);
+        let failed_ids: Vec<&str> = loaded
+            .failures
+            .iter()
+            .map(|failure| failure.id.as_str())
+            .collect();
+        assert_eq!(failed_ids, vec!["bad", "typed"]);
+
+        let resolved =
+            resolve_module_declaration(&temp, &loaded.declarations[0])
+                .expect("manifest digest resolves the record");
+        assert_eq!(
+            resolved.record.digest,
+            format!("sha256:{}", digest_hex(0x11))
+        );
+        assert_eq!(resolved.record.path, "plugins/good");
+        let _ = remove_dir_all(temp);
+    }
+
+    #[test]
+    fn declaration_digest_mismatch_is_typed_before_apply() {
+        let temp = workspace();
+        create_dir_all(temp.join("plugins/good")).expect("good folder");
+        write(
+            temp.join("plugins/good/module-manifest.toml"),
+            manifest_text("good", &digest_hex(0x22), ABI, None),
+        )
+        .expect("good manifest");
+        let declaration = ModuleDeclaration {
+            id: "good".to_owned(),
+            path: "plugins/good".to_owned(),
+            digest: Some(format!("sha256:{}", digest_hex(0x33))),
+        };
+        let failure = resolve_module_declaration(&temp, &declaration)
+            .expect_err("a pinned digest must match the manifest");
+        assert_eq!(failure.code(), "RECORD_CONFLICT");
         let _ = remove_dir_all(temp);
     }
 

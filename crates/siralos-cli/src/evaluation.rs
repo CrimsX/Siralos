@@ -1156,13 +1156,7 @@ mod tests {
         ) -> Result<Vec<String>, String> {
             Ok(Vec::new())
         }
-        fn modules_add(&mut self, _folder: &str) -> Result<String, String> {
-            Ok(String::new())
-        }
-        fn modules_enable(&mut self, _id: &str) -> Result<String, String> {
-            Ok(String::new())
-        }
-        fn modules_activate(&mut self, _id: &str) -> Result<String, String> {
+        fn rebuild(&mut self) -> Result<String, String> {
             Ok(String::new())
         }
         fn status(&self) -> crate::session_worker::SessionStatus {

@@ -2,13 +2,14 @@
 //! frontends drive, its worker-session implementation, and the
 //! context audit the `/context` command reports.
 
+use super::apply_declared_modules;
 use super::{
     ApplicationProjectionConfig, BTreeMap, BashTool, ConfigurationError,
     ContextCapacity, ContextPolicy, ConversationItem,
-    DEFAULT_REVIEW_PROVIDER_ID, EditTool, FlushError, FlushOutcome,
-    HostCredential, HostProvider, InteractiveError, InteractiveOptions,
-    ModuleHost, ModuleLifecycle, ModuleManifest, PermissionPolicy,
-    ProjectionService, Rc, ReadTool, RecordedReplayProvider,
+    DEFAULT_REVIEW_PROVIDER_ID, EditTool, EffectiveRunPolicy, FlushError,
+    FlushOutcome, HostCredential, HostProvider, InteractiveError,
+    InteractiveOptions, ModuleHost, ModuleLifecycle, ModuleManifest,
+    PermissionPolicy, ProjectionService, Rc, ReadTool, RecordedReplayProvider,
     ReplayStoreLoadError, RetainingReplayRecorder,
     SIRALOS_SYSTEM_INSTRUCTIONS, SegmentInput, SessionProvider,
     SiralosApplication, Stability, ToolLoopEvent, ToolRegistry, UiFeedInputs,
@@ -19,8 +20,7 @@ use super::{
     load_replay_store, load_sourced_user_specs, load_user_configuration,
     load_workspace_profile_snapshot, module_ui_state, non_live_state_digest,
     redacted_credential_display, reload_authority_is_revalidated,
-    reload_report_from_load, render_activate_module, render_add_module,
-    render_context_segment, render_enable_module, render_tools_segment,
+    reload_report_from_load, render_context_segment, render_tools_segment,
     render_ui_preview_text, resolve_spec_content, resolve_workspace_root,
     safe_alias_for_display, safe_profile_diagnostic, safe_report_text,
     session_host_rules, verify_session_lock, write_replay_store,
@@ -99,8 +99,9 @@ pub(crate) struct SessionComposition<'a> {
     pub(super) hostless: BTreeMap<String, ModuleLifecycle>,
     /// Loaded module manifests by module id.
     pub(super) manifests: BTreeMap<String, ModuleManifest>,
-    /// Applied profile's module selection, if any.
-    pub(super) profile_modules: Option<Vec<String>>,
+    /// Effective Host policy captured at composition. `/rebuild` reuses it
+    /// for advisory lock verification; it never re-applies `[profile]`.
+    pub(super) effective_policy: EffectiveRunPolicy,
     /// Applied profile's context control, if any.
     pub(super) context_control: Option<ContextPolicy>,
     /// Whether the context subsystem is enabled for this session.
@@ -143,9 +144,10 @@ pub(crate) struct SessionComposition<'a> {
     /// Protocol string the session's provider was built with (snapshot of
     /// `applied_protocol.as_str()` at composition; `/reload` diffs this).
     pub(super) applied_protocol_str: String,
-    /// Digest of applied non-route profile state (overlay/modules/context/
-    /// skills/replay flags/context-system). Reload compares this before
-    /// deciding whether live authority must be revoked.
+    /// Digest of applied non-route profile state (overlay/context/skills/
+    /// replay flags/context-system). Reload compares this before deciding
+    /// whether live authority must be revoked. Module declarations are
+    /// applied by `/rebuild`, not by `/reload`.
     pub(super) applied_non_live_digest: Option<String>,
     /// Set when a reload invalidates/absent the trusted profile. Further turns
     /// are refused until a fresh composition is created.
@@ -318,7 +320,7 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
         self.live_provider.fetch_models_cancellable(cancellation.flag())
     }
 
-    fn modules_add(&mut self, folder: &str) -> Result<String, String> {
+    fn rebuild(&mut self) -> Result<String, String> {
         if self.authority_revoked {
             return Err(
                 "session authority was revoked by profile reload; restart required"
@@ -326,49 +328,24 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
             );
         }
         // The registry and the hosts live here, so the mutation does too
-        // (decision 168 R4). The render helpers are the SAME functions the
-        // dispatcher called, so the reports and side effects do not fork.
-        Ok(render_add_module(
-            &self.workspace_root,
-            folder,
-            &mut self.hosts,
-            &mut self.hostless,
-            &mut self.manifests,
-        ))
-    }
-
-    fn modules_enable(&mut self, id: &str) -> Result<String, String> {
-        if self.authority_revoked {
-            return Err(
-                "session authority was revoked by profile reload; restart required"
-                    .to_owned(),
-            );
-        }
-        Ok(render_enable_module(
+        // (decision 168 R4). `[profile]` is deliberately not re-read:
+        // `/rebuild` applies module declarations only.
+        let outcome = apply_declared_modules(
             &self.workspace_root,
             &mut self.hosts,
             &mut self.hostless,
             &mut self.manifests,
-            id,
-            self.profile_modules.as_deref(),
-        ))
-    }
-
-    fn modules_activate(&mut self, id: &str) -> Result<String, String> {
-        if self.authority_revoked {
-            return Err(
-                "session authority was revoked by profile reload; restart required"
-                    .to_owned(),
-            );
-        }
-        Ok(render_activate_module(
+        );
+        let lock_decision = verify_session_lock(
             &self.workspace_root,
-            &mut self.hosts,
-            &self.hostless,
-            &mut self.manifests,
-            id,
-            self.profile_modules.as_deref(),
-        ))
+            &self.effective_policy,
+            &outcome.records,
+        );
+        let mut report = outcome.render();
+        if let Some(reason) = &lock_decision.reason {
+            report.push_str(&format!("lock: {reason}\n"));
+        }
+        Ok(report)
     }
 
     fn ui_preview(&self, id: &str) -> String {
@@ -376,7 +353,7 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
         // holds the registry snapshot, policy, and application, so
         // feed content resolves here (decision 168 R4).
         let state_dir = siralos_adapters::paths::state_dir().ok();
-        let modules = crate::interactive::ui::load_feed_module_records(
+        let modules = crate::interactive::ui::load_feed_module_declarations(
             &self.workspace_root,
         );
         let inputs = crate::interactive::ui::UiFeedInputs {
@@ -428,7 +405,7 @@ impl crate::session_worker::WorkerSession for SessionComposition<'_> {
             }
         }
         let state_dir = siralos_adapters::paths::state_dir().ok();
-        let modules = crate::interactive::ui::load_feed_module_records(
+        let modules = crate::interactive::ui::load_feed_module_declarations(
             &self.workspace_root,
         );
         // Resolve at the seam: no intermediate map, so a feed
@@ -1093,19 +1070,21 @@ pub(crate) fn compose_session(
         };
         live_host_provider = Some(raw);
     }
-    // Stage 5.7 (decision 53): the applied profile's module selection
-    // narrows /modules-activate. Only an actually-applied profile
-    // contributes a selection; invalid or refused profiles contribute
-    // none (5.2 semantics), and the Host can never be broadened.
-    let profile_modules: Option<Vec<String>> =
-        if effective.applied_profile.is_some() {
-            match &loaded_profile {
-                WorkspaceProfileLoad::Record(record) => record.modules.clone(),
-                _ => None,
-            }
-        } else {
-            None
-        };
+    // `[profile] modules` was the old narrowing filter over the
+    // command-driven module lifecycle. Declarations now live under
+    // `[modules.<id>]`; the field is accepted for compatibility but has no
+    // effect. Say so once rather than silently changing its meaning.
+    if effective.applied_profile.is_some()
+        && matches!(
+            &loaded_profile,
+            WorkspaceProfileLoad::Record(record) if record.modules.is_some()
+        )
+    {
+        startup_notices.push(
+            "siralos: [profile] modules is ignored; declare modules under [modules.<id>]"
+                .to_owned(),
+        );
+    }
     // Stage 5.8 (decision 54): the applied profile's context control
     // narrows what the session claims about content. Only an
     // actually-applied profile contributes a control; invalid or refused
@@ -1159,11 +1138,29 @@ pub(crate) fn compose_session(
         tools.extend(session.register_tools());
     }
     let registry = ToolRegistry::new(tools)?;
+    // Declarative module application: `[modules.<id>]` is the desired set.
+    // Resolution and verification happen before any lifecycle mutation;
+    // a broken declaration is reported and skipped rather than blocking
+    // the session.
+    let mut hosts = BTreeMap::new();
+    let mut hostless = BTreeMap::new();
+    let mut manifests = BTreeMap::new();
+    let module_outcome = apply_declared_modules(
+        &workspace_root,
+        &mut hosts,
+        &mut hostless,
+        &mut manifests,
+    );
+    startup_notices.extend(module_outcome.failures.iter().cloned());
     // Stage 5.9 (decision 55): verify the on-disk `siralos.lock` against
     // the recomputed current lock. The lock never gates authority: the
     // session always proceeds on live Host state and reports drift or
     // untrusted content truthfully as a host-side startup diagnostic.
-    let lock_decision = verify_session_lock(&workspace_root, &effective);
+    let lock_decision = verify_session_lock(
+        &workspace_root,
+        &effective,
+        &module_outcome.records,
+    );
     if let Some(reason) = &lock_decision.reason {
         eprintln!("siralos: lock not trusted: {reason}");
     }
@@ -1228,10 +1225,10 @@ pub(crate) fn compose_session(
         policy,
         application,
         live_provider: session_provider,
-        hosts: BTreeMap::new(),
-        hostless: BTreeMap::new(),
-        manifests: BTreeMap::new(),
-        profile_modules,
+        hosts,
+        hostless,
+        manifests,
+        effective_policy: effective.clone(),
         context_control,
         context_system_enabled,
         context_session_holder,

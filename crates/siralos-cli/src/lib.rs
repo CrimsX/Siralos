@@ -37,6 +37,9 @@ pub enum Command {
     Help,
     /// Run one prompt without any interactive frontend (`--print`).
     Headless(HeadlessArgs),
+    /// Print the canonical `[profile]` approval digest for a workspace and
+    /// exit (`--profile-digest <dir>`).
+    ProfileDigest(PathBuf),
 }
 
 /// Arguments of the headless (`--print`) invocation.
@@ -77,13 +80,15 @@ impl HeadlessArgs {
 /// ```text
 /// siralos [--help | --version | --stdio]
 /// siralos --print <prompt> [--json] [--cwd <dir>]
+/// siralos --profile-digest <dir>
 /// ```
 ///
 /// `--print` takes the following argument verbatim as its prompt, so a flag
 /// written after a completed prompt is still a flag. Repeating `--print`,
 /// `--cwd` or `--json` is a usage error rather than last-wins. `--` ends flag
 /// parsing; the grammar has no positional arguments, so a token after `--` is
-/// a usage error. The inspection flags never combine with headless flags.
+/// a usage error. Inspection flags never combine with headless or
+/// profile-digest flags.
 ///
 /// # Errors
 ///
@@ -99,6 +104,7 @@ where
     let mut prompt: Option<String> = None;
     let mut json = false;
     let mut workspace_root: Option<PathBuf> = None;
+    let mut profile_digest: Option<PathBuf> = None;
     let mut terminated = false;
     let mut args = args.into_iter();
 
@@ -145,6 +151,15 @@ where
                 }
                 json = true;
             }
+            "--profile-digest" => {
+                if profile_digest.is_some() {
+                    return Err(UsageError::new(
+                        "`--profile-digest` was given more than once",
+                    ));
+                }
+                profile_digest =
+                    Some(PathBuf::from(flag_value(&mut args, text)?));
+            }
             _ => {
                 return Err(UsageError::new("unknown argument"));
             }
@@ -152,14 +167,25 @@ where
     }
 
     if inspection.is_some()
-        && (prompt.is_some() || json || workspace_root.is_some())
+        && (prompt.is_some()
+            || json
+            || workspace_root.is_some()
+            || profile_digest.is_some())
     {
         return Err(UsageError::new(
-            "`--help`, `--version` and `--stdio` cannot be combined with `--print`, `--json` or `--cwd`",
+            "`--help`, `--version` and `--stdio` cannot be combined with `--print`, `--json`, `--cwd` or `--profile-digest`",
         ));
     }
     if let Some(command) = inspection {
         return Ok(command);
+    }
+    if let Some(root) = profile_digest {
+        if prompt.is_some() || json || workspace_root.is_some() {
+            return Err(UsageError::new(
+                "`--profile-digest` cannot be combined with `--print`, `--json` or `--cwd`",
+            ));
+        }
+        return Ok(Command::ProfileDigest(root));
     }
     if let Some(prompt) = prompt {
         return Ok(Command::Headless(HeadlessArgs {
@@ -275,6 +301,26 @@ mod tests {
             parse_args(args(&["--stdio"])).expect("valid"),
             Command::Stdio
         );
+    }
+
+    #[test]
+    fn profile_digest_takes_a_workspace_root() {
+        match parse_args(args(&["--profile-digest", "workspace"]))
+            .expect("valid")
+        {
+            Command::ProfileDigest(root) => {
+                assert_eq!(root, std::path::PathBuf::from("workspace"));
+            }
+            other => panic!("expected profile digest, got {other:?}"),
+        }
+        for input in [
+            vec!["--profile-digest"],
+            vec!["--profile-digest", "x", "--json"],
+            vec!["--profile-digest", "x", "--cwd", "y"],
+            vec!["--profile-digest", "x", "--print", "prompt"],
+        ] {
+            assert!(parse_args(args(&input)).is_err(), "{input:?}");
+        }
     }
 
     #[test]

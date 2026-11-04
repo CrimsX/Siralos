@@ -1,20 +1,84 @@
-//! Module command rendering and the host setup those commands require
-//! (source validation, rejection codes, activation gates).
+//! Declarative module application: read `[modules.<id>]` declarations,
+//! resolve their manifests, and reconcile the Host's in-memory lifecycle
+//! state. There is no persistent install registry beyond `siralos.toml`;
+//! removing a declaration and rebuilding is the removal operation.
+
+use std::collections::BTreeSet;
 
 use super::{
     ActivationRequest, BTreeMap, CapabilityGrant, HostAuthority,
     LifecycleState, ModuleFailure, ModuleHost, ModuleHostBounds,
-    ModuleLifecycle, ModuleManifest, ModuleRecord, Path, PathValidationError,
-    RuntimeCheckResult, decide_module_activation, format_module_added,
-    format_modules, is_model_protected_workspace_path, load_manifest,
-    load_module_records, resolve_workspace_path, sanitize_for_display,
-    validate_relative_path, verify_component,
+    ModuleLifecycle, ModuleManifest, ModuleRecord, Path, RuntimeCheckResult,
+    format_modules, load_module_declarations, resolve_module_declaration,
+    sanitize_for_display,
 };
 
-/// Render the `/modules` empty-state or installed view.
+/// One declarative apply pass. Lines are user-facing success/change
+/// observations; failures are startup notices or `/rebuild` diagnostics.
+#[derive(Debug, Default)]
+pub(super) struct DeclaredModuleOutcome {
+    /// Resolved records, including modules whose apply step failed. Lock
+    /// verification uses this list so a failed activation still leaves a
+    /// truthful identity to compare.
+    pub(super) records: Vec<ModuleRecord>,
+    /// Declarations successfully resolved this pass.
+    pub(super) declared: usize,
+    /// Modules currently applied (unchanged or newly successful).
+    pub(super) applied: usize,
+    /// Human-readable changes, deterministic by module id.
+    pub(super) lines: Vec<String>,
+    /// Truthful failures, deterministic by module id.
+    pub(super) failures: Vec<String>,
+}
+
+impl DeclaredModuleOutcome {
+    /// Render the `/rebuild` report. Startup only consumes `failures`
+    /// through the existing startup-notice path.
+    #[must_use]
+    pub(super) fn render(&self) -> String {
+        if self.declared == 0
+            && self.failures.is_empty()
+            && self.lines.is_empty()
+        {
+            return "No modules declared.\n".to_owned();
+        }
+        let mut out = String::new();
+        if self.lines.is_empty() && self.failures.is_empty() {
+            out.push_str("No module changes.\n");
+        }
+        for line in &self.lines {
+            out.push_str(&sanitize_for_display(line));
+            out.push('\n');
+        }
+        for failure in &self.failures {
+            out.push_str(&sanitize_for_display(failure));
+            out.push('\n');
+        }
+        out.push_str(&format!(
+            "{} declared, {} applied, {} failed\n",
+            self.declared,
+            self.applied,
+            self.failures.len()
+        ));
+        out
+    }
+}
+
+/// Render the `/modules` declaration view. Runtime state is deliberately
+/// not claimed here: the next rebuild is the source of truth.
 pub(super) fn render_modules(workspace_root: &Path) -> String {
-    match load_module_records(workspace_root) {
-        Ok(records) => format_modules(&records),
+    match load_module_declarations(workspace_root) {
+        Ok(loaded) => {
+            let mut rendered = format_modules(&loaded.declarations);
+            for failure in &loaded.failures {
+                rendered.push_str(&format!(
+                    "  {} (declaration rejected, code {})\n",
+                    sanitize_for_display(&failure.id),
+                    failure.failure.code()
+                ));
+            }
+            rendered
+        }
         Err(failure) => {
             format!(
                 "Modules unavailable: {failure} (code {})\n",
@@ -24,165 +88,295 @@ pub(super) fn render_modules(workspace_root: &Path) -> String {
     }
 }
 
-fn validate_source_path(path: &str) -> Result<(), &'static str> {
-    validate_relative_path(path).map_err(|error| match error {
-        PathValidationError::NullByte => "PATH_NULL_BYTE",
-        PathValidationError::Empty => "PATH_EMPTY",
-        PathValidationError::Absolute => "PATH_ABSOLUTE",
-        PathValidationError::ParentTraversal => "PATH_PARENT_TRAVERSAL",
-    })?;
-
-    if is_model_protected_workspace_path(path) {
-        Err("PATH_PROTECTED")
-    } else {
-        Ok(())
-    }
-}
-
-/// Run one `/modules-add <folder>` flow: pick, verify, record.
-pub(super) fn render_add_module(
+/// Apply the desired `[modules.<id>]` set to the session's live maps.
+///
+/// Resolution happens before any mutation, so a malformed replacement can
+/// never tear down a working module. A failed apply keeps the previous
+/// working state for that id. Modules whose declaration failed to resolve
+/// are "blocked": their previous state is retained rather than removed.
+pub(super) fn apply_declared_modules(
     workspace_root: &Path,
-    folder: &str,
     hosts: &mut BTreeMap<String, ModuleHost>,
     hostless: &mut BTreeMap<String, ModuleLifecycle>,
     manifests: &mut BTreeMap<String, ModuleManifest>,
-) -> String {
-    if let Err(code) = validate_source_path(folder) {
-        return format!("Add Module failed: folder rejected (code {code})\n");
-    }
-    let resolved_folder = match resolve_workspace_path(workspace_root, folder)
-    {
-        Ok(resolved) => resolved,
-        Err(rejection) => {
-            return format!(
-                "Add Module failed: folder rejected (code {})\n",
-                rejection_code(&rejection)
-            );
-        }
-    };
-    if let Err(code) =
-        validate_source_path(&resolved_folder.workspace_relative_path)
-    {
-        return format!("Add Module failed: folder rejected (code {code})\n");
-    }
-    let manifest =
-        match load_manifest(workspace_root, &resolved_folder.absolute_path) {
-            Ok(manifest) => manifest,
-            Err(failure) => {
-                return format!(
-                    "Add Module failed: module manifest rejected (code {})\n",
-                    failure.code()
-                );
-            }
-        };
-    let id = manifest.package().id().as_str().to_owned();
-    let digest = manifest.package().digest().as_str().to_owned();
-    let record = ModuleRecord {
-        id: id.clone(),
-        path: resolved_folder.workspace_relative_path.clone(),
-        digest: format!("sha256:{digest}"),
-    };
-
-    // Preflight the persisted identity before constructing or installing a
-    // ModuleHost.
-    let current_records = match load_module_records(workspace_root) {
-        Ok(records) => records,
+) -> DeclaredModuleOutcome {
+    let mut outcome = DeclaredModuleOutcome::default();
+    let loaded = match load_module_declarations(workspace_root) {
+        Ok(loaded) => loaded,
         Err(failure) => {
-            return format!(
-                "Add Module failed: module records rejected (code {})\n",
+            outcome.failures.push(format!(
+                "module declarations rejected: {failure} (code {})",
                 failure.code()
-            );
+            ));
+            return outcome;
         }
     };
-    if current_records.iter().any(|existing| {
-        existing.id == id
-            && (existing.path != record.path
-                || existing.digest != record.digest)
-    }) {
-        return "Add Module failed: module record conflict (code RECORD_CONFLICT)\n"
-            .to_owned();
-    }
-    // Kind pairing: an id may hold one slot kind per record digest —
-    // `render_add_module` and `ensure_entity` refuse the mirrored
-    // pairings (spec-only manifest under a host slot, component
-    // manifest over a hostless slot).
-    let kind_conflict = if manifest.component().is_none() {
-        hosts.contains_key(&id)
-    } else {
-        hostless.contains_key(&id)
-    };
-    if kind_conflict {
-        return "Add Module failed: module record conflict (code RECORD_CONFLICT)\n"
-            .to_owned();
+    // "Declared" is every entry the document named, including entries whose
+    // shape or resolution failed; "applied" is the subset live now.
+    outcome.declared = loaded.declarations.len() + loaded.failures.len();
+
+    // A shape failure is a failed declaration, not a deletion: retain any
+    // previous working state for that id exactly as a resolution failure does.
+    let mut blocked = BTreeSet::new();
+    for failure in loaded.failures {
+        blocked.insert(failure.id.clone());
+        outcome.failures.push(format!(
+            "module {} declaration rejected: {} (code {})",
+            sanitize_for_display(&failure.id),
+            failure.failure,
+            failure.failure.code()
+        ));
     }
 
-    // Keep the potentially installed host private until record_module's
-    // digest-CAS commit succeeds.
-    let pending_host = if let Some(component_path) = manifest.component() {
-        let authority = match HostAuthority::parse(&[]) {
-            Ok(authority) => authority,
-            Err(failure) => {
-                return format!(
-                    "Add Module failed: module installation failed (code {})\n",
-                    failure.code()
-                );
+    let mut desired = BTreeMap::new();
+    for declaration in loaded.declarations {
+        match resolve_module_declaration(workspace_root, &declaration) {
+            Ok(resolved) => {
+                outcome.records.push(resolved.record.clone());
+                desired.insert(declaration.id, resolved);
             }
-        };
-        let mut host = ModuleHost::new(
-            manifest.package().abi().clone(),
-            authority,
-            component_path.to_path_buf(),
-            workspace_root.to_path_buf(),
-            ModuleHostBounds::default(),
-        );
-        if let Err(failure) = host.install(manifest.package().clone()) {
-            return format!(
-                "Add Module failed: module installation failed (code {})\n",
-                failure.code()
-            );
+            Err(failure) => {
+                blocked.insert(declaration.id.clone());
+                outcome.failures.push(format!(
+                    "module {} not resolved: {} (code {})",
+                    sanitize_for_display(&declaration.id),
+                    failure,
+                    failure.code()
+                ));
+            }
         }
-        Some(host)
+    }
+
+    // Remove declarations that disappeared. A blocked declaration retains
+    // its previous working state so an intermediate edit cannot remove it.
+    let current_ids: BTreeSet<String> = hosts
+        .keys()
+        .chain(hostless.keys())
+        .chain(manifests.keys())
+        .cloned()
+        .collect();
+    for id in current_ids {
+        if desired.contains_key(&id) || blocked.contains(&id) {
+            continue;
+        }
+        match remove_current(&id, hosts, hostless, manifests) {
+            Ok(()) => outcome.lines.push(format!("removed {id}")),
+            Err(failure) => outcome.failures.push(format!(
+                "module {} could not be removed (code {})",
+                sanitize_for_display(&id),
+                failure.code()
+            )),
+        }
+    }
+
+    // BTreeMap iteration is the deterministic id order.
+    for (id, resolved) in desired {
+        match apply_one(
+            &id,
+            &resolved,
+            workspace_root,
+            hosts,
+            hostless,
+            manifests,
+        ) {
+            Ok(changed) => {
+                outcome.applied += 1;
+                if let Some(line) = changed {
+                    outcome.lines.push(line);
+                }
+            }
+            Err(failure) => outcome.failures.push(format!(
+                "module {} not applied (code {})",
+                sanitize_for_display(&id),
+                failure.code()
+            )),
+        }
+    }
+
+    outcome
+}
+
+/// Apply one resolved declaration, returning an optional change line.
+fn apply_one(
+    id: &str,
+    resolved: &super::ResolvedModuleDeclaration,
+    workspace_root: &Path,
+    hosts: &mut BTreeMap<String, ModuleHost>,
+    hostless: &mut BTreeMap<String, ModuleLifecycle>,
+    manifests: &mut BTreeMap<String, ModuleManifest>,
+) -> Result<Option<String>, ModuleFailure> {
+    let manifest = &resolved.manifest;
+    let package = manifest.package().clone();
+    let is_component = manifest.component().is_some();
+
+    let unchanged = if is_component {
+        hosts.get(id).is_some_and(|host| {
+            host.installed_package() == Some(&package)
+                && manifests.get(id) == Some(manifest)
+        })
     } else {
-        None
+        hostless.get(id).is_some_and(|lifecycle| {
+            lifecycle.installed_package() == Some(&package)
+                && manifests.get(id) == Some(manifest)
+        })
     };
 
-    if let Err(failure) =
-        siralos_adapters::module::record_module(workspace_root, &record)
-    {
-        return format!(
-            "Add Module failed: module record rejected (code {})\n",
-            failure.code()
-        );
+    if unchanged {
+        if is_component {
+            let host = hosts.get_mut(id).expect("unchanged host");
+            ensure_host_active(host, manifest)?;
+        } else {
+            let lifecycle = hostless.get_mut(id).expect("unchanged lifecycle");
+            ensure_spec_enabled(lifecycle)?;
+        }
+        return Ok(None);
     }
-    if let Some(host) = pending_host {
-        hosts.insert(id.clone(), host);
+
+    // Stage the replacement completely before touching the current slot.
+    // A component's activation is staged too, so a guest bind failure
+    // leaves the previous module untouched.
+    let staged = if is_component {
+        let mut host = build_host(manifest, workspace_root)?;
+        ensure_host_active(&mut host, manifest)?;
+        Staged::Host(Box::new(host))
+    } else {
+        let mut lifecycle = ModuleLifecycle::new();
+        lifecycle.install(package.clone())?;
+        ensure_spec_enabled(&mut lifecycle)?;
+        Staged::Spec(Box::new(lifecycle))
+    };
+
+    // Tear down the old slot only after the replacement is ready. If that
+    // fails, deactivate the staged host before dropping it so a failed swap
+    // cannot leave an unreachable active guest session.
+    if let Err(failure) = remove_current(id, hosts, hostless, manifests) {
+        if let Staged::Host(mut host) = staged {
+            if host.state() == LifecycleState::Active {
+                let _ = host.deactivate();
+            }
+        }
+        return Err(failure);
     }
-    manifests.insert(id, manifest);
-    format_module_added(&record)
-}
 
-/// One enableable module slot: a component host, or the hostless
-/// lifecycle of a spec-only module. `verify_component` accepts
-/// manifests that name no component (ADR 0039 §7), so enablement
-/// must too: the manifest layer never required bytes.
-pub(super) enum ModuleEntity<'a> {
-    Host(&'a mut ModuleHost),
-    SpecOnly(&'a mut ModuleLifecycle),
-}
-
-impl ModuleEntity<'_> {
-    fn enable(&mut self) -> Result<(), ModuleFailure> {
-        match self {
-            Self::Host(host) => host.enable(),
-            Self::SpecOnly(lifecycle) => lifecycle.enable(),
+    manifests.insert(id.to_owned(), manifest.clone());
+    match staged {
+        Staged::Host(host) => {
+            hosts.insert(id.to_owned(), *host);
+        }
+        Staged::Spec(lifecycle) => {
+            hostless.insert(id.to_owned(), *lifecycle);
         }
     }
+    Ok(Some(format!(
+        "applied {} ({})",
+        id,
+        if is_component { "component" } else { "spec-only" }
+    )))
 }
 
-/// The lifecycle state and Active grant the panels view reports for
-/// one module id: component hosts first, spec-only lifecycles
-/// second, and `Absent` when neither holds the id (`module_ui_specs`
-/// drops both).
+enum Staged {
+    Host(Box<ModuleHost>),
+    Spec(Box<ModuleLifecycle>),
+}
+
+fn build_host(
+    manifest: &ModuleManifest,
+    workspace_root: &Path,
+) -> Result<ModuleHost, ModuleFailure> {
+    let Some(component_path) = manifest.component() else {
+        return Err(ModuleFailure::InvalidInput {
+            reason: "manifest does not name a component".to_owned(),
+        });
+    };
+    let authority = HostAuthority::parse(&[])?;
+    let mut host = ModuleHost::new(
+        manifest.package().abi().clone(),
+        authority,
+        component_path.to_path_buf(),
+        workspace_root.to_path_buf(),
+        ModuleHostBounds::default(),
+    );
+    host.install(manifest.package().clone())?;
+    Ok(host)
+}
+
+fn ensure_host_active(
+    host: &mut ModuleHost,
+    manifest: &ModuleManifest,
+) -> Result<(), ModuleFailure> {
+    match host.state() {
+        LifecycleState::Installed => host.enable()?,
+        LifecycleState::Enabled => {}
+        LifecycleState::Active => return Ok(()),
+        LifecycleState::Absent => return Err(ModuleFailure::NotInstalled),
+    }
+    let package = manifest.package();
+    let capabilities: Vec<String> = package
+        .requested_capabilities()
+        .iter()
+        .map(|cap| cap.as_str().to_owned())
+        .collect();
+    let request = ActivationRequest::parse(
+        package.id().as_str(),
+        package.digest().as_str(),
+        package.abi().as_str(),
+        &capabilities,
+    )?;
+    host.activate(request, RuntimeCheckResult::Ready)?;
+    Ok(())
+}
+
+fn ensure_spec_enabled(
+    lifecycle: &mut ModuleLifecycle,
+) -> Result<(), ModuleFailure> {
+    match lifecycle.state() {
+        LifecycleState::Installed => lifecycle.enable(),
+        LifecycleState::Enabled | LifecycleState::Active => Ok(()),
+        LifecycleState::Absent => Err(ModuleFailure::NotInstalled),
+    }
+}
+
+/// Remove one current id from every map. Refuses to drop an active host
+/// until deactivation succeeds; on any failure the old state is restored.
+fn remove_current(
+    id: &str,
+    hosts: &mut BTreeMap<String, ModuleHost>,
+    hostless: &mut BTreeMap<String, ModuleLifecycle>,
+    manifests: &mut BTreeMap<String, ModuleManifest>,
+) -> Result<(), ModuleFailure> {
+    if let Some(mut host) = hosts.remove(id) {
+        if host.state() == LifecycleState::Active {
+            if let Err(failure) = host.deactivate() {
+                hosts.insert(id.to_owned(), host);
+                return Err(failure);
+            }
+        }
+        if let Err(failure) = host.uninstall() {
+            hosts.insert(id.to_owned(), host);
+            return Err(failure);
+        }
+        manifests.remove(id);
+        return Ok(());
+    }
+    if let Some(mut lifecycle) = hostless.remove(id) {
+        if lifecycle.state() == LifecycleState::Active {
+            if let Err(failure) = lifecycle.deactivate() {
+                hostless.insert(id.to_owned(), lifecycle);
+                return Err(failure);
+            }
+        }
+        if let Err(failure) = lifecycle.uninstall() {
+            hostless.insert(id.to_owned(), lifecycle);
+            return Err(failure);
+        }
+    }
+    manifests.remove(id);
+    Ok(())
+}
+
+/// The lifecycle state and Active grant the panels view reports for one
+/// module id: component hosts first, spec-only lifecycles second, and
+/// `Absent` when neither holds the id (`module_ui_specs` drops both).
 #[must_use]
 pub(super) fn module_ui_state<'h>(
     id: &str,
@@ -196,280 +390,4 @@ pub(super) fn module_ui_state<'h>(
         return (lifecycle.state(), None);
     }
     (LifecycleState::Absent, None)
-}
-
-fn read_persisted_identity(
-    workspace_root: &Path,
-    id: &str,
-) -> Result<ModuleManifest, String> {
-    // Always re-read the current record before considering a slot.
-    let records = load_module_records(workspace_root).map_err(|failure| {
-        format!("module record rejected (code {})", failure.code())
-    })?;
-    let record = records
-        .iter()
-        .find(|record| record.id == id)
-        .ok_or_else(|| {
-            "no module record exists for this session's workspace (code RECORD_NOT_FOUND)"
-                .to_owned()
-        })?;
-    validate_source_path(&record.path).map_err(|_| {
-        "module record conflict (code RECORD_CONFLICT)".to_owned()
-    })?;
-    let folder = resolve_workspace_path(workspace_root, &record.path)
-        .map_err(|rejection| {
-            format!(
-                "module folder rejected (code {})",
-                rejection_code(&rejection)
-            )
-        })?;
-    validate_source_path(&folder.workspace_relative_path).map_err(|_| {
-        "module record conflict (code RECORD_CONFLICT)".to_owned()
-    })?;
-    let manifest = load_manifest(workspace_root, &folder.absolute_path)
-        .map_err(|failure| {
-            format!("module manifest rejected (code {})", failure.code())
-        })?;
-    let id_matches = manifest.package().id().as_str() == id;
-    let digest_matches = record.digest.strip_prefix("sha256:")
-        == Some(manifest.package().digest().as_str());
-    if !id_matches || !digest_matches {
-        return Err("module record conflict (code RECORD_CONFLICT)".to_owned());
-    }
-    Ok(manifest)
-}
-
-pub(super) fn ensure_entity<'a>(
-    workspace_root: &Path,
-    id: &str,
-    hosts: &'a mut BTreeMap<String, ModuleHost>,
-    hostless: &'a mut BTreeMap<String, ModuleLifecycle>,
-    manifests: &mut BTreeMap<String, ModuleManifest>,
-) -> Result<ModuleEntity<'a>, String> {
-    let manifest = read_persisted_identity(workspace_root, id)?;
-
-    // `render_add_module` refuses the mirrored pairing before any
-    // record lands, so the persisted digest also pins the slot kind;
-    // the kind checks below keep that pairing enforceable directly.
-    if manifest.component().is_none() {
-        if hosts.contains_key(id) {
-            return Err(
-                "module record conflict (code RECORD_CONFLICT)".to_owned()
-            );
-        }
-        if let Some(lifecycle) = hostless.get(id) {
-            if lifecycle.installed_package() != Some(manifest.package())
-                || manifests.get(id) != Some(&manifest)
-            {
-                return Err(
-                    "module record conflict (code RECORD_CONFLICT)".to_owned()
-                );
-            }
-        } else {
-            let mut pending = ModuleLifecycle::new();
-            pending.install(manifest.package().clone()).map_err(
-                |failure| {
-                    format!(
-                        "module installation rejected (code {})",
-                        failure.code()
-                    )
-                },
-            )?;
-            manifests.insert(id.to_owned(), manifest);
-            hostless.insert(id.to_owned(), pending);
-        }
-        return Ok(ModuleEntity::SpecOnly(
-            hostless.get_mut(id).expect("just verified or inserted"),
-        ));
-    }
-
-    if let Some(host) = hosts.get(id) {
-        if host.installed_package() != Some(manifest.package())
-            || manifests.get(id) != Some(&manifest)
-        {
-            return Err(
-                "module record conflict (code RECORD_CONFLICT)".to_owned()
-            );
-        }
-        if verify_component(&manifest).is_err() {
-            return Err(
-                "module record conflict (code RECORD_CONFLICT)".to_owned()
-            );
-        }
-        return Ok(ModuleEntity::Host(
-            hosts.get_mut(id).expect("just verified"),
-        ));
-    }
-    if hostless.contains_key(id) {
-        return Err("module record conflict (code RECORD_CONFLICT)".to_owned());
-    }
-
-    let Some(component_path) = manifest.component() else {
-        return Err("module record conflict (code RECORD_CONFLICT)".to_owned());
-    };
-    let authority = HostAuthority::parse(&[]).map_err(|failure| {
-        format!("module installation rejected (code {})", failure.code())
-    })?;
-    let mut pending_host = ModuleHost::new(
-        manifest.package().abi().clone(),
-        authority,
-        component_path.to_path_buf(),
-        workspace_root.to_path_buf(),
-        ModuleHostBounds::default(),
-    );
-    if let Err(failure) = pending_host.install(manifest.package().clone()) {
-        return Err(format!(
-            "module installation rejected (code {})",
-            failure.code()
-        ));
-    }
-    manifests.insert(id.to_owned(), manifest);
-    hosts.insert(id.to_owned(), pending_host);
-    Ok(ModuleEntity::Host(hosts.get_mut(id).expect("just inserted")))
-}
-
-pub(super) fn render_enable_module(
-    workspace_root: &Path,
-    hosts: &mut BTreeMap<String, ModuleHost>,
-    hostless: &mut BTreeMap<String, ModuleLifecycle>,
-    manifests: &mut BTreeMap<String, ModuleManifest>,
-    id: &str,
-    profile_modules: Option<&[String]>,
-) -> String {
-    let id = id.trim();
-    if id.is_empty() {
-        return "Enable failed: module id is required (code PATH_EMPTY)\n"
-            .to_owned();
-    }
-    let sanitized = sanitize_for_display(id);
-    // A workspace profile may narrow enablement. Refuse an unselected id
-    // before reconstructing the host or reading component bytes.
-    if let Some(selected) = profile_modules
-        && !selected.iter().any(|module| module == &sanitized)
-    {
-        return "Enable failed: module is outside the applied profile selection\n"
-            .to_owned();
-    }
-    let mut entity = match ensure_entity(
-        workspace_root,
-        &sanitized,
-        hosts,
-        hostless,
-        manifests,
-    ) {
-        Ok(entity) => entity,
-        Err(reason) => return format!("Enable failed: {reason}\n"),
-    };
-    match entity.enable() {
-        Ok(()) => format!("Enabled {sanitized}.\n"),
-        Err(failure) => {
-            format!(
-                "Enable failed: {} (code {})\n",
-                failure.code(),
-                failure.code()
-            )
-        }
-    }
-}
-
-pub(super) fn render_activate_module(
-    _workspace_root: &Path,
-    hosts: &mut BTreeMap<String, ModuleHost>,
-    hostless: &BTreeMap<String, ModuleLifecycle>,
-    manifests: &mut BTreeMap<String, ModuleManifest>,
-    id: &str,
-    profile_modules: Option<&[String]>,
-) -> String {
-    let id = id.trim();
-    if id.is_empty() {
-        return "Activate failed: module id is required (code PATH_EMPTY)\n"
-            .to_owned();
-    }
-    let sanitized = sanitize_for_display(id);
-    // Gate against the actual Host-owned enabled set before loading or
-    // installing a component. A profile may narrow this set, never
-    // manufacture an enabled module.
-    let enabled_ids: Vec<String> = hosts
-        .iter()
-        .filter_map(|(module_id, host)| {
-            matches!(
-                host.state(),
-                LifecycleState::Enabled | LifecycleState::Active
-            )
-            .then_some(module_id.clone())
-        })
-        .chain(hostless.iter().filter_map(|(module_id, lifecycle)| {
-            matches!(lifecycle.state(), LifecycleState::Enabled)
-                .then_some(module_id.clone())
-        }))
-        .collect();
-    let gate =
-        decide_module_activation(&enabled_ids, profile_modules, &sanitized);
-    if let Some(reason) = &gate.reason {
-        return format!("Activate failed: {reason}\n");
-    }
-    // A spec-only module has no execution surface to bind (ADR 0036
-    // lean model): activation exists to grant model-visible authority
-    // over a live component, and `Enabled` already publishes its
-    // declared specs to the panels view.
-    if hostless.contains_key(&sanitized) {
-        return "Activate failed: manifest does not name a component; nothing to activate\n"
-            .to_owned();
-    }
-
-    let manifest = match manifests.get(&sanitized) {
-        Some(manifest) => manifest,
-        None => {
-            return format!(
-                "Activate failed: manifest not loaded for {sanitized}\n"
-            );
-        }
-    };
-    let package = manifest.package().clone();
-    let capabilities: Vec<String> = package
-        .requested_capabilities()
-        .iter()
-        .map(|cap| cap.as_str().to_owned())
-        .collect();
-    let request = match ActivationRequest::parse(
-        package.id().as_str(),
-        package.digest().as_str(),
-        package.abi().as_str(),
-        &capabilities,
-    ) {
-        Ok(request) => request,
-        Err(failure) => {
-            return format!("Activate failed: {}\n", failure.code());
-        }
-    };
-    let host = match hosts.get_mut(&sanitized) {
-        Some(host) => host,
-        None => {
-            return format!(
-                "Activate failed: module {sanitized} is not enabled by the Host\n"
-            );
-        }
-    };
-    match host.activate(request, RuntimeCheckResult::Ready) {
-        Ok(_) => format!("Activated {sanitized}.\n"),
-        Err(failure) => {
-            format!("Activate failed: {}\n", failure.code())
-        }
-    }
-}
-
-/// Stable short code for a workspace path rejection.
-fn rejection_code(
-    rejection: &siralos_adapters::workspace::resolve::PathRejection,
-) -> &'static str {
-    use siralos_adapters::workspace::resolve::PathRejection as Rejection;
-    match rejection {
-        Rejection::NullByte => "PATH_NULL_BYTE",
-        Rejection::Empty => "PATH_EMPTY",
-        Rejection::Absolute => "PATH_ABSOLUTE",
-        Rejection::InvalidCharacter => "PATH_INVALID_CHARACTER",
-        Rejection::OutsideWorkspace => "PATH_OUTSIDE_WORKSPACE",
-        Rejection::Unresolvable(_) => "PATH_UNRESOLVABLE",
-        Rejection::LinkEscape => "PATH_LINK_ESCAPE",
-    }
 }

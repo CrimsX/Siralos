@@ -81,6 +81,9 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Ok(Command::ProfileDigest(workspace_root)) => {
+            print_profile_digest(&workspace_root)
+        }
         Ok(Command::Version) => print_version(),
         Ok(Command::Help) => {
             print_usage();
@@ -95,6 +98,25 @@ fn main() -> ExitCode {
             );
             eprintln!("Try `siralos --help` for usage.");
             ExitCode::from(2)
+        }
+    }
+}
+
+/// Print the canonical profile approval digest for a workspace.
+fn print_profile_digest(workspace_root: &std::path::Path) -> ExitCode {
+    match siralos_cli::interactive::profile_approval_digest_for_workspace(
+        workspace_root,
+    ) {
+        Ok(digest) => {
+            println!("{digest}");
+            ExitCode::SUCCESS
+        }
+        Err(diagnostic) => {
+            eprintln!(
+                "siralos: {}",
+                siralos_cli::sanitize::sanitize_for_display(&diagnostic)
+            );
+            ExitCode::from(1)
         }
     }
 }
@@ -123,6 +145,7 @@ fn print_usage() -> ExitCode {
          USAGE:\n\
          \x20   siralos [--help | --version | --stdio]\n\
          \x20   siralos --print <prompt> [--json] [--cwd <dir>]\n\
+         \x20   siralos --profile-digest <dir>\n\
          \n\
          OPTIONS:\n\
          \x20   -h, --help      Print this usage information\n\
@@ -132,6 +155,8 @@ fn print_usage() -> ExitCode {
          \x20                   Send one prompt, print the answer, and exit without an interactive frontend\n\
          \x20       --json      With --print, emit one structured record instead of the answer text\n\
          \x20       --cwd <dir> With --print, use <dir> as the workspace root (default: the working directory)\n\
+         \x20       --profile-digest <dir>\n\
+         \x20                   Print the canonical [profile] approval digest for <dir> and exit\n\
          \n\
          With no arguments, start the interactive terminal session.\n\
          \n\

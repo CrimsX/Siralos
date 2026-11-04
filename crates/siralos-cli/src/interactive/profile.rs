@@ -6,7 +6,7 @@ use super::{
     LockVerificationDecision, Path, SessionProvider, StoredLockDigest,
     WorkspaceProfileLoad, WorkspaceProfileWriteToken,
     create_effective_policy_evidence, create_workspace_lock,
-    decide_lock_verification, display_field_redacted, io, load_module_records,
+    decide_lock_verification, display_field_redacted, io,
     load_workspace_profile_write_token, read_complete_file_bounded,
     verify_workspace_lock,
 };
@@ -73,6 +73,7 @@ fn profile_error(
 pub(super) fn verify_session_lock(
     workspace_root: &Path,
     effective: &EffectiveRunPolicy,
+    records: &[siralos_adapters::module::ModuleRecord],
 ) -> LockVerificationDecision {
     let lock_profile_digest: Option<String> =
         if effective.applied_profile.is_some() {
@@ -82,33 +83,18 @@ pub(super) fn verify_session_lock(
         } else {
             None
         };
-    let lock_identities: Vec<LockModuleIdentity> =
-        match load_module_records(workspace_root) {
-            Ok(records) => records
-                .iter()
-                .map(|record| LockModuleIdentity {
-                    id: record.id.clone(),
-                    path: record.path.clone(),
-                    digest: record
-                        .digest
-                        .strip_prefix("sha256:")
-                        .unwrap_or(&record.digest)
-                        .to_owned(),
-                })
-                .collect(),
-            Err(_) => {
-                // The recomputation itself is compromised: the stored
-                // lock cannot be held to account against a current state
-                // the session cannot see.
-                return decide_lock_verification(
-                    StoredLockDigest::Untrusted(
-                        "the workspace module records could not be read"
-                            .to_owned(),
-                    ),
-                    "",
-                );
-            }
-        };
+    let lock_identities: Vec<LockModuleIdentity> = records
+        .iter()
+        .map(|record| LockModuleIdentity {
+            id: record.id.clone(),
+            path: record.path.clone(),
+            digest: record
+                .digest
+                .strip_prefix("sha256:")
+                .unwrap_or(&record.digest)
+                .to_owned(),
+        })
+        .collect();
     match create_workspace_lock(
         lock_profile_digest.as_deref(),
         &lock_identities,

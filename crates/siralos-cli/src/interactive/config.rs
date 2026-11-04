@@ -550,7 +550,10 @@ pub(super) fn approve_workspace_profile(
     let WorkspaceProfileLoad::Record(record) = load else {
         return load.clone();
     };
+    let profile_digest =
+        siralos_core::composition::profile_approval_digest(record);
     if !profile_requires_explicit_approval(record)
+        || approval == Some(profile_digest.as_str())
         || approval == Some(snapshot.raw_sha256())
     {
         return load.clone();
@@ -558,10 +561,10 @@ pub(super) fn approve_workspace_profile(
     WorkspaceProfileLoad::Invalid {
         diagnostic: format!(
             "workspace profile requires explicit approval for digest {}: \
-             compute the SHA-256 of siralos.toml yourself and put it in \
-             ~/.siralos/config.json as profileApproval (the prefix is for \
-             comparison, not for copying)",
-            &snapshot.raw_sha256()[..16]
+             run `siralos --profile-digest <workspace>` and put the 64-hex \
+             result in ~/.siralos/config.json as profileApproval (the prefix \
+             is for comparison, not for copying)",
+            &profile_digest[..16]
         ),
     }
 }
@@ -722,10 +725,12 @@ pub(super) fn non_live_state_digest(
         WorkspaceProfileLoad::Invalid { .. } => None,
         WorkspaceProfileLoad::Absent => Some("absent".to_owned()),
         WorkspaceProfileLoad::Record(record) => {
+            // `[profile] modules` is deprecated and ignored by the product;
+            // it must not revoke live authority when edited. Module
+            // declarations are applied by `/rebuild`, not by `/reload`.
             let payload = format!(
-                "overlay={:?};modules={:?};context={:?};skills={:?};record_replay={};replay={};context_system_enabled={}",
+                "overlay={:?};context={:?};skills={:?};record_replay={};replay={};context_system_enabled={}",
                 record.overlay,
-                record.modules,
                 record.context,
                 record.skills,
                 record.record_replay,

@@ -23,8 +23,11 @@ pub use effects::{
 };
 pub use host::{EffectRequest, ModuleHost, ModuleHostBounds, QueryOutcome};
 pub use manifest::{
-    MAX_COMPONENT_BYTES, MAX_MANIFEST_BYTES, MAX_SIRALOS_TOML_BYTES,
-    MODULE_MANIFEST_FILE_NAME, ModuleManifest, ModuleManifestFailure,
-    ModuleRecord, SIRALOS_TOML_FILE_NAME, install_module, load_manifest,
-    load_module_records, record_module, verify_component,
+    LoadedModuleDeclarations, MAX_COMPONENT_BYTES, MAX_MANIFEST_BYTES,
+    MAX_SIRALOS_TOML_BYTES, MODULE_MANIFEST_FILE_NAME, ModuleDeclaration,
+    ModuleDeclarationFailure, ModuleManifest, ModuleManifestFailure,
+    ModuleRecord, ResolvedModuleDeclaration, SIRALOS_TOML_FILE_NAME,
+    install_module, load_manifest, load_module_declarations,
+    load_module_records, record_module, resolve_module_declaration,
+    verify_component,
 };

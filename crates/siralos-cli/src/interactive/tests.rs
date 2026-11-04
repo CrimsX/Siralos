@@ -290,34 +290,12 @@ fn the_dispatcher_asks_the_worker_and_renders_its_answer() {
             "Tool projection: 3 available",
         ),
         (
-            SlashCommand::ModulesAdd(Some("demo")),
-            crate::session_worker::WorkerCommand::ModulesAdd(
-                "demo".to_owned(),
-            ),
+            SlashCommand::Rebuild,
+            crate::session_worker::WorkerCommand::Rebuild,
             crate::session_worker::WorkerEvent::Report(
-                "added demo\n".to_owned(),
+                "No modules declared.\n".to_owned(),
             ),
-            "added demo",
-        ),
-        (
-            SlashCommand::ModulesEnable(Some("demo")),
-            crate::session_worker::WorkerCommand::ModulesEnable(
-                "demo".to_owned(),
-            ),
-            crate::session_worker::WorkerEvent::Report(
-                "enabled demo\n".to_owned(),
-            ),
-            "enabled demo",
-        ),
-        (
-            SlashCommand::ModulesActivate(Some("demo")),
-            crate::session_worker::WorkerCommand::ModulesActivate(
-                "demo".to_owned(),
-            ),
-            crate::session_worker::WorkerEvent::Report(
-                "activated demo\n".to_owned(),
-            ),
-            "activated demo",
+            "No modules declared.",
         ),
         (
             SlashCommand::Reload,
@@ -1368,6 +1346,102 @@ fn a_freshly_approved_dangerous_profile_reloads_live_once() {
 }
 
 #[test]
+fn profile_digest_command_matches_the_approval_gate() {
+    let root = temporary_directory("profile-digest-command");
+    let profile = "[profile]\nname = \"dev\"\nprovider = \"example\"\nmodel = \"example/model\"\nendpoint = \"https://api.example.com/v1\"\ncredential = \"key:secret\"\n";
+    write(root.join("siralos.toml"), profile).expect("profile");
+    let printed =
+        super::profile_approval_digest_for_workspace(&root).expect("digest");
+    let snapshot =
+        siralos_adapters::profile_config::load_workspace_profile_snapshot(
+            &root,
+        );
+    let siralos_adapters::profile_config::WorkspaceProfileLoad::Record(record) =
+        snapshot.load()
+    else {
+        panic!("expected valid profile");
+    };
+    assert_eq!(
+        printed,
+        siralos_core::composition::profile_approval_digest(record)
+    );
+    assert!(!printed.contains("secret"));
+    let _ = remove_dir_all(root);
+}
+
+#[test]
+fn module_declaration_edits_do_not_invalidate_profile_approval() {
+    use crate::session_worker::WorkerSession;
+    let root = temporary_directory("profile-approval-survives-modules");
+    write_spec_module(&root, "example");
+    write_spec_module(&root, "second");
+    let profile = "[profile]\nname = \"default\"\nprovider = \"example-vendor\"\nmodel = \"model-a\"\nendpoint = \"https://api.example.com/v1\"\nprotocol = \"openai-completions\"\ncredential = \"key:super-secret-value\"\n";
+    let first =
+        format!("{profile}\n[modules.example]\npath = \"modules/example\"\n");
+    write(root.join("siralos.toml"), first).expect("profile + module");
+    let config = write_test_profile_digest_approval(&root);
+    let mut session = compose_session(InteractiveOptions {
+        workspace_root: Some(&root),
+        config_path: Some(&config),
+    })
+    .expect("compose");
+    assert_eq!(
+        session.effective_policy.applied_profile.as_deref(),
+        Some("default")
+    );
+    assert!(session.hostless.contains_key("example"));
+
+    let second = format!(
+        "{profile}\n[modules.example]\npath = \"modules/example\"\n\n[modules.second]\npath = \"modules/second\"\n"
+    );
+    write(root.join("siralos.toml"), second).expect("declaration edit");
+    let reload = session
+        .reload()
+        .expect("the module edit must not invalidate profile approval");
+    assert!(
+        !reload.contains("requires explicit approval"),
+        "the canonical profile digest must survive module edits: {reload}"
+    );
+    let report = session.rebuild().expect("rebuild applies module edits");
+    assert!(report.contains("applied second (spec-only)"), "{report}");
+    assert!(session.hostless.contains_key("second"));
+    let _ = remove_dir_all(root);
+}
+
+#[test]
+fn rebuild_applies_modules_but_not_profile_changes() {
+    use crate::session_worker::WorkerSession;
+    let root = temporary_directory("rebuild-scope");
+    write_spec_module(&root, "example");
+    let first = "[profile]\nname = \"default\"\nprovider = \"deterministic-fake\"\nmodel = \"echo\"\n\n[modules.example]\npath = \"modules/example\"\n";
+    write(root.join("siralos.toml"), first).expect("profile + module");
+    let mut session = compose_session(InteractiveOptions {
+        workspace_root: Some(&root),
+        config_path: None,
+    })
+    .expect("compose");
+    assert_eq!(session.applied_model.as_deref(), Some("echo"));
+
+    let second = "[profile]\nname = \"default\"\nprovider = \"deterministic-fake\"\nmodel = \"other\"\n\n[modules.example]\npath = \"modules/example\"\n\n[modules.second]\npath = \"modules/second\"\n";
+    write(root.join("siralos.toml"), second).expect("profile edit");
+    write_spec_module(&root, "second");
+    let report = session.rebuild().expect("rebuild");
+    assert!(report.contains("applied second (spec-only)"), "{report}");
+    assert_eq!(
+        session.applied_model.as_deref(),
+        Some("echo"),
+        "/rebuild must not apply [profile] changes"
+    );
+    assert_eq!(
+        read(root.join("siralos.toml")).expect("config bytes"),
+        second.as_bytes(),
+        "/rebuild must not write siralos.toml"
+    );
+    assert!(session.hostless.contains_key("second"));
+    let _ = remove_dir_all(root);
+}
+
+#[test]
 fn the_idle_poll_keeps_the_character_cadence_while_text_is_owed() {
     // A frame releases ONE character, so the IDLE path must not wait the
     // 50 ms idle interval while a backlog exists: the leftover of a turn
@@ -1759,6 +1833,26 @@ fn write_test_profile_approval(root: &Path) -> PathBuf {
     path
 }
 
+/// Write a trusted user config approving the canonical `[profile]` semantics
+/// rather than the whole-file bytes. This is the production shape that keeps
+/// module declaration edits from invalidating an approved profile.
+fn write_test_profile_digest_approval(root: &Path) -> PathBuf {
+    let snapshot =
+        siralos_adapters::profile_config::load_workspace_profile_snapshot(
+            root,
+        );
+    let siralos_adapters::profile_config::WorkspaceProfileLoad::Record(record) =
+        snapshot.load()
+    else {
+        panic!("expected a valid profile record");
+    };
+    let digest = siralos_core::composition::profile_approval_digest(record);
+    let path = root.join(".test-user-config.json");
+    write(&path, format!("{{\"profileApproval\":\"{digest}\"}}"))
+        .expect("write profile approval");
+    path
+}
+
 fn run(
     lines: &str,
     root: &std::path::Path,
@@ -1863,77 +1957,75 @@ fn config_is_composed_before_rendering_without_granting_extra_authority() {
 }
 
 #[test]
-fn modules_renders_the_deterministic_empty_state() {
-    let root = temporary_directory("modules-empty");
+fn modules_renders_declarations_and_rebuild_applies_spec_only() {
+    let root = temporary_directory("modules-declarative-spec");
+    create_dir_all(root.join("modules/example")).expect("folder");
+    write(
+        root.join("modules/example/module-manifest.toml"),
+        format!(
+            "id = \"example\"\ndigest = \"{}\"\nabi = \"siralos:domain-abi@1.0.0\"\n",
+            "a".repeat(64)
+        ),
+    )
+    .expect("manifest");
+    write(
+        root.join("siralos.toml"),
+        "[modules.example]\npath = \"modules/example\"\n",
+    )
+    .expect("declaration");
+    let output = run("/modules\n/rebuild\n/exit\n", &root, None);
+    assert!(output.contains("Modules declared:\n"), "{output}");
+    assert!(
+        output.contains("example (digest manifest, path modules/example)"),
+        "{output}"
+    );
+    assert!(output.contains("1 declared, 1 applied, 0 failed"), "{output}");
+    assert!(!output.contains("not applied"), "{output}");
+    let _ = remove_dir_all(root);
+}
+
+#[test]
+fn modules_startup_reports_broken_declaration_and_continues() {
+    let root = temporary_directory("modules-declarative-broken");
+    write(
+        root.join("siralos.toml"),
+        "[modules.missing]\npath = \"modules/missing\"\n",
+    )
+    .expect("declaration");
     let output = run("/modules\n/exit\n", &root, None);
-    assert!(output.contains("No modules installed.\n"));
-    assert!(output.contains("/modules-add <folder>"));
+    assert!(output.contains("not resolved:"), "{output}");
+    assert!(output.contains("MANIFEST_NOT_READABLE"), "{output}");
+    assert!(output.contains("Modules declared:\n"), "{output}");
     let _ = remove_dir_all(root);
 }
 
 #[test]
-fn modules_add_records_and_renders() {
-    let root = temporary_directory("modules-add");
-    create_dir_all(root.join("modules/godot")).expect("folder");
-    let bytes = b"conformance component bytes";
-    let digest = {
-        use siralos_core::identity::sha256_hex;
-        sha256_hex(bytes)
-    };
-    write(root.join("modules/godot/godot.component.wasm"), bytes)
-        .expect("component");
+fn profile_module_selection_is_ignored_and_noticed() {
+    let root = temporary_directory("modules-profile-deprecated");
+    create_dir_all(root.join("modules/example")).expect("folder");
     write(
-        root.join("modules/godot/module-manifest.toml"),
+        root.join("modules/example/module-manifest.toml"),
         format!(
-            "id = \"godot\"\ndigest = \"{digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncomponent = \"godot.component.wasm\"\n"
+            "id = \"example\"\ndigest = \"{}\"\nabi = \"siralos:domain-abi@1.0.0\"\n",
+            "b".repeat(64)
         ),
     )
     .expect("manifest");
-    let siralos_toml = root.join("siralos.toml");
-    let output =
-        run("/modules-add modules/godot\n/modules\n/exit\n", &root, None);
-    assert!(output.contains("Installed godot (digest sha256:"));
-    assert!(output.contains("Modules installed:\n"));
-    assert!(output.contains("godot (digest "));
-    assert!(siralos_toml.exists());
+    write(
+        root.join("siralos.toml"),
+        "[profile]\nname = \"dev\"\nmodules = [\"other\"]\n\n[modules.example]\npath = \"modules/example\"\n",
+    )
+    .expect("declaration");
+    let output = run("/modules\n/rebuild\n/exit\n", &root, None);
+    assert!(output.contains("[profile] modules is ignored"), "{output}");
+    assert!(output.contains("1 declared, 1 applied, 0 failed"), "{output}");
     let _ = remove_dir_all(root);
 }
 
 #[test]
-fn modules_add_missing_manifest_fails_closed() {
-    let root = temporary_directory("modules-add-missing");
-    create_dir(root.join("empty")).expect("folder");
-    let output = run("/modules-add empty\n/modules\n/exit\n", &root, None);
-    assert!(output.contains("Add Module failed:"));
-    assert!(output.contains("No modules installed.\n"));
-    let _ = remove_dir_all(root);
-}
-
-#[test]
-fn modules_add_outside_workspace_is_rejected() {
-    let root = temporary_directory("modules-add-outside");
-    let mut outside =
-        PathBuf::from(std::env::temp_dir().to_string_lossy().into_owned());
-    outside.push("outside-module-inspection");
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    outside.push(format!("{unique}"));
-    create_dir_all(&outside).expect("outside folder");
-    let output = run(
-        &format!("/modules-add {}\n/exit\n", outside.display()),
-        &root,
-        None,
-    );
-    assert!(output.contains("folder rejected"));
-    let _ = remove_dir_all(&outside);
-    let _ = remove_dir_all(root);
-}
-
-#[test]
-fn modules_enable_and_activate_are_host_gated() {
-    let root = temporary_directory("modules-enable-activate");
+fn component_declaration_is_activated_at_startup() {
+    use siralos_core::module::lifecycle::LifecycleState;
+    let root = temporary_directory("modules-declarative-component");
     create_dir_all(root.join("modules/godot")).expect("folder");
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/domain-conformance/fixtures/conformance-module.component.wasm");
@@ -1951,115 +2043,29 @@ fn modules_enable_and_activate_are_host_gated() {
         ),
     )
     .expect("manifest");
-    let output = run(
-        "/modules-add modules/godot\n/modules-enable godot\n/modules-activate godot\n/exit\n",
-        &root,
-        None,
+    write(
+        root.join("siralos.toml"),
+        "[modules.godot]\npath = \"modules/godot\"\n",
+    )
+    .expect("declaration");
+    let session = compose_session(InteractiveOptions {
+        workspace_root: Some(&root),
+        config_path: None,
+    })
+    .expect("compose");
+    assert_eq!(
+        session.hosts.get("godot").map(|host| host.state()),
+        Some(LifecycleState::Active),
+        "a declared component is installed, enabled, and activated"
     );
-    assert!(output.contains("Installed godot"));
-    assert!(output.contains("Enabled godot."));
-    assert!(output.contains("Activated godot."));
+    assert!(
+        session.startup_notices.is_empty(),
+        "{:?}",
+        session.startup_notices
+    );
     let _ = remove_dir_all(root);
 }
 
-#[test]
-fn modules_enable_on_missing_id_fails_typed() {
-    let root = temporary_directory("modules-enable-missing");
-    let output = run("/modules-enable missing\n/exit\n", &root, None);
-    assert!(output.contains("Enable failed:"));
-    let _ = remove_dir_all(root);
-}
-
-#[test]
-fn modules_activate_requires_host_authority_and_component() {
-    let root = temporary_directory("modules-activate-no-component");
-    create_dir_all(root.join("modules/godot")).expect("folder");
-    let digest = {
-        use siralos_core::identity::sha256_hex;
-        sha256_hex(b"no-component")
-    };
-    write(
-        root.join("modules/godot/module-manifest.toml"),
-        format!(
-            "id = \"godot\"\ndigest = \"{digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\n"
-        ),
-    )
-    .expect("manifest");
-    let output = run(
-        "/modules-add modules/godot\n/modules-enable godot\n/modules-activate godot\n/exit\n",
-        &root,
-        None,
-    );
-    assert!(output.contains("Installed godot"));
-    assert!(output.contains("Activate failed:"));
-    let _ = remove_dir_all(root);
-}
-
-#[test]
-fn profile_module_selection_gates_modules_activate() {
-    let root = temporary_directory("modules-activate-gate");
-    create_dir_all(root.join("modules/godot")).expect("folder");
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/domain-conformance/fixtures/conformance-module.component.wasm");
-    let bytes = std::fs::read(&fixture).expect("fixture");
-    let digest = {
-        use siralos_core::identity::sha256_hex;
-        sha256_hex(&bytes)
-    };
-    write(root.join("modules/godot/godot.component.wasm"), &bytes)
-        .expect("component");
-    write(
-        root.join("modules/godot/module-manifest.toml"),
-        format!(
-            "id = \"godot\"\ndigest = \"{digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncomponent = \"godot.component.wasm\"\n"
-        ),
-    )
-    .expect("manifest");
-    // Applied profile with a selection that excludes godot: the
-    // gate refuses before any install/enable/activate side effect.
-    write(
-        root.join("siralos.toml"),
-        "\n[profile]\nname = \"dev\"\nmodules = [\"other\"]\n",
-    )
-    .expect("profile");
-    let output = run(
-        "/modules-add modules/godot\n/modules-enable godot\n/modules-activate godot\n/exit\n",
-        &root,
-        None,
-    );
-    assert!(output.contains(
-        "Enable failed: module is outside the applied profile selection"
-    ));
-    assert!(output.contains(
-        "Activate failed: the Host has not enabled \"godot\"; a profile can never enable"
-    ));
-    assert!(!output.contains("Activated godot."));
-    // Narrowed allow: the selection includes godot.
-    write(
-        root.join("siralos.toml"),
-        "\n[profile]\nname = \"dev\"\nmodules = [\"godot\"]\n",
-    )
-    .expect("profile");
-    let output = run(
-        "/modules-add modules/godot\n/modules-enable godot\n/modules-activate godot\n/exit\n",
-        &root,
-        None,
-    );
-    assert!(output.contains("Activated godot."));
-    // Invalid profile: no selection, gate transparent (5.2).
-    write(
-        root.join("siralos.toml"),
-        "\n[profile]\nname = \"dev\"\nmodules = [7]\n",
-    )
-    .expect("profile");
-    let output = run(
-        "/modules-add modules/godot\n/modules-enable godot\n/modules-activate godot\n/exit\n",
-        &root,
-        None,
-    );
-    assert!(output.contains("Activated godot."));
-    let _ = remove_dir_all(root);
-}
 #[test]
 fn session_skill_consumption_surfaces_guidance_only() {
     use super::compose_skills_segment;
@@ -2226,12 +2232,12 @@ fn session_lock_verification_reports_without_gating() {
     }];
     let effective =
         compose_effective_policy(&host_rules, &DeclaredProfile::Absent);
-    let decision = verify_session_lock(&root, &effective);
+    let decision = verify_session_lock(&root, &effective, &[]);
     assert_eq!(decision.outcome.as_str(), "missing");
     // Current: a written lock matching the recomputed state verifies.
     let empty = create_workspace_lock(None, &[]).expect("empty lock");
     write_workspace_lock(&root, &empty).expect("write lock");
-    let decision = verify_session_lock(&root, &effective);
+    let decision = verify_session_lock(&root, &effective, &[]);
     assert_eq!(decision.outcome.as_str(), "current");
     assert_eq!(decision.reason, None);
     // Stale: a lock from a different module set drifts truthfully,
@@ -2246,7 +2252,7 @@ fn session_lock_verification_reports_without_gating() {
     )
     .expect("drifted lock");
     write_workspace_lock(&root, &drifted).expect("write drifted");
-    let decision = verify_session_lock(&root, &effective);
+    let decision = verify_session_lock(&root, &effective, &[]);
     assert_eq!(decision.outcome.as_str(), "stale");
     assert!(decision.reason.as_deref().is_some_and(|reason| {
         reason.starts_with("the on-disk lock does not match")
@@ -2257,7 +2263,7 @@ fn session_lock_verification_reports_without_gating() {
     // and the session still proceeds.
     write(root.join("siralos.lock"), "lockDigest = \"corrupt\"\n")
         .expect("corrupt lock");
-    let decision = verify_session_lock(&root, &effective);
+    let decision = verify_session_lock(&root, &effective, &[]);
     assert_eq!(decision.outcome.as_str(), "invalid");
     assert!(decision.reason.as_deref().is_some_and(|reason| {
         reason.starts_with("the on-disk lock could not be trusted")
@@ -2319,19 +2325,9 @@ fn t4_dispatch_same_parse_both_loops_call() {
         ("/context", SlashCommand::Context),
         ("/tools", SlashCommand::Tools),
         ("/modules", SlashCommand::Modules),
+        ("/rebuild", SlashCommand::Rebuild),
+        ("/rebuild extra", SlashCommand::Prompt("/rebuild extra")),
         ("/exit", SlashCommand::Exit),
-        ("/modules-add", SlashCommand::ModulesAdd(None)),
-        (
-            "/modules-add modules/godot",
-            SlashCommand::ModulesAdd(Some("modules/godot")),
-        ),
-        ("/modules-enable", SlashCommand::ModulesEnable(None)),
-        ("/modules-enable godot", SlashCommand::ModulesEnable(Some("godot"))),
-        ("/modules-activate", SlashCommand::ModulesActivate(None)),
-        (
-            "/modules-activate godot",
-            SlashCommand::ModulesActivate(Some("godot")),
-        ),
         ("/model", SlashCommand::Model(None)),
         (
             "/model example/model-a",
@@ -2355,8 +2351,8 @@ fn t4_dispatch_same_parse_both_loops_call() {
     }
     // The stdio loop and the TUI loop call the same parser: parse
     // twice (once per loop) and require byte-equal commands.
-    let stdio_parsed = parse_slash_command("/modules-enable godot");
-    let tui_parsed = parse_slash_command("/modules-enable godot");
+    let stdio_parsed = parse_slash_command("/rebuild");
+    let tui_parsed = parse_slash_command("/rebuild");
     assert_eq!(stdio_parsed, tui_parsed);
 }
 #[test]
@@ -2820,7 +2816,7 @@ fn slash_command_catalog_lists_provider_model_evolve() {
     assert!(names.contains(&"/undo"));
     assert!(names.contains(&"/undo <id>"));
     assert!(names.contains(&"/undo --last"));
-    assert_eq!(names.len(), 23);
+    assert_eq!(names.len(), 21);
 }
 
 #[test]
@@ -3987,7 +3983,10 @@ fn is_unknown_slash_command_shared_helper_both_loops_call() {
     assert!(!via_fn_ptr("/tools"));
     assert!(!via_fn_ptr("/provider"));
     assert!(!via_fn_ptr("hello"));
-    assert!(!via_fn_ptr("/modules-add"));
+    assert!(!via_fn_ptr("/rebuild"));
+    assert!(via_fn_ptr("/modules-add"));
+    assert!(via_fn_ptr("/modules-enable"));
+    assert!(via_fn_ptr("/modules-activate"));
     assert!(!via_fn_ptr(""));
     // Both frontends use the same catalog; unknown line is derived from it.
     let catalog = slash_command_catalog();
@@ -4962,948 +4961,431 @@ fn persist_switched_model_clears_display_name_only() {
     let _ = remove_dir_all(root);
 }
 
-#[test]
-fn render_add_module_conflict_leaves_existing_host_unchanged() {
-    use siralos_adapters::module::{ModuleHost, ModuleHostBounds};
-    use siralos_core::module::{
-        HostAuthority, LifecycleState, ModuleAbi, ModulePackage,
-    };
-
-    let root = temporary_directory("add-module-conflict-host");
-    let existing_component = root.join("existing.component.wasm");
-    let existing_bytes = b"existing arbitrary component bytes";
-    let existing_digest = siralos_core::identity::sha256_hex(existing_bytes);
-    write(&existing_component, existing_bytes).expect("existing component");
-    let existing_package = ModulePackage::parse(
-        "godot",
-        &existing_digest,
-        "siralos:domain-abi@1.0.0",
-        &[],
-    )
-    .expect("existing package");
-    let abi =
-        ModuleAbi::parse("siralos:domain-abi@1.0.0").expect("module ABI");
-    let mut existing_host = ModuleHost::new(
-        abi,
-        HostAuthority::parse(&[]).expect("host authority"),
-        existing_component,
-        root.clone(),
-        ModuleHostBounds::default(),
-    );
-    // Install authenticates exact bytes but does not compile until activation,
-    // so deliberately non-component bytes keep this regression focused.
-    existing_host
-        .install(existing_package.clone())
-        .expect("install existing identity");
-    let existing_package =
-        existing_host.installed_package().cloned().expect("installed package");
-
-    let folder = root.join("modules/godot");
+fn write_spec_module(root: &Path, id: &str) {
+    let folder = root.join("modules").join(id);
     create_dir_all(&folder).expect("module folder");
-    let incoming_component = folder.join("godot.component.wasm");
-    let incoming_bytes = b"incoming arbitrary component bytes";
-    let incoming_digest = siralos_core::identity::sha256_hex(incoming_bytes);
-    write(&incoming_component, incoming_bytes).expect("incoming component");
     write(
         folder.join("module-manifest.toml"),
         format!(
-            "id = \"godot\"\ndigest = \"{incoming_digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncomponent = \"godot.component.wasm\"\n",
-        ),
-    )
-    .expect("incoming manifest");
-
-    let record_path = root.join("siralos.toml");
-    let original_record = format!(
-        "[modules.godot]\npath = \"modules/conflicting\"\ndigest = \"sha256:{existing_digest}\"\n",
-    );
-    write(&record_path, &original_record).expect("conflicting record");
-    let mut hosts = std::collections::BTreeMap::from([(
-        "godot".to_owned(),
-        existing_host,
-    )]);
-    let mut hostless = std::collections::BTreeMap::new();
-    let mut manifests = std::collections::BTreeMap::new();
-
-    let output = super::render_add_module(
-        &root,
-        "modules/godot",
-        &mut hosts,
-        &mut hostless,
-        &mut manifests,
-    );
-
-    assert!(output.contains("(code RECORD_CONFLICT)"), "{output}");
-    let host = hosts.get("godot").expect("existing host remains keyed");
-    assert_eq!(host.state(), LifecycleState::Installed);
-    assert_eq!(host.installed_package(), Some(&existing_package));
-    let unchanged =
-        String::from_utf8(read(&record_path).expect("read record"))
-            .expect("record is UTF-8");
-    assert_eq!(unchanged, original_record);
-    assert!(manifests.is_empty());
-    let _ = remove_dir_all(root);
-}
-
-#[test]
-fn render_add_componentless_conflict_leaves_existing_state_unchanged() {
-    use siralos_adapters::module::{ModuleHost, ModuleHostBounds};
-    use siralos_core::module::{
-        HostAuthority, LifecycleState, ModuleAbi, ModulePackage,
-    };
-
-    let root = temporary_directory("add-componentless-conflict");
-    let relative_path = "modules/componentless";
-    let folder = root.join(relative_path);
-    let component_path = folder.join("existing.component.wasm");
-    let manifest_path = folder.join("module-manifest.toml");
-    create_dir_all(&folder).expect("module folder");
-    let existing_bytes = b"existing arbitrary component bytes";
-    let existing_digest = siralos_core::identity::sha256_hex(existing_bytes);
-    write(&component_path, existing_bytes).expect("existing component");
-    let existing_package = ModulePackage::parse(
-        "godot",
-        &existing_digest,
-        "siralos:domain-abi@1.0.0",
-        &[],
-    )
-    .expect("existing package");
-    let abi =
-        ModuleAbi::parse("siralos:domain-abi@1.0.0").expect("module ABI");
-    let mut existing_host = ModuleHost::new(
-        abi,
-        HostAuthority::parse(&[]).expect("host authority"),
-        component_path,
-        root.clone(),
-        ModuleHostBounds::default(),
-    );
-    existing_host
-        .install(existing_package.clone())
-        .expect("install existing identity");
-    let existing_package =
-        existing_host.installed_package().cloned().expect("installed package");
-
-    write(
-        &manifest_path,
-        format!(
-            "id = \"godot\"\ndigest = \"{existing_digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncomponent = \"existing.component.wasm\"\n",
-        ),
-    )
-    .expect("componentful manifest");
-    let existing_manifest =
-        super::load_manifest(&root, &folder).expect("existing manifest loads");
-    let record_path = root.join("siralos.toml");
-    let original_record = format!(
-        "[modules.godot]\npath = \"{relative_path}\"\ndigest = \"sha256:{existing_digest}\"\n",
-    );
-    write(&record_path, &original_record).expect("existing record");
-    let mut hosts = std::collections::BTreeMap::from([(
-        "godot".to_owned(),
-        existing_host,
-    )]);
-    let mut hostless = std::collections::BTreeMap::new();
-    let mut manifests = std::collections::BTreeMap::from([(
-        "godot".to_owned(),
-        existing_manifest.clone(),
-    )]);
-
-    write(
-        &manifest_path,
-        format!(
-            "id = \"godot\"\ndigest = \"{existing_digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\n",
-        ),
-    )
-    .expect("component-less manifest");
-    let incoming_manifest =
-        read(&manifest_path).expect("read incoming manifest");
-
-    let output = super::render_add_module(
-        &root,
-        relative_path,
-        &mut hosts,
-        &mut hostless,
-        &mut manifests,
-    );
-
-    let generic = output.contains("(code RECORD_CONFLICT)")
-        && !output.contains("godot")
-        && !output.contains(relative_path)
-        && !output.contains("componentless")
-        && !output.contains(&existing_digest);
-    assert!(generic, "component-less conflict was not generic: {output}");
-    let host = hosts.get("godot").expect("existing host remains keyed");
-    assert_eq!(host.state(), LifecycleState::Installed);
-    assert_eq!(host.installed_package(), Some(&existing_package));
-    assert_eq!(manifests.get("godot"), Some(&existing_manifest));
-    assert_eq!(manifests.len(), 1);
-    assert_eq!(
-        read(&record_path).expect("read record"),
-        original_record.as_bytes(),
-    );
-    assert_eq!(
-        read(&manifest_path).expect("reread incoming manifest"),
-        incoming_manifest,
-    );
-    let _ = remove_dir_all(root);
-}
-
-#[test]
-fn render_add_module_rejects_unsafe_sources_before_root_resolution() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let missing_root = std::env::temp_dir()
-        .join(format!("siralos-cli-add-module-missing-{nonce}"));
-    assert!(!missing_root.exists(), "fixture root must not exist");
-    let mut hosts = std::collections::BTreeMap::new();
-    let mut hostless = std::collections::BTreeMap::new();
-    let mut manifests = std::collections::BTreeMap::new();
-
-    let observed = [
-        ("../private-module-marker", "PATH_PARENT_TRAVERSAL"),
-        ("modules/../private-module-marker", "PATH_PARENT_TRAVERSAL"),
-        ("modules/private-module-marker/..", "PATH_PARENT_TRAVERSAL"),
-        ("AGENTS.md", "PATH_PROTECTED"),
-        ("nested/AGENTS.md", "PATH_PROTECTED"),
-        (".siralos/private-module-marker", "PATH_PROTECTED"),
-        ("nested/.siralos/private-module-marker", "PATH_PROTECTED"),
-    ]
-    .into_iter()
-    .map(|(source, expected_code)| {
-        let output = super::render_add_module(
-            &missing_root,
-            source,
-            &mut hosts,
-            &mut hostless,
-            &mut manifests,
-        );
-        let valid = output.contains(&format!("(code {expected_code})"))
-            && !output.contains("PATH_UNRESOLVABLE")
-            && !output.contains(source)
-            && !output.contains("..")
-            && !output.contains("AGENTS.md")
-            && !output.contains(".siralos")
-            && !output.contains("private-module-marker");
-        (source, expected_code, output, valid)
-    })
-    .collect::<Vec<_>>();
-
-    assert!(
-        observed.iter().all(|(_, _, _, valid)| *valid),
-        "source policy must run before workspace resolution: {observed:#?}",
-    );
-    assert!(!missing_root.exists(), "source rejection must not create root");
-    assert!(hosts.is_empty());
-    assert!(manifests.is_empty());
-}
-
-#[test]
-fn modules_enable_rejects_unsafe_module_record_before_path_resolution() {
-    for (index, source) in [
-        "../private-module-marker",
-        "modules/../private-module-marker",
-        "modules/private-module-marker/..",
-        "AGENTS.md",
-        "nested/AGENTS.md",
-        ".siralos/private-module-marker",
-        "nested/.siralos/private-module-marker",
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let root =
-            temporary_directory(&format!("modules-enable-record-{index}"));
-        write(
-            root.join("siralos.toml"),
-            format!(
-                "[modules.godot]\npath = \"{source}\"\ndigest = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n",
-            ),
-        )
-        .expect("module record");
-
-        let output = run("/modules-enable godot\n/exit\n", &root, None);
-
-        assert!(
-            output.contains("(code RECORD_CONFLICT)")
-                && !output.contains("PATH_OUTSIDE_WORKSPACE")
-                && !output.contains("PATH_UNRESOLVABLE")
-                && !output.contains(source)
-                && !output.contains("..")
-                && !output.contains("AGENTS.md")
-                && !output.contains(".siralos")
-                && !output.contains("private-module-marker")
-                && !output.contains("godot"),
-            "unsafe record for {source:?} reached path resolution: {output}",
-        );
-        let _ = remove_dir_all(root);
-    }
-}
-
-#[test]
-fn render_enable_module_refuses_digest_mismatch_without_enabling() {
-    use siralos_core::module::LifecycleState;
-
-    let root = temporary_directory("enable-digest-mismatch");
-    let relative_path = "modules/private-module-marker";
-    let folder = root.join(relative_path);
-    create_dir_all(&folder).expect("module folder");
-    let component_bytes = b"arbitrary component bytes with digest B";
-    let digest_b = siralos_core::identity::sha256_hex(component_bytes);
-    let digest_a = "a".repeat(64);
-    write(folder.join("module.component.wasm"), component_bytes)
-        .expect("component");
-    write(
-        folder.join("module-manifest.toml"),
-        format!(
-            "id = \"godot\"\ndigest = \"{digest_b}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncomponent = \"module.component.wasm\"\n",
+            "id = \"{id}\"\ndigest = \"{}\"\nabi = \"siralos:domain-abi@1.0.0\"\n",
+            "c".repeat(64)
         ),
     )
     .expect("manifest");
+}
+
+fn write_component_module(root: &Path, id: &str) -> String {
+    let folder = root.join("modules").join(id);
+    create_dir_all(&folder).expect("module folder");
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/domain-conformance/fixtures/conformance-module.component.wasm");
+    let bytes = std::fs::read(&fixture).expect("fixture");
+    let digest = siralos_core::identity::sha256_hex(&bytes);
+    write(folder.join("module.component.wasm"), &bytes).expect("component");
+    write(
+        folder.join("module-manifest.toml"),
+        format!(
+            "id = \"{id}\"\ndigest = \"{digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncomponent = \"module.component.wasm\"\n"
+        ),
+    )
+    .expect("manifest");
+    digest
+}
+
+#[test]
+fn declarative_apply_installs_enables_and_removes_spec_only() {
+    use siralos_core::module::lifecycle::LifecycleState;
+    let root = temporary_directory("declarative-spec-lifecycle");
+    write_spec_module(&root, "example");
     write(
         root.join("siralos.toml"),
-        format!(
-            "[modules.godot]\npath = \"{relative_path}\"\ndigest = \"sha256:{digest_a}\"\n",
-        ),
+        "[modules.example]\npath = \"modules/example\"\n",
     )
-    .expect("persisted record");
+    .expect("declaration");
     let mut hosts = std::collections::BTreeMap::new();
     let mut hostless = std::collections::BTreeMap::new();
     let mut manifests = std::collections::BTreeMap::new();
-
-    let output = super::render_enable_module(
+    let first = super::apply_declared_modules(
         &root,
         &mut hosts,
         &mut hostless,
         &mut manifests,
-        "godot",
-        None,
     );
-    let states = hosts
-        .values()
-        .map(|host| host.state())
-        .collect::<Vec<LifecycleState>>();
-    let generic = output.contains("(code RECORD_CONFLICT)")
-        && !output.contains(&digest_a)
-        && !output.contains(&digest_b)
-        && !output.contains(relative_path)
-        && !output.contains("private-module-marker")
-        && !output.contains("godot");
+    assert_eq!(first.declared, 1, "{first:?}");
+    assert_eq!(first.applied, 1, "{first:?}");
+    assert!(first.failures.is_empty(), "{first:?}");
+    assert_eq!(
+        hostless.get("example").map(|lifecycle| lifecycle.state()),
+        Some(LifecycleState::Enabled)
+    );
+    assert!(manifests.contains_key("example"));
+    assert_eq!(first.records.len(), 1);
+    assert_eq!(first.records[0].digest, format!("sha256:{}", "c".repeat(64)));
 
+    write(root.join("siralos.toml"), "").expect("remove declaration");
+    let second = super::apply_declared_modules(
+        &root,
+        &mut hosts,
+        &mut hostless,
+        &mut manifests,
+    );
+    assert!(second.failures.is_empty(), "{second:?}");
+    assert!(hostless.is_empty());
+    assert!(manifests.is_empty());
+    assert!(second.lines.iter().any(|line| line == "removed example"));
     assert!(
-        generic && !states.contains(&LifecycleState::Enabled),
-        "digest conflict was not a generic no-enable refusal: \
-         output={output:?}, host_states={states:?}",
+        second.render().contains("removed example"),
+        "a removal-only rebuild must not hide the removal: {}",
+        second.render()
     );
     let _ = remove_dir_all(root);
 }
 
 #[test]
-fn render_enable_module_rechecks_persisted_identity_for_an_existing_host() {
-    use siralos_core::module::LifecycleState;
-
-    let root = temporary_directory("enable-stale-host-record");
-    let relative_path = "modules/godot";
-    let folder = root.join(relative_path);
-    create_dir_all(&folder).expect("module folder");
-    let component_bytes = b"arbitrary installed component bytes";
-    let installed_digest = siralos_core::identity::sha256_hex(component_bytes);
-    write(folder.join("godot.component.wasm"), component_bytes)
-        .expect("component");
-    write(
-        folder.join("module-manifest.toml"),
-        format!(
-            "id = \"godot\"\ndigest = \"{installed_digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncomponent = \"godot.component.wasm\"\n",
-        ),
-    )
-    .expect("manifest");
-    let mut hosts = std::collections::BTreeMap::new();
-    let mut hostless = std::collections::BTreeMap::new();
-    let mut manifests = std::collections::BTreeMap::new();
-    let added = super::render_add_module(
-        &root,
-        relative_path,
-        &mut hosts,
-        &mut hostless,
-        &mut manifests,
-    );
-    assert!(added.contains("Installed godot"), "{added}");
-    assert_eq!(
-        hosts.get("godot").expect("installed host").state(),
-        LifecycleState::Installed,
-    );
-
-    let replacement_bytes = b"replacement arbitrary component bytes";
-    let replacement_digest =
-        siralos_core::identity::sha256_hex(replacement_bytes);
-    write(folder.join("godot.component.wasm"), replacement_bytes)
-        .expect("replacement component");
-    write(
-        folder.join("module-manifest.toml"),
-        format!(
-            "id = \"godot\"\ndigest = \"{replacement_digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncomponent = \"godot.component.wasm\"\n",
-        ),
-    )
-    .expect("replacement manifest");
+fn declarative_apply_activates_component_and_uses_manifest_digest() {
+    use siralos_core::module::lifecycle::LifecycleState;
+    let root = temporary_directory("declarative-component-lifecycle");
+    let digest = write_component_module(&root, "godot");
     write(
         root.join("siralos.toml"),
-        format!(
-            "[modules.godot]\npath = \"{relative_path}\"\ndigest = \"sha256:{replacement_digest}\"\n",
-        ),
+        "[modules.godot]\npath = \"modules/godot\"\n",
     )
-    .expect("replacement record");
-
-    let output = super::render_enable_module(
-        &root,
-        &mut hosts,
-        &mut hostless,
-        &mut manifests,
-        "godot",
-        None,
-    );
-    let state = hosts.get("godot").expect("existing host").state();
-    let generic = output.contains("(code RECORD_CONFLICT)")
-        && !output.contains(&installed_digest)
-        && !output.contains(&replacement_digest)
-        && !output.contains(relative_path)
-        && !output.contains("godot");
-
-    assert!(
-        generic && state == LifecycleState::Installed,
-        "stale-host conflict was not a generic no-enable refusal: \
-         output={output:?}, host_state={state:?}",
-    );
-    let _ = remove_dir_all(root);
-}
-
-#[test]
-fn render_enable_module_rejects_changed_component_bytes_for_existing_host() {
-    use siralos_core::module::LifecycleState;
-
-    let root = temporary_directory("enable-changed-component-bytes");
-    let relative_path = "modules/private-module-marker";
-    let folder = root.join(relative_path);
-    let component_path = folder.join("module.component.wasm");
-    let manifest_path = folder.join("module-manifest.toml");
-    let record_path = root.join("siralos.toml");
-    create_dir_all(&folder).expect("module folder");
-    let installed_bytes = b"installed arbitrary component bytes";
-    let installed_digest = siralos_core::identity::sha256_hex(installed_bytes);
-    write(&component_path, installed_bytes).expect("installed component");
-    write(
-        &manifest_path,
-        format!(
-            "id = \"godot\"\ndigest = \"{installed_digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncomponent = \"module.component.wasm\"\n",
-        ),
-    )
-    .expect("manifest");
+    .expect("declaration");
     let mut hosts = std::collections::BTreeMap::new();
     let mut hostless = std::collections::BTreeMap::new();
     let mut manifests = std::collections::BTreeMap::new();
-    let added = super::render_add_module(
-        &root,
-        relative_path,
-        &mut hosts,
-        &mut hostless,
-        &mut manifests,
-    );
-    assert!(added.contains("Installed godot"), "{added}");
-    let installed_package = hosts
-        .get("godot")
-        .expect("installed host")
-        .installed_package()
-        .cloned()
-        .expect("installed package");
-    let installed_manifest =
-        manifests.get("godot").cloned().expect("installed manifest");
-    let original_manifest = read(&manifest_path).expect("read manifest");
-    let original_record = read(&record_path).expect("read record");
-
-    let changed_bytes = b"changed arbitrary component bytes";
-    let changed_digest = siralos_core::identity::sha256_hex(changed_bytes);
-    assert_ne!(changed_digest, installed_digest);
-    write(&component_path, changed_bytes).expect("changed component");
-
-    let output = super::render_enable_module(
+    let outcome = super::apply_declared_modules(
         &root,
         &mut hosts,
         &mut hostless,
         &mut manifests,
-        "godot",
-        None,
     );
-    let host = hosts.get("godot").expect("existing host");
-    let generic = output.contains("(code RECORD_CONFLICT)")
-        && !output.contains("godot")
-        && !output.contains(relative_path)
-        && !output.contains("private-module-marker")
-        && !output.contains(&installed_digest)
-        && !output.contains(&changed_digest);
-
-    assert!(
-        generic && host.state() == LifecycleState::Installed,
-        "changed component bytes were not a generic no-enable refusal: \
-         output={output:?}, host_state={:?}",
-        host.state(),
-    );
-    assert_eq!(host.installed_package(), Some(&installed_package));
-    assert_eq!(manifests.get("godot"), Some(&installed_manifest));
+    assert!(outcome.failures.is_empty(), "{outcome:?}");
     assert_eq!(
-        read(&manifest_path).expect("reread manifest"),
-        original_manifest
-    );
-    assert_eq!(read(&record_path).expect("reread record"), original_record);
-    let _ = remove_dir_all(root);
-}
-
-const SPEC_ONLY_MODULE_ID: &str = "deepseek-hours";
-const SPEC_ONLY_MODULE_RELATIVE: &str = "modules/deepseek-hours";
-
-fn spec_only_manifest_text(digest: &str) -> String {
-    format!(
-        "id = \"{SPEC_ONLY_MODULE_ID}\"\ndigest = \"{digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncapabilities = []\n\n[ui]\n[[ui.components]]\nid = \"deepseek-hours\"\ntitle = \"DeepSeek hours\"\nfeed = \"time.window\"\nplacement = \"tab\"\n\n[ui.components.params]\nwindows = \"01:00-04:00,06:00-10:00\"\ndays = \"mon-fri\"\n"
-    )
-}
-
-fn spec_only_record_text(digest: &str) -> String {
-    format!(
-        "[modules.{SPEC_ONLY_MODULE_ID}]\npath = \"{SPEC_ONLY_MODULE_RELATIVE}\"\ndigest = \"sha256:{digest}\"\n",
-    )
-}
-
-#[test]
-fn spec_only_module_enables_hostlessly_and_publishes_declared_specs() {
-    use crate::interactive::ui::ModuleUiSource;
-    use siralos_core::module::LifecycleState;
-
-    let root = temporary_directory("spec-only-enable");
-    let folder = spec_only_fixture(&root, "b");
-    let mut hosts = std::collections::BTreeMap::new();
-    let mut hostless = std::collections::BTreeMap::new();
-    let mut manifests = std::collections::BTreeMap::new();
-    let added = super::render_add_module(
-        &root,
-        SPEC_ONLY_MODULE_RELATIVE,
-        &mut hosts,
-        &mut hostless,
-        &mut manifests,
-    );
-    assert!(added.contains("Installed deepseek-hours"), "{added}");
-    assert!(hosts.is_empty() && hostless.is_empty());
-
-    let enabled = super::render_enable_module(
-        &root,
-        &mut hosts,
-        &mut hostless,
-        &mut manifests,
-        SPEC_ONLY_MODULE_ID,
-        None,
-    );
-    assert_eq!(enabled, "Enabled deepseek-hours.\n");
-    assert!(hosts.is_empty());
-    assert_eq!(
-        hostless.get(SPEC_ONLY_MODULE_ID).expect("hostless lifecycle").state(),
-        LifecycleState::Enabled,
-    );
-
-    let (state, grant) =
-        super::module_ui_state(SPEC_ONLY_MODULE_ID, &hosts, &hostless);
-    assert_eq!(state, LifecycleState::Enabled);
-    assert!(grant.is_none());
-    let sources: Vec<ModuleUiSource<'_, '_>> = manifests
-        .iter()
-        .map(|(id, manifest)| {
-            let (state, grant) = super::module_ui_state(id, &hosts, &hostless);
-            ModuleUiSource { id: id.clone(), manifest, state, grant }
-        })
-        .collect();
-    let specs = super::ui::module_ui_specs(&sources);
-    assert_eq!(specs.len(), 1);
-    assert_eq!(specs[0].0, SPEC_ONLY_MODULE_ID);
-    assert_eq!(specs[0].1.feed().as_str(), "time.window");
-    let _ = remove_dir_all(root);
-    let _ = folder;
-}
-
-#[test]
-fn spec_only_enable_follows_the_profile_selection_gate() {
-    use siralos_core::module::LifecycleState;
-
-    let root = temporary_directory("spec-only-profile-gate");
-    let _folder = spec_only_fixture(&root, "b");
-    let mut hosts = std::collections::BTreeMap::new();
-    let mut hostless = std::collections::BTreeMap::new();
-    let mut manifests = std::collections::BTreeMap::new();
-    let added = super::render_add_module(
-        &root,
-        SPEC_ONLY_MODULE_RELATIVE,
-        &mut hosts,
-        &mut hostless,
-        &mut manifests,
-    );
-    assert!(added.contains("Installed deepseek-hours"), "{added}");
-
-    let narrowed = super::render_enable_module(
-        &root,
-        &mut hosts,
-        &mut hostless,
-        &mut manifests,
-        SPEC_ONLY_MODULE_ID,
-        Some(&["godot".to_owned()]),
-    );
-    assert_eq!(
-        narrowed,
-        "Enable failed: module is outside the applied profile selection\n"
+        hosts.get("godot").map(|host| host.state()),
+        Some(LifecycleState::Active)
     );
     assert!(hostless.is_empty());
-
-    let selected = super::render_enable_module(
-        &root,
-        &mut hosts,
-        &mut hostless,
-        &mut manifests,
-        SPEC_ONLY_MODULE_ID,
-        Some(&[SPEC_ONLY_MODULE_ID.to_owned()]),
-    );
-    assert_eq!(selected, "Enabled deepseek-hours.\n");
-    assert_eq!(
-        hostless.get(SPEC_ONLY_MODULE_ID).expect("enabled lifecycle").state(),
-        LifecycleState::Enabled,
-    );
+    assert_eq!(outcome.records.len(), 1);
+    assert_eq!(outcome.records[0].digest, format!("sha256:{digest}"));
     let _ = remove_dir_all(root);
 }
 
 #[test]
-fn spec_only_enable_rechecks_persisted_identity_before_enabling() {
-    let root = temporary_directory("spec-only-digest-mismatch");
-    let _folder = spec_only_fixture(&root, "b");
-    let record_digest = "a".repeat(64);
-    write(root.join("siralos.toml"), spec_only_record_text(&record_digest))
-        .expect("stale record");
+fn declarative_apply_keeps_old_state_when_a_declaration_stops_resolving() {
+    use siralos_core::module::lifecycle::LifecycleState;
+    let root = temporary_directory("declarative-blocked");
+    write_spec_module(&root, "example");
+    let declaration = "[modules.example]\npath = \"modules/example\"\n";
+    write(root.join("siralos.toml"), declaration).expect("declaration");
     let mut hosts = std::collections::BTreeMap::new();
     let mut hostless = std::collections::BTreeMap::new();
     let mut manifests = std::collections::BTreeMap::new();
-
-    let output = super::render_enable_module(
+    let first = super::apply_declared_modules(
         &root,
         &mut hosts,
         &mut hostless,
         &mut manifests,
-        SPEC_ONLY_MODULE_ID,
-        None,
     );
-    let generic = output.contains("(code RECORD_CONFLICT)")
-        && !output.contains(&record_digest)
-        && !output.contains(SPEC_ONLY_MODULE_RELATIVE)
-        && !output.contains(SPEC_ONLY_MODULE_ID);
-    assert!(
-        generic && hostless.is_empty() && hosts.is_empty(),
-        "mismatched record was not a generic no-enable refusal: {output:?}",
-    );
-    let _ = remove_dir_all(root);
-}
+    assert!(first.failures.is_empty(), "{first:?}");
 
-#[test]
-fn render_enable_module_says_missing_record_instead_of_conflict() {
-    let root = temporary_directory("enable-no-record");
-    write(root.join("siralos.toml"), "[profile]\nname = \"default\"\n")
-        .expect("profile without module record");
-    let mut hosts = std::collections::BTreeMap::new();
-    let mut hostless = std::collections::BTreeMap::new();
-    let mut manifests = std::collections::BTreeMap::new();
-
-    let output = super::render_enable_module(
-        &root,
-        &mut hosts,
-        &mut hostless,
-        &mut manifests,
-        SPEC_ONLY_MODULE_ID,
-        None,
-    );
-    assert!(
-        output.contains("(code RECORD_NOT_FOUND)")
-            && !output.contains("conflict")
-            && !output.contains(SPEC_ONLY_MODULE_ID),
-        "a missing record must not report a conflict: {output:?}",
-    );
-    let _ = remove_dir_all(root);
-}
-
-#[test]
-fn changed_spec_only_manifest_conflicts_against_enabled_lifecycle() {
-    use siralos_core::module::LifecycleState;
-
-    let root = temporary_directory("spec-only-manifest-drift");
-    let folder = spec_only_fixture(&root, "b");
-    let mut hosts = std::collections::BTreeMap::new();
-    let mut hostless = std::collections::BTreeMap::new();
-    let mut manifests = std::collections::BTreeMap::new();
-    let added = super::render_add_module(
-        &root,
-        SPEC_ONLY_MODULE_RELATIVE,
-        &mut hosts,
-        &mut hostless,
-        &mut manifests,
-    );
-    assert!(added.contains("Installed deepseek-hours"), "{added}");
-    let enabled = super::render_enable_module(
-        &root,
-        &mut hosts,
-        &mut hostless,
-        &mut manifests,
-        SPEC_ONLY_MODULE_ID,
-        None,
-    );
-    assert_eq!(enabled, "Enabled deepseek-hours.\n");
-    let installed_package = hostless
-        .get(SPEC_ONLY_MODULE_ID)
-        .expect("lifecycle")
-        .installed_package()
-        .cloned()
-        .expect("installed package");
-    let installed_manifest = manifests
-        .get(SPEC_ONLY_MODULE_ID)
-        .cloned()
-        .expect("install-time manifest");
-
-    let replacement_digest = "c".repeat(64);
-    write(
-        folder.join("module-manifest.toml"),
-        spec_only_manifest_text(&replacement_digest),
-    )
-    .expect("replacement manifest");
     write(
         root.join("siralos.toml"),
-        spec_only_record_text(&replacement_digest),
+        "[modules.example]\npath = \"modules/missing\"\n",
     )
-    .expect("replacement record");
-
-    let output = super::render_enable_module(
+    .expect("broken declaration");
+    let second = super::apply_declared_modules(
         &root,
         &mut hosts,
         &mut hostless,
         &mut manifests,
-        SPEC_ONLY_MODULE_ID,
-        None,
     );
-    let generic = output.contains("(code RECORD_CONFLICT)")
-        && !output.contains(&replacement_digest)
-        && !output.contains(SPEC_ONLY_MODULE_ID);
-    let lifecycle =
-        hostless.get(SPEC_ONLY_MODULE_ID).expect("existing lifecycle");
     assert!(
-        generic
-            && lifecycle.state() == LifecycleState::Enabled
-            && lifecycle.installed_package() == Some(&installed_package),
-        "drifted manifest was not a generic no-enable refusal: {output:?}",
+        second.failures.iter().any(|failure| {
+            failure.contains("not resolved")
+                && failure.contains("MANIFEST_NOT_READABLE")
+        }),
+        "{second:?}"
     );
-    assert_eq!(manifests.get(SPEC_ONLY_MODULE_ID), Some(&installed_manifest));
+    assert_eq!(
+        hostless.get("example").map(|lifecycle| lifecycle.state()),
+        Some(LifecycleState::Enabled),
+        "a blocked edit must not remove the previous working module"
+    );
+    assert!(manifests.contains_key("example"));
+
+    write(root.join("siralos.toml"), "").expect("remove declaration");
+    let third = super::apply_declared_modules(
+        &root,
+        &mut hosts,
+        &mut hostless,
+        &mut manifests,
+    );
+    assert!(third.failures.is_empty(), "{third:?}");
+    assert!(hostless.is_empty());
     let _ = remove_dir_all(root);
 }
 
 #[test]
-fn activate_refuses_spec_only_module_with_typed_message() {
-    use siralos_core::module::LifecycleState;
-
-    let root = temporary_directory("spec-only-activate-refusal");
-    let _folder = spec_only_fixture(&root, "b");
+fn declarative_apply_keeps_old_state_when_a_declaration_is_malformed() {
+    use siralos_core::module::lifecycle::LifecycleState;
+    let root = temporary_directory("declarative-shape-blocked");
+    write_spec_module(&root, "example");
+    write(
+        root.join("siralos.toml"),
+        "[modules.example]\npath = \"modules/example\"\n",
+    )
+    .expect("declaration");
     let mut hosts = std::collections::BTreeMap::new();
     let mut hostless = std::collections::BTreeMap::new();
     let mut manifests = std::collections::BTreeMap::new();
-    let added = super::render_add_module(
-        &root,
-        SPEC_ONLY_MODULE_RELATIVE,
-        &mut hosts,
-        &mut hostless,
-        &mut manifests,
-    );
-    assert!(added.contains("Installed deepseek-hours"), "{added}");
-    let enabled = super::render_enable_module(
+    let first = super::apply_declared_modules(
         &root,
         &mut hosts,
         &mut hostless,
         &mut manifests,
-        SPEC_ONLY_MODULE_ID,
-        None,
     );
-    assert_eq!(enabled, "Enabled deepseek-hours.\n");
+    assert!(first.failures.is_empty(), "{first:?}");
 
-    let refusal = super::render_activate_module(
+    write(root.join("siralos.toml"), "[modules.example]\npath = 7\n")
+        .expect("malformed declaration");
+    let second = super::apply_declared_modules(
         &root,
         &mut hosts,
-        &hostless,
+        &mut hostless,
         &mut manifests,
-        SPEC_ONLY_MODULE_ID,
-        None,
-    );
-    assert_eq!(
-        refusal,
-        "Activate failed: manifest does not name a component; nothing to activate\n"
-    );
-    assert_eq!(
-        hostless.get(SPEC_ONLY_MODULE_ID).expect("lifecycle").state(),
-        LifecycleState::Enabled,
-    );
-
-    let before_enable = super::render_activate_module(
-        &root,
-        &mut hosts,
-        &std::collections::BTreeMap::new(),
-        &mut manifests,
-        SPEC_ONLY_MODULE_ID,
-        None,
     );
     assert!(
-        before_enable.contains("Activate failed: ")
-            && !before_enable.contains("nothing to activate"),
-        "disabled activation must take the ordinary gate: {before_enable:?}",
+        second.failures.iter().any(|failure| {
+            failure.contains("declaration rejected")
+                && failure.contains("RECORD_CONFLICT")
+        }),
+        "{second:?}"
+    );
+    assert_eq!(
+        hostless.get("example").map(|lifecycle| lifecycle.state()),
+        Some(LifecycleState::Enabled),
+        "a shape-invalid edit must not remove the previous working module"
+    );
+    assert!(manifests.contains_key("example"));
+    assert!(
+        second.render().contains("1 declared, 0 applied, 1 failed"),
+        "{}",
+        second.render()
     );
     let _ = remove_dir_all(root);
 }
 
 #[test]
-fn render_add_module_refuses_component_manifest_over_hostless_slot() {
-    use siralos_core::module::{
-        LifecycleState, ModuleLifecycle, ModulePackage,
-    };
-
-    let root = temporary_directory("add-mirrored-kind-conflict");
-    let relative = "modules/private-module-marker";
-    let folder = root.join(relative);
-    create_dir_all(&folder).expect("module folder");
-    let digest = "b".repeat(64);
-    let package = ModulePackage::parse(
-        "godot",
-        &digest,
-        "siralos:domain-abi@1.0.0",
-        &[],
-    )
-    .expect("existing package");
-    let mut hostless =
-        std::collections::BTreeMap::from([("godot".to_owned(), {
-            let mut lifecycle = ModuleLifecycle::new();
-            lifecycle.install(package.clone()).expect("install");
-            lifecycle
-        })]);
-    let mut hosts = std::collections::BTreeMap::new();
-    let mut manifests = std::collections::BTreeMap::new();
-
-    let component_bytes = b"component bytes for the mirrored refusal";
-    let component_digest = siralos_core::identity::sha256_hex(component_bytes);
-    write(folder.join("godot.component.wasm"), component_bytes)
-        .expect("component");
+fn declarative_apply_rejects_digest_mismatch_without_removing_old_state() {
+    use siralos_core::module::lifecycle::LifecycleState;
+    let root = temporary_directory("declarative-digest-mismatch");
+    write_spec_module(&root, "example");
     write(
-        folder.join("module-manifest.toml"),
-        format!(
-            "id = \"godot\"\ndigest = \"{component_digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncomponent = \"godot.component.wasm\"\n",
-        ),
+        root.join("siralos.toml"),
+        "[modules.example]\npath = \"modules/example\"\n",
     )
-    .expect("componentful manifest");
+    .expect("declaration");
+    let mut hosts = std::collections::BTreeMap::new();
+    let mut hostless = std::collections::BTreeMap::new();
+    let mut manifests = std::collections::BTreeMap::new();
+    let first = super::apply_declared_modules(
+        &root,
+        &mut hosts,
+        &mut hostless,
+        &mut manifests,
+    );
+    assert!(first.failures.is_empty(), "{first:?}");
+
     write(
         root.join("siralos.toml"),
         format!(
-            "[modules.godot]\npath = \"{relative}\"\ndigest = \"sha256:{component_digest}\"\n",
+            "[modules.example]\npath = \"modules/example\"\ndigest = \"sha256:{}\"\n",
+            "d".repeat(64)
         ),
     )
-    .expect("matching record");
-
-    let output = super::render_add_module(
+    .expect("mismatched declaration");
+    let second = super::apply_declared_modules(
         &root,
-        relative,
         &mut hosts,
         &mut hostless,
         &mut manifests,
     );
-    let generic = output.contains("(code RECORD_CONFLICT)")
-        && !output.contains("godot")
-        && !output.contains(SPEC_ONLY_MODULE_RELATIVE)
-        && !output.contains(&component_digest);
-    let lifecycle = hostless.get("godot").expect("hostless slot unchanged");
     assert!(
-        generic
-            && lifecycle.state() == LifecycleState::Installed
-            && lifecycle.installed_package() == Some(&package),
-        "component-over-hostless add was not refused: {output:?}",
+        second.failures.iter().any(|failure| {
+            failure.contains("not resolved")
+                && failure.contains("RECORD_CONFLICT")
+        }),
+        "{second:?}"
     );
-    assert!(hosts.is_empty() && manifests.is_empty());
+    assert_eq!(
+        hostless.get("example").map(|lifecycle| lifecycle.state()),
+        Some(LifecycleState::Enabled)
+    );
     let _ = remove_dir_all(root);
 }
 
 #[test]
-fn spec_only_enable_reports_already_enabled_state() {
-    use siralos_core::module::LifecycleState;
-
-    let root = temporary_directory("spec-only-already-enabled");
-    let _folder = spec_only_fixture(&root, "b");
+fn declarative_apply_rolls_back_a_failed_activation_replacement() {
+    use siralos_core::module::lifecycle::LifecycleState;
+    let root = temporary_directory("declarative-rollback");
+    write_spec_module(&root, "example");
+    write(
+        root.join("siralos.toml"),
+        "[modules.example]\npath = \"modules/example\"\n",
+    )
+    .expect("declaration");
     let mut hosts = std::collections::BTreeMap::new();
     let mut hostless = std::collections::BTreeMap::new();
     let mut manifests = std::collections::BTreeMap::new();
-    let added = super::render_add_module(
-        &root,
-        SPEC_ONLY_MODULE_RELATIVE,
-        &mut hosts,
-        &mut hostless,
-        &mut manifests,
-    );
-    assert!(added.contains("Installed deepseek-hours"), "{added}");
-    let first = super::render_enable_module(
+    let first = super::apply_declared_modules(
         &root,
         &mut hosts,
         &mut hostless,
         &mut manifests,
-        SPEC_ONLY_MODULE_ID,
-        None,
     );
-    assert_eq!(first, "Enabled deepseek-hours.\n");
+    assert!(first.failures.is_empty(), "{first:?}");
+    assert!(manifests["example"].component().is_none());
 
-    let second = super::render_enable_module(
+    // Replace the spec-only manifest with a component that asks for a
+    // capability. Startup/rebuild authority is empty, so activation must be
+    // denied after staging and the old spec-only module must survive.
+    let folder = root.join("modules/example");
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/domain-conformance/fixtures/conformance-module.component.wasm");
+    let bytes = std::fs::read(&fixture).expect("fixture");
+    let digest = siralos_core::identity::sha256_hex(&bytes);
+    write(folder.join("module.component.wasm"), &bytes).expect("component");
+    write(
+        folder.join("module-manifest.toml"),
+        format!(
+            "id = \"example\"\ndigest = \"{digest}\"\nabi = \"siralos:domain-abi@1.0.0\"\ncomponent = \"module.component.wasm\"\ncapabilities = [\"workspace-read\"]\n"
+        ),
+    )
+    .expect("component manifest");
+
+    let second = super::apply_declared_modules(
         &root,
         &mut hosts,
         &mut hostless,
         &mut manifests,
-        SPEC_ONLY_MODULE_ID,
-        None,
     );
-    assert!(second.contains("(code ALREADY_ENABLED)"), "{second:?}");
+    assert!(
+        second.failures.iter().any(|failure| {
+            failure.contains("not applied")
+                && failure.contains("CAPABILITY_DENIED")
+        }),
+        "{second:?}"
+    );
+    assert!(hosts.is_empty(), "the denied host must not replace the old one");
     assert_eq!(
-        hostless.get(SPEC_ONLY_MODULE_ID).expect("lifecycle").state(),
-        LifecycleState::Enabled,
+        hostless.get("example").map(|lifecycle| lifecycle.state()),
+        Some(LifecycleState::Enabled)
     );
+    assert!(manifests["example"].component().is_none());
     let _ = remove_dir_all(root);
 }
 
 #[test]
-fn stdio_flow_enables_a_spec_only_module_end_to_end() {
-    let root = temporary_directory("spec-only-stdio-flow");
-    let _folder = spec_only_fixture(&root, "b");
-
-    let output = run(
-        format!(
-            "/modules-add {SPEC_ONLY_MODULE_RELATIVE}\n/modules-enable {SPEC_ONLY_MODULE_ID}\n/modules-activate {SPEC_ONLY_MODULE_ID}\n/exit\n",
-        )
-        .as_str(),
+fn declarative_apply_malformed_document_changes_nothing() {
+    use siralos_core::module::lifecycle::LifecycleState;
+    let root = temporary_directory("declarative-malformed");
+    write_spec_module(&root, "example");
+    write(
+        root.join("siralos.toml"),
+        "[modules.example]\npath = \"modules/example\"\n",
+    )
+    .expect("declaration");
+    let mut hosts = std::collections::BTreeMap::new();
+    let mut hostless = std::collections::BTreeMap::new();
+    let mut manifests = std::collections::BTreeMap::new();
+    let first = super::apply_declared_modules(
         &root,
-        None,
+        &mut hosts,
+        &mut hostless,
+        &mut manifests,
     );
-    assert!(output.contains("Installed deepseek-hours"), "{output}");
-    assert!(output.contains("Enabled deepseek-hours."), "{output}");
+    assert!(first.failures.is_empty(), "{first:?}");
+
+    write(
+        root.join("siralos.toml"),
+        "[modules.example\npath = \"modules/example\"\n",
+    )
+    .expect("malformed document");
+    let second = super::apply_declared_modules(
+        &root,
+        &mut hosts,
+        &mut hostless,
+        &mut manifests,
+    );
     assert!(
-        output
-            .contains("Activate failed: manifest does not name a component; nothing to activate"),
-        "activate refusal missing: {output}",
+        second
+            .failures
+            .iter()
+            .any(|failure| failure.contains("module declarations rejected")),
+        "{second:?}"
     );
+    assert!(
+        second.render().contains("0 declared, 0 applied, 1 failed"),
+        "a structurally rejected document declares nothing: {}",
+        second.render()
+    );
+    assert_eq!(
+        hostless.get("example").map(|lifecycle| lifecycle.state()),
+        Some(LifecycleState::Enabled),
+        "a malformed document must not remove the previous working module"
+    );
+    assert!(hosts.is_empty());
+    assert!(manifests.contains_key("example"));
     let _ = remove_dir_all(root);
 }
 
-fn spec_only_fixture(root: &Path, digest_byte: &str) -> std::path::PathBuf {
-    let folder = root.join(SPEC_ONLY_MODULE_RELATIVE);
-    create_dir_all(&folder).expect("spec-only module folder");
-    let digest = digest_byte.repeat(64);
+#[test]
+fn declarative_apply_replace_component_with_spec_only() {
+    use siralos_core::module::lifecycle::LifecycleState;
+    let root = temporary_directory("declarative-kind-change");
+    write_component_module(&root, "example");
+    write(
+        root.join("siralos.toml"),
+        "[modules.example]\npath = \"modules/example\"\n",
+    )
+    .expect("declaration");
+    let mut hosts = std::collections::BTreeMap::new();
+    let mut hostless = std::collections::BTreeMap::new();
+    let mut manifests = std::collections::BTreeMap::new();
+    let first = super::apply_declared_modules(
+        &root,
+        &mut hosts,
+        &mut hostless,
+        &mut manifests,
+    );
+    assert!(first.failures.is_empty(), "{first:?}");
+    assert!(hosts.contains_key("example"));
+
+    // Replace the manifest with a spec-only shape under the same id.
+    let folder = root.join("modules/example");
+    remove_file(folder.join("module.component.wasm")).expect("component");
     write(
         folder.join("module-manifest.toml"),
-        spec_only_manifest_text(&digest),
+        format!(
+            "id = \"example\"\ndigest = \"{}\"\nabi = \"siralos:domain-abi@1.0.0\"\n",
+            "e".repeat(64)
+        ),
     )
-    .expect("spec-only manifest");
-    folder
+    .expect("spec manifest");
+    let second = super::apply_declared_modules(
+        &root,
+        &mut hosts,
+        &mut hostless,
+        &mut manifests,
+    );
+    assert!(second.failures.is_empty(), "{second:?}");
+    assert!(!hosts.contains_key("example"));
+    assert_eq!(
+        hostless.get("example").map(|lifecycle| lifecycle.state()),
+        Some(LifecycleState::Enabled)
+    );
+    let _ = remove_dir_all(root);
 }
 
 #[test]
@@ -6209,6 +5691,10 @@ fn dispatch_prompt(
     let mut applied_non_live_digest = None;
     let mut session_holder = None;
     let mut history_len = 0usize;
+    let effective = siralos_core::composition::compose_effective_policy(
+        &[],
+        &siralos_core::composition::DeclaredProfile::Absent,
+    );
     super::stdio::dispatch_stdio_command(
         &super::SlashCommand::Prompt(prompt),
         root,
@@ -6222,7 +5708,7 @@ fn dispatch_prompt(
         &mut hosts,
         &mut hostless,
         &mut manifests,
-        None,
+        &effective,
         None,
         false,
         &mut session_holder,

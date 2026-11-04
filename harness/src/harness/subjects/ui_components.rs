@@ -472,7 +472,7 @@ fn render_op(
     entry: &Value,
 ) -> Result<Value, HarnessError> {
     use siralos_cli::interactive::ui::{
-        UiFeedInputs, load_feed_module_records, resolve_spec_content,
+        UiFeedInputs, load_feed_module_declarations, resolve_spec_content,
     };
     use siralos_cli::tui::{UiPanels, render_panels_to_buffer};
     use siralos_core::tool::PermissionPolicy;
@@ -497,7 +497,7 @@ fn render_op(
     }
     let policy = PermissionPolicy::default();
     let tools: Vec<RegisteredToolInfo> = Vec::new();
-    let records = load_feed_module_records(root);
+    let records = load_feed_module_declarations(root);
     // The clock is scenario input, not the runner's wall: absent
     // means "no wall clock" for the moment-bearing feeds.
     let now_utc_ms = match entry.get("now_utc_ms") {
@@ -599,7 +599,7 @@ fn strip_op(
     entry: &Value,
 ) -> Result<Value, HarnessError> {
     use siralos_cli::interactive::ui::{
-        UiFeedInputs, load_feed_module_records, resolve_spec_content,
+        UiFeedInputs, load_feed_module_declarations, resolve_spec_content,
     };
     use siralos_cli::tui::{compose_status_strip_text, status_stale_marker};
     use siralos_core::tool::PermissionPolicy;
@@ -655,7 +655,7 @@ fn strip_op(
     }
     let policy = PermissionPolicy::default();
     let tools: Vec<RegisteredToolInfo> = Vec::new();
-    let records = load_feed_module_records(root);
+    let records = load_feed_module_declarations(root);
     let now_utc_ms = match entry.get("now_utc_ms") {
         None => None,
         Some(Value::Number(number)) => Some(number.as_u64().ok_or_else(

@@ -14,8 +14,9 @@ use std::collections::{BTreeMap, VecDeque};
 
 use siralos_adapters::lockfile::{LockVerification, verify_workspace_lock};
 use siralos_adapters::module::{
-    ModuleHost, ModuleHostBounds, ModuleManifest, ModuleRecord, load_manifest,
-    load_module_records, verify_component,
+    ModuleHost, ModuleHostBounds, ModuleManifest, ModuleRecord,
+    ResolvedModuleDeclaration, load_module_declarations,
+    resolve_module_declaration,
 };
 use siralos_adapters::profile_config::{
     WorkspaceProfileLoad, WorkspaceProfileSnapshot,
@@ -36,10 +37,8 @@ use siralos_adapters::tool::{
     WorkspaceSearchTool, WriteTool,
 };
 use siralos_adapters::workspace::fs::{
-    BoundedFileRead, is_model_protected_workspace_path,
-    read_complete_file_bounded,
+    BoundedFileRead, read_complete_file_bounded,
 };
-use siralos_adapters::workspace::resolve::resolve_workspace_path;
 use siralos_adapters::workspace::root::{
     WorkspaceRootError, resolve_workspace_root,
 };
@@ -50,8 +49,7 @@ use siralos_core::composition::{
     DeclaredProfile, EffectiveRunPolicy, LockVerificationDecision,
     SkillCatalogState, StoredLockDigest, compose_effective_policy,
     compose_skill_consumption, create_effective_policy_evidence,
-    decide_context_control, decide_lock_verification,
-    decide_module_activation, declare_profile,
+    decide_context_control, decide_lock_verification, declare_profile,
 };
 use siralos_core::context::ContextPolicy;
 use siralos_core::determinism::RetainingReplayRecorder;
@@ -72,9 +70,6 @@ use siralos_core::tool::{
     PermissionPolicy, PermissionRule, PolicyRule, SiralosApplication,
     ToolLoopEvent, ToolRegistry, ToolRegistryError,
 };
-use siralos_core::workspace::path::{
-    PathValidationError, validate_relative_path,
-};
 use std::rc::Rc;
 
 use crate::configuration::{
@@ -82,8 +77,8 @@ use crate::configuration::{
     load_user_configuration,
 };
 use crate::output::{
-    format_context_audit, format_context_status, format_module_added,
-    format_modules, format_tool_projection, format_tools,
+    format_context_audit, format_context_status, format_modules,
+    format_tool_projection, format_tools,
 };
 use crate::tui::TuiState;
 // `EventSource` is imported for its `cancel`: the relay cancels through the
@@ -163,10 +158,8 @@ pub use model::InteractiveError;
 pub use model::InteractiveOptions;
 use model::SIRALOS_SYSTEM_INSTRUCTIONS;
 use model::SessionProvider;
+use modules::apply_declared_modules;
 use modules::module_ui_state;
-use modules::render_activate_module;
-use modules::render_add_module;
-use modules::render_enable_module;
 use modules::render_modules;
 use profile::apply_model_switch;
 pub use profile::persist_switched_model;
@@ -218,6 +211,30 @@ use worker::pump_worker;
 use worker::relay_suspended_turn;
 use worker::spawn_tui_worker;
 use worker::switch_model_via_worker;
+
+/// Compute the canonical `[profile]` approval digest for a workspace.
+///
+/// This is the read-only companion to the startup approval gate: it parses
+/// the workspace profile with the same parser and returns the digest over the
+/// authority-bearing profile semantics. It never composes a session, starts a
+/// provider, applies modules, or mutates the workspace. The error strings are
+/// the parser's bounded diagnostics (no absolute path, credential, or raw TOML).
+pub fn profile_approval_digest_for_workspace(
+    workspace_root: &Path,
+) -> Result<String, String> {
+    let snapshot = load_workspace_profile_snapshot(workspace_root);
+    match snapshot.load() {
+        WorkspaceProfileLoad::Record(record) => {
+            Ok(siralos_core::composition::profile_approval_digest(record))
+        }
+        WorkspaceProfileLoad::Absent => {
+            Err("no workspace profile is declared".to_owned())
+        }
+        WorkspaceProfileLoad::Invalid { diagnostic } => {
+            Err(safe_profile_diagnostic(diagnostic))
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests;

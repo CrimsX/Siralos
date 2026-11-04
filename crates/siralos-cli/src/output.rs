@@ -4,7 +4,7 @@
 //! and permission decisions are calculated by the existing core services;
 //! the formatter never creates authority or changes an approved surface.
 
-use siralos_adapters::module::ModuleRecord;
+use siralos_adapters::module::ModuleDeclaration;
 use siralos_core::projection::LastProjection;
 use siralos_core::tool::{
     PermissionDecision, PermissionPolicy, RegisteredToolInfo,
@@ -208,37 +208,34 @@ fn safe_module_label(value: &str) -> String {
 
 /// Render the installed modules view (`/modules`): the deterministic
 /// empty state, or the recorded module list sorted by id.
-pub fn format_modules(records: &[ModuleRecord]) -> String {
-    if records.is_empty() {
-        return "No modules installed.\n[Add Module] /modules-add <folder>\n"
+pub fn format_modules(declarations: &[ModuleDeclaration]) -> String {
+    if declarations.is_empty() {
+        return "No modules declared.\nDeclare [modules.<id>] in siralos.toml, then run /rebuild.\n"
             .to_owned();
     }
-    let lines = records
+    let lines = declarations
         .iter()
-        .map(|record| {
-            let short_digest = record
-                .digest
-                .strip_prefix("sha256:")
-                .unwrap_or(&record.digest)
-                .chars()
-                .take(8)
-                .collect::<String>();
+        .map(|declaration| {
+            let digest = declaration.digest.as_deref().map_or_else(
+                || "manifest".to_owned(),
+                |digest| {
+                    digest
+                        .strip_prefix("sha256:")
+                        .unwrap_or(digest)
+                        .chars()
+                        .take(8)
+                        .collect::<String>()
+                },
+            );
             format!(
                 "  {} (digest {}, path {})",
-                safe_module_label(&record.id),
-                short_digest,
-                safe_module_label(&record.path),
+                safe_module_label(&declaration.id),
+                digest,
+                safe_module_label(&declaration.path),
             )
         })
         .collect::<Vec<_>>();
-    format!("Modules installed:\n{}\n", lines.join("\n"))
-}
-
-/// Render the outcome of one `/modules-add` flow.
-pub fn format_module_added(record: &ModuleRecord) -> String {
-    let digest =
-        record.digest.strip_prefix("sha256:").unwrap_or(&record.digest);
-    format!("Installed {} (digest sha256:{digest}).\n", record.id)
+    format!("Modules declared:\n{}\n", lines.join("\n"))
 }
 
 #[cfg(test)]

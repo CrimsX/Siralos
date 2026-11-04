@@ -1,5 +1,6 @@
 //! The blocking stdio frontend loop and its slash-command dispatch.
 
+use super::apply_declared_modules;
 use super::{
     BTreeMap, BufRead, ContextPolicy, HostCredential, InteractiveError,
     InteractiveOptions, ModelListingGate, ModuleHost, ModuleLifecycle,
@@ -14,12 +15,11 @@ use super::{
     load_workspace_profile_snapshot, model_listing_diagnostic,
     model_listing_gate, non_live_state_digest, parse_slash_command,
     read_approval_via_input_queue, reload_authority_is_revalidated,
-    reload_report_from_load, render_activate_module, render_add_module,
-    render_context_segment, render_enable_module, render_evolve_lines,
+    reload_report_from_load, render_context_segment, render_evolve_lines,
     render_model_line, render_modules, render_provider_line,
     render_startup_notices, render_tools_segment, render_ui_list_text,
     render_ui_preview_text, safe_alias_for_display, sanitize_for_display,
-    slash_command_catalog,
+    slash_command_catalog, verify_session_lock,
 };
 /// Run the default interactive session over process stdin/stdout.
 pub fn run_interactive_stdio() -> Result<(), InteractiveError> {
@@ -142,7 +142,7 @@ where
         mut hosts,
         mut hostless,
         mut manifests,
-        profile_modules,
+        effective_policy,
         context_control,
         context_system_enabled,
         mut context_session_holder,
@@ -235,7 +235,7 @@ where
                 &mut hosts,
                 &mut hostless,
                 &mut manifests,
-                profile_modules.as_deref(),
+                &effective_policy,
                 context_control.as_ref(),
                 context_system_enabled,
                 &mut context_session_holder,
@@ -357,7 +357,7 @@ pub(super) fn dispatch_stdio_command<P, W, R>(
     hosts: &mut BTreeMap<String, ModuleHost>,
     hostless: &mut BTreeMap<String, ModuleLifecycle>,
     manifests: &mut BTreeMap<String, ModuleManifest>,
-    profile_modules: Option<&[String]>,
+    effective_policy: &super::EffectiveRunPolicy,
     context_control: Option<&ContextPolicy>,
     context_system_enabled: bool,
     context_session_holder: &mut Option<
@@ -410,48 +410,29 @@ where
                 .write_all(rendered.as_bytes())
                 .map_err(InteractiveError::Io)?;
         }
+        SlashCommand::Rebuild => {
+            let outcome = apply_declared_modules(
+                workspace_root,
+                hosts,
+                hostless,
+                manifests,
+            );
+            let lock_decision = verify_session_lock(
+                workspace_root,
+                effective_policy,
+                &outcome.records,
+            );
+            let mut report = outcome.render();
+            if let Some(reason) = &lock_decision.reason {
+                report.push_str(&format!("lock: {reason}\n"));
+            }
+            let rendered = sanitize_for_display(&report);
+            writer
+                .borrow_mut()
+                .write_all(rendered.as_bytes())
+                .map_err(InteractiveError::Io)?;
+        }
         SlashCommand::Exit => return Ok(true),
-        SlashCommand::ModulesAdd(folder) => {
-            let rendered = sanitize_for_display(&render_add_module(
-                workspace_root,
-                folder.unwrap_or(""),
-                hosts,
-                hostless,
-                manifests,
-            ));
-            writer
-                .borrow_mut()
-                .write_all(rendered.as_bytes())
-                .map_err(InteractiveError::Io)?;
-        }
-        SlashCommand::ModulesEnable(id) => {
-            let rendered = sanitize_for_display(&render_enable_module(
-                workspace_root,
-                hosts,
-                hostless,
-                manifests,
-                id.unwrap_or(""),
-                profile_modules,
-            ));
-            writer
-                .borrow_mut()
-                .write_all(rendered.as_bytes())
-                .map_err(InteractiveError::Io)?;
-        }
-        SlashCommand::ModulesActivate(id) => {
-            let rendered = sanitize_for_display(&render_activate_module(
-                workspace_root,
-                hosts,
-                hostless,
-                manifests,
-                id.unwrap_or(""),
-                profile_modules,
-            ));
-            writer
-                .borrow_mut()
-                .write_all(rendered.as_bytes())
-                .map_err(InteractiveError::Io)?;
-        }
         SlashCommand::UiList => {
             let rendered =
                 sanitize_for_display(&render_ui_list_text(workspace_root));
@@ -541,9 +522,10 @@ where
         }
         SlashCommand::UiPreview(id) => {
             let state_dir = siralos_adapters::paths::state_dir().ok();
-            let modules = crate::interactive::ui::load_feed_module_records(
-                workspace_root,
-            );
+            let modules =
+                crate::interactive::ui::load_feed_module_declarations(
+                    workspace_root,
+                );
             let inputs = crate::interactive::ui::UiFeedInputs {
                 root: workspace_root,
                 tools: tool_definitions,
